@@ -135,7 +135,7 @@ export default function Home() {
             Licensed agents can access our proprietary case management system.
           </p>
           <Link
-            href="/app"
+            href="/software"
             className="inline-flex items-center gap-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-red-900/50 text-white font-medium px-8 py-4 rounded-lg transition-all group"
           >
             <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
