@@ -1,0 +1,131 @@
+PERSON REPORT - COMPREHENSIVE SEARCH
+=====================================
+Report Generated: 01/15/2026
+Report ID: PR-2026-0115-4782
+
+SUBJECT INFORMATION
+-------------------
+Name: JOHN MICHAEL SMITH
+DOB: 03/15/1985
+SSN: XXX-XX-4532
+Person ID: PID-847291056
+
+ALIASES
+-------
+- JOHNNY SMITH
+- JOHN M SMITH
+- J MICHAEL SMITH
+
+ADDRESS SUMMARY
+---------------
+1. CURRENT ADDRESS (Reported: 06/2024 - Present)
+   1234 Oak Street Apt 5B
+   Dallas, TX 75201
+   Source: Utility Records, Property Tax
+   Notes: Matches current phone registration
+
+2. PREVIOUS ADDRESS (Reported: 02/2022 - 05/2024)
+   567 Maple Avenue
+   Plano, TX 75024
+   Source: Credit Header
+
+3. PREVIOUS ADDRESS (Reported: 08/2019 - 01/2022)
+   890 Pine Road Unit 12
+   Fort Worth, TX 76102
+   Source: DMV Records
+
+4. PREVIOUS ADDRESS (Reported: 01/2017 - 07/2019)
+   2345 Elm Street
+   Arlington, TX 76010
+   Source: Voter Registration
+
+PHONE SUMMARY
+-------------
+1. (214) 555-0123 - Mobile - Active
+   Carrier: Verizon Wireless
+   First Seen: 03/2024
+   Last Seen: 01/2026
+   Connected to: 1234 Oak Street, Dallas TX
+
+2. (972) 555-0456 - Mobile - Active
+   Carrier: AT&T
+   First Seen: 06/2019
+   Last Seen: 12/2025
+
+3. (817) 555-0789 - Landline - Unknown Status
+   First Seen: 02/2020
+   Last Seen: 03/2022
+
+RELATIVES / ASSOCIATES
+----------------------
+1. MARY JANE SMITH
+   Relationship: Mother
+   Age: 65
+   Current Address: 456 Cedar Lane, Dallas, TX 75202
+   Phone: (214) 555-1111
+
+2. ROBERT JAMES SMITH
+   Relationship: Brother
+   Age: 38
+   Current Address: 789 Birch Court, Richardson, TX 75080
+   Phone: (972) 555-2222
+
+3. SARAH ELIZABETH JOHNSON
+   Relationship: Associate (Possible Girlfriend)
+   Age: 32
+   Current Address: 1234 Oak Street Apt 5B, Dallas, TX 75201
+   Phone: (469) 555-3333
+   Notes: Same address as subject
+
+4. MICHAEL DAVID WILLIAMS
+   Relationship: Friend/Associate
+   Age: 36
+   Phone: (214) 555-4444
+
+CURRENT VEHICLES
+----------------
+1. 2021 Toyota Camry
+   Color: Silver
+   VIN: 4T1BF1FK5MU123456
+   Plate: ABC1234
+   State: TX
+   Registered Address: 1234 Oak Street, Dallas TX
+
+2. 2018 Ford F-150
+   Color: Black
+   VIN: 1FTEW1EP5JFB78901
+   Plate: XYZ5678
+   State: TX
+   Registered Address: 567 Maple Avenue, Plano TX
+   Notes: May be at previous address
+
+POSSIBLE EMPLOYMENT
+-------------------
+1. ABC Construction Company (Current)
+   Position: Project Manager
+   Address: 100 Industrial Blvd, Dallas, TX 75207
+   Phone: (214) 555-9000
+   Dates: 04/2023 - Present
+
+2. XYZ Builders Inc (Former)
+   Position: Site Supervisor
+   Address: 200 Commerce Street, Plano, TX 75024
+   Phone: (972) 555-8000
+   Dates: 01/2020 - 03/2023
+
+BANKRUPTCY / LIENS
+------------------
+No records found.
+
+CRIMINAL RECORDS
+----------------
+Note: Criminal records search not included in this report.
+
+ADDITIONAL NOTES
+----------------
+- Subject appears to be living at 1234 Oak Street with associate Sarah Johnson
+- Primary vehicle (2021 Camry) registered at current address
+- Employment verified as of 01/2026
+- Mother and brother both reside in Dallas metro area
+
+--- END OF REPORT ---
