@@ -36,6 +36,8 @@ import {
   User,
   sendPasswordResetEmail,
   updateProfile,
+  GoogleAuthProvider,
+  signInWithPopup,
 } from 'firebase/auth';
 import { getSettings } from './storage';
 
@@ -138,6 +140,80 @@ export async function signIn(email: string, password: string): Promise<{ user: A
   } catch (error: any) {
     console.error('Sign in error:', error);
     return { user: null, error: error.message || 'Failed to sign in' };
+  }
+}
+
+/**
+ * Sign in with Google
+ */
+export async function signInWithGoogle(): Promise<{ user: AuthUser | null; error: string | null }> {
+  try {
+    await initializeFirebase();
+    const authInstance = getAuthInstance();
+    if (!authInstance || !db) {
+      return { user: null, error: 'Firebase not initialized' };
+    }
+
+    const provider = new GoogleAuthProvider();
+    const credential = await signInWithPopup(authInstance, provider);
+
+    // Check if user profile exists
+    const userDoc = await getDoc(doc(db, 'users', credential.user.uid));
+
+    if (!userDoc.exists()) {
+      // Create user profile for new Google users
+      const defaultOrgRef = doc(collection(db, 'organizations'));
+      const organizationId = defaultOrgRef.id;
+
+      await setDoc(defaultOrgRef, {
+        name: `${credential.user.displayName}'s Organization`,
+        createdAt: serverTimestamp(),
+        createdBy: credential.user.uid,
+        plan: 'free',
+        memberCount: 1,
+      });
+
+      await setDoc(doc(db, 'users', credential.user.uid), {
+        email: credential.user.email,
+        displayName: credential.user.displayName,
+        organizationId,
+        role: 'admin',
+        createdAt: serverTimestamp(),
+        lastLogin: serverTimestamp(),
+      });
+
+      return {
+        user: {
+          uid: credential.user.uid,
+          email: credential.user.email,
+          displayName: credential.user.displayName,
+          organizationId,
+          role: 'admin',
+        },
+        error: null,
+      };
+    }
+
+    const userData = userDoc.data();
+
+    // Update last login
+    await updateDoc(doc(db, 'users', credential.user.uid), {
+      lastLogin: serverTimestamp(),
+    });
+
+    return {
+      user: {
+        uid: credential.user.uid,
+        email: credential.user.email,
+        displayName: credential.user.displayName,
+        organizationId: userData?.organizationId,
+        role: userData?.role || 'agent',
+      },
+      error: null,
+    };
+  } catch (error: any) {
+    console.error('Google sign in error:', error);
+    return { user: null, error: error.message || 'Failed to sign in with Google' };
   }
 }
 

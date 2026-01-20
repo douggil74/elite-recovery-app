@@ -8,6 +8,7 @@ import {
   signIn as firebaseSignIn,
   signUp as firebaseSignUp,
   signOut as firebaseSignOut,
+  signInWithGoogle as firebaseSignInWithGoogle,
   getCurrentUser,
   subscribeToAuthChanges,
   resetPassword,
@@ -21,6 +22,7 @@ interface AuthContextType {
   organization: Organization | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ success: boolean; error: string | null }>;
+  signInWithGoogle: () => Promise<{ success: boolean; error: string | null }>;
   signUp: (email: string, password: string, displayName: string, organizationName?: string) => Promise<{ success: boolean; error: string | null }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ success: boolean; error: string | null }>;
@@ -88,6 +90,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { success: false, error: result.error };
   };
 
+  const signInWithGoogle = async () => {
+    const result = await firebaseSignInWithGoogle();
+    if (result.user) {
+      setUser(result.user);
+      if (result.user.organizationId) {
+        const org = await getUserOrganization(result.user.organizationId);
+        setOrganization(org);
+      }
+      return { success: true, error: null };
+    }
+    return { success: false, error: result.error };
+  };
+
   const signUp = async (email: string, password: string, displayName: string, organizationName?: string) => {
     const result = await firebaseSignUp(email, password, displayName, organizationName);
     if (result.user) {
@@ -114,6 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         organization,
         loading,
         signIn,
+        signInWithGoogle,
         signUp,
         signOut,
         resetPassword,
