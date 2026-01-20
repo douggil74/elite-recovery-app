@@ -6,14 +6,17 @@ import {
   TouchableOpacity,
   ScrollView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '@/constants';
 import { useCases } from '@/hooks/useCases';
+import { useAuthContext } from '@/contexts/AuthContext';
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { user, organization, loading: authLoading } = useAuthContext();
   const { cases, refresh } = useCases();
   const [mounted, setMounted] = useState(false);
 
@@ -21,6 +24,28 @@ export default function HomeScreen() {
     setMounted(true);
     refresh();
   }, []);
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace('/auth/login');
+    }
+  }, [authLoading, user]);
+
+  // Show loading while checking auth
+  if (authLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={styles.loadingText}>Loading...</Text>
+      </View>
+    );
+  }
+
+  // Don't render if not authenticated (will redirect)
+  if (!user) {
+    return null;
+  }
 
   const recentCases = cases.slice(0, 3);
 
@@ -32,7 +57,15 @@ export default function HomeScreen() {
           <Ionicons name="shield-checkmark" size={48} color={COLORS.primary} />
         </View>
         <Text style={styles.title}>Fugitive Recovery</Text>
-        <Text style={styles.subtitle}>Professional Case Management</Text>
+        <Text style={styles.subtitle}>
+          {organization?.name || user?.displayName || 'Professional Case Management'}
+        </Text>
+        {user && (
+          <View style={styles.userBadge}>
+            <Ionicons name="person-circle" size={14} color={COLORS.success} />
+            <Text style={styles.userBadgeText}>{user.email}</Text>
+          </View>
+        )}
       </View>
 
       {/* Quick Actions */}
@@ -136,6 +169,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: COLORS.textSecondary,
+    marginTop: 12,
+    fontSize: 14,
+  },
   content: {
     padding: 20,
     paddingBottom: 40,
@@ -162,6 +206,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.textSecondary,
     marginTop: 4,
+  },
+  userBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    backgroundColor: COLORS.success + '15',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  userBadgeText: {
+    fontSize: 12,
+    color: COLORS.success,
+    fontWeight: '500',
   },
   section: {
     marginBottom: 24,

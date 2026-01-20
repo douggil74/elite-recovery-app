@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { COLORS } from '@/constants';
 import { initializeFirebase } from '@/lib/firebase';
+import { AuthProvider } from '@/contexts/AuthContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -26,7 +27,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <>
+    <AuthProvider>
       <StatusBar style="light" />
       <Stack
         screenOptions={{
@@ -45,6 +46,10 @@ export default function RootLayout() {
       >
         <Stack.Screen
           name="index"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="auth"
           options={{ headerShown: false }}
         />
         <Stack.Screen
@@ -67,6 +72,6 @@ export default function RootLayout() {
         <Stack.Screen name="case" options={{ headerShown: false }} />
         <Stack.Screen name="about" options={{ headerShown: false }} />
       </Stack>
-    </>
+    </AuthProvider>
   );
 }

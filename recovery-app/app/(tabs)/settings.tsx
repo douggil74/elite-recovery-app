@@ -13,6 +13,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/hooks/useAuth';
 import { useSettings } from '@/hooks/useSettings';
+import { useAuthContext } from '@/contexts/AuthContext';
 import { getStorageUsage, clearAllData } from '@/lib/storage';
 import { confirm, showAlert } from '@/lib/confirm';
 import { Button, Input } from '@/components';
@@ -20,9 +21,11 @@ import { COLORS, VERSION } from '@/constants';
 import { getAllCases } from '@/lib/database';
 import { isSyncEnabled, fetchSyncedCases } from '@/lib/sync';
 import { isFirebaseReady } from '@/lib/firebase';
+import { checkAIBackendHealth } from '@/lib/ai-service';
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const { user, organization, signOut: authSignOut } = useAuthContext();
   const {
     passcodeEnabled,
     biometricsEnabled,
@@ -36,13 +39,15 @@ export default function SettingsScreen() {
 
   const { settings, updateSettings } = useSettings();
   const [storageUsed, setStorageUsed] = useState('0 B');
-  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
-  const [apiKey, setApiKey] = useState(settings.openaiApiKey || '');
   const [newPasscode, setNewPasscode] = useState('');
   const [showPasscodeSetup, setShowPasscodeSetup] = useState(false);
-  const [showFirebaseSetup, setShowFirebaseSetup] = useState(false);
-  const [firebaseConfig, setFirebaseConfig] = useState(settings.firebaseConfig || '');
-  const [userId, setUserId] = useState(settings.userId || '');
+
+  // AI Backend status
+  const [aiStatus, setAiStatus] = useState<{
+    available: boolean | null;
+    hasOpenAIKey: boolean | null;
+    checking: boolean;
+  }>({ available: null, hasOpenAIKey: null, checking: false });
 
   // Database status
   const [dbStatus, setDbStatus] = useState<{
@@ -64,7 +69,22 @@ export default function SettingsScreen() {
   useEffect(() => {
     loadStorageUsage();
     testDatabaseConnections();
+    checkAIStatus();
   }, []);
+
+  const checkAIStatus = async () => {
+    setAiStatus(prev => ({ ...prev, checking: true }));
+    try {
+      const status = await checkAIBackendHealth();
+      setAiStatus({
+        available: status.available,
+        hasOpenAIKey: status.hasOpenAIKey,
+        checking: false,
+      });
+    } catch {
+      setAiStatus({ available: false, hasOpenAIKey: false, checking: false });
+    }
+  };
 
   const testDatabaseConnections = async () => {
     setDbStatus(prev => ({ ...prev, testing: true }));
@@ -107,11 +127,18 @@ export default function SettingsScreen() {
     });
   };
 
-  useEffect(() => {
-    setApiKey(settings.openaiApiKey || '');
-    setFirebaseConfig(settings.firebaseConfig || '');
-    setUserId(settings.userId || '');
-  }, [settings.openaiApiKey, settings.firebaseConfig, settings.userId]);
+  const handleSignOut = async () => {
+    const confirmed = await confirm({
+      title: 'Sign Out',
+      message: 'Are you sure you want to sign out?',
+      confirmText: 'Sign Out',
+      destructive: true,
+    });
+    if (confirmed) {
+      await authSignOut();
+      router.replace('/auth/login');
+    }
+  };
 
   const loadStorageUsage = async () => {
     const usage = await getStorageUsage();
@@ -164,47 +191,6 @@ export default function SettingsScreen() {
     updateSettings({ autoDeleteDays: days });
   };
 
-  const handleSaveApiKey = () => {
-    updateSettings({ openaiApiKey: apiKey || undefined });
-    setShowApiKeyInput(false);
-    showAlert('Success', apiKey ? 'API key saved' : 'API key removed');
-  };
-
-  const handleSaveFirebase = () => {
-    // Clean up the config - remove whitespace and newlines
-    const cleanConfig = firebaseConfig.trim().replace(/\s+/g, '').replace(/[\n\r]/g, '');
-
-    // Validate JSON if provided
-    if (cleanConfig) {
-      try {
-        const parsed = JSON.parse(cleanConfig);
-        if (!parsed.projectId || !parsed.apiKey) {
-          showAlert('Invalid Config', 'Firebase config must include projectId and apiKey');
-          return;
-        }
-        // Save the cleaned version
-        updateSettings({
-          firebaseConfig: cleanConfig,
-          userId: userId.trim() || undefined,
-          storageMode: 'cloud',
-        });
-        setShowFirebaseSetup(false);
-        showAlert('Success', 'Cloud sync enabled');
-      } catch (e) {
-        console.error('JSON parse error:', e);
-        showAlert('Invalid JSON', 'Could not parse config. Make sure all keys have quotes.');
-        return;
-      }
-    } else {
-      updateSettings({
-        firebaseConfig: undefined,
-        userId: userId.trim() || undefined,
-        storageMode: 'local',
-      });
-      setShowFirebaseSetup(false);
-      showAlert('Success', 'Cloud sync disabled');
-    }
-  };
 
   const handleClearData = async () => {
     const confirmed = await confirm({
@@ -234,6 +220,44 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* Account Section */}
+      <Text style={styles.sectionTitle}>Account</Text>
+      <View style={styles.section}>
+        <View style={styles.settingRow}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>{user?.displayName || 'User'}</Text>
+            <Text style={styles.settingDescription}>{user?.email}</Text>
+          </View>
+          <View style={[styles.badge, { backgroundColor: COLORS.success + '20' }]}>
+            <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
+            <Text style={[styles.badgeText, { color: COLORS.success }]}>Signed In</Text>
+          </View>
+        </View>
+
+        {organization && (
+          <View style={[styles.settingRow, styles.settingRowBorder]}>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingLabel}>Organization</Text>
+              <Text style={styles.settingDescription}>{organization.name}</Text>
+            </View>
+            <View style={[styles.badge, { backgroundColor: COLORS.primary + '20' }]}>
+              <Ionicons name="business" size={14} color={COLORS.primary} />
+              <Text style={[styles.badgeText, { color: COLORS.primary }]}>{organization.plan}</Text>
+            </View>
+          </View>
+        )}
+
+        <TouchableOpacity
+          style={[styles.settingRow, styles.settingRowBorder]}
+          onPress={handleSignOut}
+        >
+          <View style={styles.settingInfo}>
+            <Text style={[styles.settingLabel, { color: COLORS.danger }]}>Sign Out</Text>
+          </View>
+          <Ionicons name="log-out-outline" size={20} color={COLORS.danger} />
+        </TouchableOpacity>
+      </View>
+
       {/* Security Section */}
       <Text style={styles.sectionTitle}>Security</Text>
       <View style={styles.section}>
@@ -313,101 +337,100 @@ export default function SettingsScreen() {
         )}
       </View>
 
-      {/* AI Analysis Section */}
-      <Text style={styles.sectionTitle}>AI Analysis</Text>
+      {/* AI & Backend Section */}
+      <Text style={styles.sectionTitle}>AI & Backend</Text>
       <View style={styles.section}>
+        <View style={styles.settingRow}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>AI Analysis</Text>
+            <Text style={styles.settingDescription}>
+              {aiStatus.checking ? 'Checking...' :
+                aiStatus.available && aiStatus.hasOpenAIKey ? 'Ready - Server-side AI enabled' :
+                aiStatus.available ? 'Backend connected - AI key pending' :
+                'Backend offline'}
+            </Text>
+          </View>
+          {aiStatus.checking ? (
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          ) : (
+            <View style={[styles.statusBadge, {
+              backgroundColor: aiStatus.available && aiStatus.hasOpenAIKey ? COLORS.success + '20' :
+                aiStatus.available ? COLORS.warning + '20' : COLORS.danger + '20'
+            }]}>
+              <Ionicons
+                name={aiStatus.available && aiStatus.hasOpenAIKey ? 'checkmark-circle' :
+                  aiStatus.available ? 'alert-circle' : 'close-circle'}
+                size={16}
+                color={aiStatus.available && aiStatus.hasOpenAIKey ? COLORS.success :
+                  aiStatus.available ? COLORS.warning : COLORS.danger}
+              />
+              <Text style={[styles.statusText, {
+                color: aiStatus.available && aiStatus.hasOpenAIKey ? COLORS.success :
+                  aiStatus.available ? COLORS.warning : COLORS.danger
+              }]}>
+                {aiStatus.available && aiStatus.hasOpenAIKey ? 'Ready' :
+                  aiStatus.available ? 'Partial' : 'Offline'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={[styles.settingRow, styles.settingRowBorder]}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>OSINT Backend</Text>
+            <Text style={styles.settingDescription}>
+              Sherlock, Maigret, holehe (2400+ sites)
+            </Text>
+          </View>
+          <View style={[styles.statusBadge, {
+            backgroundColor: aiStatus.available ? COLORS.success + '20' : COLORS.danger + '20'
+          }]}>
+            <Ionicons
+              name={aiStatus.available ? 'cloud-done' : 'cloud-offline'}
+              size={16}
+              color={aiStatus.available ? COLORS.success : COLORS.danger}
+            />
+            <Text style={[styles.statusText, {
+              color: aiStatus.available ? COLORS.success : COLORS.danger
+            }]}>
+              {aiStatus.available ? 'Connected' : 'Offline'}
+            </Text>
+          </View>
+        </View>
+
         <TouchableOpacity
-          style={styles.settingRow}
-          onPress={() => setShowApiKeyInput(!showApiKeyInput)}
+          style={[styles.settingRow, styles.settingRowBorder]}
+          onPress={checkAIStatus}
+          disabled={aiStatus.checking}
         >
           <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>OpenAI API Key</Text>
-            <Text style={styles.settingDescription}>
-              {settings.openaiApiKey ? 'Key configured' : 'Not configured'}
+            <Text style={[styles.settingLabel, { color: COLORS.primary }]}>
+              Refresh Status
             </Text>
           </View>
-          <Ionicons
-            name={showApiKeyInput ? 'chevron-up' : 'chevron-down'}
-            size={20}
-            color={COLORS.textSecondary}
-          />
+          {aiStatus.checking ? (
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          ) : (
+            <Ionicons name="refresh" size={20} color={COLORS.primary} />
+          )}
         </TouchableOpacity>
-
-        {showApiKeyInput && (
-          <View style={styles.apiKeySetup}>
-            <TextInput
-              style={styles.apiKeyInput}
-              value={apiKey}
-              onChangeText={setApiKey}
-              placeholder="sk-..."
-              placeholderTextColor={COLORS.textMuted}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <Text style={styles.apiKeyHint}>
-              Get your API key from platform.openai.com
-            </Text>
-            <Button title="Save API Key" onPress={handleSaveApiKey} size="small" />
-          </View>
-        )}
       </View>
 
       {/* Cloud Sync Section */}
       <Text style={styles.sectionTitle}>Cloud Sync</Text>
       <View style={styles.section}>
-        <TouchableOpacity
-          style={styles.settingRow}
-          onPress={() => setShowFirebaseSetup(!showFirebaseSetup)}
-        >
+        <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>Firebase Configuration</Text>
+            <Text style={styles.settingLabel}>Firebase</Text>
             <Text style={styles.settingDescription}>
-              {settings.firebaseConfig ? 'Cloud sync enabled' : 'Local only'}
+              Auto-configured - cloud sync enabled
             </Text>
           </View>
-          <View style={styles.badge}>
-            <Ionicons
-              name={settings.firebaseConfig ? 'cloud-done' : 'cloud-offline'}
-              size={14}
-              color={settings.firebaseConfig ? COLORS.success : COLORS.textSecondary}
-            />
-            <Text style={[styles.badgeText, !settings.firebaseConfig && { color: COLORS.textSecondary }]}>
-              {settings.firebaseConfig ? 'Synced' : 'Local'}
-            </Text>
+          <View style={[styles.badge, { backgroundColor: COLORS.success + '20' }]}>
+            <Ionicons name="cloud-done" size={14} color={COLORS.success} />
+            <Text style={[styles.badgeText, { color: COLORS.success }]}>Synced</Text>
           </View>
-        </TouchableOpacity>
-
-        {showFirebaseSetup && (
-          <View style={styles.apiKeySetup}>
-            <Text style={styles.apiKeyHint}>
-              Paste your Firebase config JSON from Firebase Console {'->'} Project Settings {'->'} Web App
-            </Text>
-            <TextInput
-              style={[styles.apiKeyInput, { height: 120, textAlignVertical: 'top' }]}
-              value={firebaseConfig}
-              onChangeText={setFirebaseConfig}
-              placeholder='{"apiKey": "...", "projectId": "...", ...}'
-              placeholderTextColor={COLORS.textMuted}
-              multiline
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <Text style={[styles.apiKeyHint, { marginTop: 12 }]}>
-              User ID (for multi-device sync - use same ID on all devices)
-            </Text>
-            <TextInput
-              style={styles.apiKeyInput}
-              value={userId}
-              onChangeText={setUserId}
-              placeholder="your-email@example.com"
-              placeholderTextColor={COLORS.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <Button title="Save Firebase Config" onPress={handleSaveFirebase} size="small" style={{ marginTop: 12 }} />
-          </View>
-        )}
+        </View>
       </View>
 
       {/* Database Status Section */}
