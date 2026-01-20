@@ -5,11 +5,29 @@
 
 import { getSettings } from './storage';
 
-// Default to localhost for development, can be configured in settings
+// Production URL: Update this once deployed to Render.com
+// Default to Render.com deployment, falls back to localhost for development
+const PRODUCTION_BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
+const LOCAL_DEV_URL = 'http://localhost:8000';
+
 const getBackendUrl = async (): Promise<string> => {
   const settings = await getSettings();
-  // Check for custom backend URL in settings, otherwise use default
-  return (settings as any).osintBackendUrl || 'http://localhost:8000';
+  // Check for custom backend URL in settings, then production, then localhost
+  const customUrl = (settings as any).osintBackendUrl;
+  if (customUrl) return customUrl;
+
+  // Try production first, then fall back to localhost
+  try {
+    const prodCheck = await fetch(`${PRODUCTION_BACKEND_URL}/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(3000)
+    });
+    if (prodCheck.ok) return PRODUCTION_BACKEND_URL;
+  } catch {
+    // Production not available, try localhost
+  }
+
+  return LOCAL_DEV_URL;
 };
 
 // ============================================================================

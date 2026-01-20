@@ -46,6 +46,14 @@ export const DEFAULT_SETTINGS = {
   storageMode: 'cloud' as const,  // Always sync to cloud by default
   autoDeleteDays: null,
   maskFieldsByDefault: true,
+  osintBackendUrl: null as string | null, // Custom OSINT backend URL (defaults to production)
+};
+
+// OSINT Backend Configuration
+export const OSINT_CONFIG = {
+  productionUrl: 'https://elite-recovery-osint.onrender.com',
+  localDevUrl: 'http://localhost:8000',
+  healthCheckTimeout: 3000, // 3 seconds
 };
 
 // Journey plan default checklist
