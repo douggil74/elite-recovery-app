@@ -171,16 +171,33 @@ const FEATURES: FeatureSection[] = [
   },
 ];
 
-const PYTHON_TOOLS_PLANNED = [
-  { name: 'Sherlock', description: 'Username hunting across 400+ sites' },
-  { name: 'Maigret', description: 'Comprehensive username search' },
-  { name: 'holehe', description: 'Email to registered accounts' },
-  { name: 'socialscan', description: 'Email/username availability' },
-  { name: 'phoneinfoga', description: 'Advanced phone OSINT' },
-  { name: 'GHunt', description: 'Google account investigation' },
-  { name: 'Twint', description: 'Twitter scraping (no API)' },
-  { name: 'Instaloader', description: 'Instagram data extraction' },
+const PYTHON_TOOLS_LIVE = [
+  { name: 'Sherlock', description: 'Username hunting across 400+ sites', status: 'live' },
+  { name: 'Maigret', description: 'Comprehensive username search', status: 'live' },
+  { name: 'holehe', description: 'Email to registered accounts', status: 'live' },
+  { name: 'socialscan', description: 'Email/username availability', status: 'live' },
+  { name: 'Intelligent Investigation', description: 'Smart flow: name → usernames → profiles', status: 'live' },
+  { name: 'Multi-Username Search', description: 'Searches username variations automatically', status: 'live' },
+  { name: 'phoneinfoga', description: 'Advanced phone OSINT', status: 'planned' },
+  { name: 'GHunt', description: 'Google account investigation', status: 'planned' },
 ];
+
+const BACKEND_INFO = {
+  url: 'https://elite-recovery-osint.onrender.com',
+  version: '1.1.0',
+  endpoints: [
+    '/api/sherlock - Username search (400+ sites)',
+    '/api/maigret - Comprehensive username search',
+    '/api/holehe - Email account discovery',
+    '/api/socialscan - Quick availability check',
+    '/api/investigate - Intelligent person investigation',
+    '/api/multi-username - Multi-username variation search',
+    '/api/sweep - Full OSINT sweep',
+    '/api/ai/chat - AI chat (OpenAI proxy)',
+    '/api/ai/analyze - Image analysis',
+    '/api/ai/brief - Recovery brief generation',
+  ]
+};
 
 export default function AboutScreen() {
   const router = useRouter();
@@ -220,10 +237,10 @@ export default function AboutScreen() {
           <View style={styles.logoBox}>
             <Ionicons name="locate" size={40} color={COLORS.primary} />
           </View>
-          <Text style={styles.appName}>Elite Recovery OSINT</Text>
+          <Text style={styles.appName}>Elite Recovery System</Text>
           <Text style={styles.appVersion}>Version {VERSION}</Text>
           <Text style={styles.appTagline}>
-            Advanced Fugitive Recovery Intelligence Platform
+            Advanced Recovery Intelligence Platform
           </Text>
         </View>
 
@@ -294,19 +311,31 @@ export default function AboutScreen() {
           </View>
         ))}
 
-        {/* Planned Python Tools */}
+        {/* Python OSINT Backend - LIVE */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Ionicons name="logo-python" size={20} color="#3776ab" />
-            <Text style={styles.sectionTitle}>Python OSINT Tools (Planned)</Text>
+            <Text style={styles.sectionTitle}>Python OSINT Backend</Text>
+            <View style={[styles.typeBadge, { backgroundColor: '#22c55e30', marginLeft: 8 }]}>
+              <Text style={[styles.typeText, { color: '#22c55e' }]}>LIVE</Text>
+            </View>
           </View>
+
+          {/* Backend Status */}
+          <View style={[styles.item, { borderLeftColor: '#22c55e', marginBottom: 12 }]}>
+            <Text style={styles.itemName}>Backend: {BACKEND_INFO.url}</Text>
+            <Text style={styles.itemDesc}>Version {BACKEND_INFO.version} - All tools installed and running</Text>
+          </View>
+
           <View style={styles.itemList}>
-            {PYTHON_TOOLS_PLANNED.map((tool, idx) => (
-              <View key={idx} style={styles.item}>
+            {PYTHON_TOOLS_LIVE.map((tool, idx) => (
+              <View key={idx} style={[styles.item, { borderLeftColor: tool.status === 'live' ? '#22c55e' : '#f59e0b' }]}>
                 <View style={styles.itemHeader}>
                   <Text style={styles.itemName}>{tool.name}</Text>
-                  <View style={[styles.typeBadge, { backgroundColor: '#3776ab30' }]}>
-                    <Text style={[styles.typeText, { color: '#3776ab' }]}>PYTHON</Text>
+                  <View style={[styles.typeBadge, { backgroundColor: tool.status === 'live' ? '#22c55e30' : '#f59e0b30' }]}>
+                    <Text style={[styles.typeText, { color: tool.status === 'live' ? '#22c55e' : '#f59e0b' }]}>
+                      {tool.status === 'live' ? 'LIVE' : 'PLANNED'}
+                    </Text>
                   </View>
                 </View>
                 <Text style={styles.itemDesc}>{tool.description}</Text>
