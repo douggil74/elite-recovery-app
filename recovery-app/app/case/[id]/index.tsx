@@ -45,6 +45,8 @@ import {
 import {
   smartOsintSearch,
   checkBackendHealth,
+  investigatePerson,
+  type InvestigationResult,
 } from '@/lib/python-osint';
 
 const DARK = {
@@ -432,156 +434,208 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
     }
   }, [parsedData?.subject?.fullName, osintSearched]);
 
-  const runOSINTSearch = async (fullName: string) => {
+  // Generate username variations from a name
+  const generateUsernameVariations = (fullName: string): string[] => {
+    const nameParts = fullName.toLowerCase().split(' ').filter(p => p.length > 0);
+    const first = nameParts[0] || '';
+    const last = nameParts[nameParts.length - 1] || '';
+    const middle = nameParts.length > 2 ? nameParts[1] : '';
+    const firstInitial = first[0] || '';
+    const lastInitial = last[0] || '';
+
+    const variations = [
+      // Common patterns
+      `${first}${last}`,           // amandadriskell
+      `${first}_${last}`,          // amanda_driskell
+      `${first}.${last}`,          // amanda.driskell
+      `${first}-${last}`,          // amanda-driskell
+      `${last}${first}`,           // driskellamanda
+      `${firstInitial}${last}`,    // adriskell
+      `${first}${lastInitial}`,    // amandad
+      `${first}${last[0]}`,        // amandad
+      `${firstInitial}.${last}`,   // a.driskell
+      `${first}_${lastInitial}`,   // amanda_d
+      `${last}_${first}`,          // driskell_amanda
+      `${last}${firstInitial}`,    // driskella
+      `${first}${last}1`,          // amandadriskell1
+      `${first}${last}123`,        // amandadriskell123
+      `${first}_${last}_`,         // amanda_driskell_
+      `_${first}${last}`,          // _amandadriskell
+      `${first}official`,          // amandaofficial
+      `real${first}${last}`,       // realamandadriskell
+      `the${first}${last}`,        // theamandadriskell
+      // With middle name/initial if exists
+      ...(middle ? [
+        `${first}${middle[0]}${last}`,  // amandajdriskell
+        `${first}_${middle[0]}_${last}`, // amanda_j_driskell
+      ] : []),
+    ];
+
+    // Remove duplicates and empty strings
+    return [...new Set(variations.filter(v => v.length > 2))];
+  };
+
+  const runOSINTSearch = async (fullName: string, email?: string) => {
     setIsSearchingOSINT(true);
     setOsintSearched(true);
 
-    // Add searching message to chat
-    const toolsMessage = pythonBackendAvailable
-      ? '🐍 **Sherlock + Maigret + holehe** (Python backend active)'
-      : '📡 **JavaScript OSINT Engine**';
+    // Generate username variations for display
+    const usernameVariations = generateUsernameVariations(fullName);
 
-    setChatMessages(prev => [...prev, {
-      id: Date.now().toString(),
-      role: 'agent',
-      content: `🔍 **AUTO-OSINT**: Searching for "${fullName}"\n${toolsMessage}\nSearching 400+ platforms...`,
-      timestamp: new Date(),
-    }]);
-    scrollToBottom();
-
-    try {
-      // Use the full OSINT API sweep
-      const results = await fullOSINTSweep(
-        { name: fullName },
-        (step, result) => {
-          if (step && !result) {
-            setChatMessages(prev => [...prev, {
-              id: Date.now().toString(),
-              role: 'agent',
-              content: `⏳ ${step}`,
-              timestamp: new Date(),
-            }]);
-            scrollToBottom();
-          }
-        }
-      );
-
-      // Update social profiles with API results
-      if (results.username) {
-        const updatedProfiles = generateSocialProfiles(fullName).map(profile => {
-          const foundMatch = results.username?.found.find(f =>
-            f.platform.toLowerCase().includes(profile.platform.toLowerCase().split('/')[0])
-          );
-          const notFoundMatch = results.username?.notFound.find(p =>
-            p.toLowerCase().includes(profile.platform.toLowerCase().split('/')[0])
-          );
-
-          if (foundMatch) {
-            return { ...profile, status: 'found' as const, url: foundMatch.url };
-          } else if (notFoundMatch) {
-            return { ...profile, status: 'not_found' as const };
-          }
-          return profile;
-        });
-        setSocialProfiles(updatedProfiles);
-
-        // Store the results
-        setOsintResults(results.username.found.map(f => ({
-          platform: f.platform,
-          username: results.username?.username || '',
-          exists: true,
-          profileUrl: f.url,
-          confidence: 90,
-        })));
-      }
-
-      // Generate people search results from person search
-      if (results.person) {
-        setPeopleSearchResults(
-          results.person.searchLinks
-            .filter(l => l.category === 'People Search')
-            .map(l => ({
-              source: l.name,
-              url: l.url,
-              status: 'unknown' as const,
-            }))
-        );
-      }
-
-      // Build summary
-      let summary = `✅ **OSINT SWEEP COMPLETE**\n\n`;
-
-      if (results.username) {
-        summary += `**Social Media (${results.username.summary.total} platforms):**\n`;
-        if (results.username.found.length > 0) {
-          summary += `🟢 Found: ${results.username.found.map(f => f.platform).join(', ')}\n`;
-        }
-        if (results.username.summary.notFound > 0) {
-          summary += `🔴 Not found: ${results.username.summary.notFound} platforms\n`;
-        }
-        summary += '\n';
-      }
-
-      if (results.person) {
-        summary += `**Search Links Generated:** ${results.person.searchLinks.length}\n`;
-        summary += `• People Search: ${results.person.searchLinks.filter(l => l.category === 'People Search').length}\n`;
-        summary += `• Court Records: ${results.person.searchLinks.filter(l => l.category === 'Court Records').length}\n`;
-        summary += `• Criminal: ${results.person.searchLinks.filter(l => l.category === 'Criminal Records').length}\n`;
-        summary += '\n';
-      }
-
-      summary += `💡 **Tips:**\n${results.person?.tips.slice(0, 3).join('\n') || 'Check each link systematically'}`;
-
+    // Check if Python backend is available
+    if (pythonBackendAvailable) {
+      // Use intelligent investigation flow
       setChatMessages(prev => [...prev, {
         id: Date.now().toString(),
         role: 'agent',
-        content: summary,
+        content: `🔍 **INTELLIGENT INVESTIGATION**: "${fullName}"\n🐍 Python OSINT Backend Active\n\n**Investigation Flow:**\n1️⃣ Generate people search links\n2️⃣ ${email ? `Check email: ${email}` : 'Skip email (none provided)'}\n3️⃣ Search username variations with Sherlock\n\n**Usernames to try:**\n${usernameVariations.slice(0, 5).map(u => `• ${u}`).join('\n')}\n\n⏳ Starting investigation...`,
         timestamp: new Date(),
       }]);
+      scrollToBottom();
 
-    } catch (error: any) {
-      console.error('OSINT sweep error:', error);
-
-      // Fallback to local search
       try {
-        const localResults = await performOSINTSearch(fullName, { checkAllVariations: true });
-        setOsintResults(localResults.profiles);
-        setPeopleSearchResults(localResults.peopleSearchResults);
+        const investigation = await investigatePerson(fullName, email);
 
+        // Show each step as it completes
+        for (const step of investigation.flow_steps) {
+          setChatMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            role: 'agent',
+            content: `${step.status === 'complete' ? '✅' : step.status === 'error' ? '❌' : '⏳'} **Step ${step.step}:** ${step.action}\n${step.result || ''}`,
+            timestamp: new Date(),
+          }]);
+          scrollToBottom();
+        }
+
+        // Update social profiles from confirmed profiles
         const updatedProfiles = generateSocialProfiles(fullName).map(profile => {
-          const osintResult = localResults.profiles.find(r =>
-            r.platform.toLowerCase() === profile.platform.toLowerCase()
+          const foundMatch = investigation.confirmed_profiles.find(p =>
+            p.platform.toLowerCase().includes(profile.platform.toLowerCase().split('/')[0]) ||
+            profile.platform.toLowerCase().includes(p.platform.toLowerCase())
           );
-          if (osintResult) {
-            return {
-              ...profile,
-              status: osintResult.exists === true ? 'found' as const :
-                      osintResult.exists === false ? 'not_found' as const : 'searching' as const,
-              url: osintResult.profileUrl || profile.url,
-            };
+          if (foundMatch) {
+            return { ...profile, status: 'found' as const, url: foundMatch.url };
           }
           return profile;
         });
         setSocialProfiles(updatedProfiles);
 
+        // Store results
+        setOsintResults(investigation.confirmed_profiles.map(p => ({
+          platform: p.platform,
+          username: p.username || '',
+          exists: true,
+          profileUrl: p.url,
+          confidence: 95,
+        })));
+
+        // Store people search links
+        setPeopleSearchResults(investigation.people_search_links.map(l => ({
+          source: l.name,
+          url: l.url,
+          status: 'unknown' as const,
+        })));
+
+        // Build final summary
+        let summary = `✅ **INVESTIGATION COMPLETE**\n\n`;
+        summary += `👤 **Subject:** ${investigation.name}\n`;
+        summary += `⏱️ **Time:** ${investigation.execution_time.toFixed(1)}s\n\n`;
+
+        if (investigation.discovered_usernames.length > 0) {
+          summary += `**🔎 Usernames Searched:**\n${investigation.discovered_usernames.map(u => `• ${u}`).join('\n')}\n\n`;
+        }
+
+        if (investigation.confirmed_profiles.length > 0) {
+          summary += `**🟢 CONFIRMED PROFILES (${investigation.confirmed_profiles.length}):**\n`;
+          investigation.confirmed_profiles.slice(0, 20).forEach(p => {
+            summary += `• [${p.platform}](${p.url}) (via ${p.source})\n`;
+          });
+          if (investigation.confirmed_profiles.length > 20) {
+            summary += `• ... and ${investigation.confirmed_profiles.length - 20} more\n`;
+          }
+          summary += '\n';
+        } else {
+          summary += `**🔴 No confirmed profiles found**\n\n`;
+        }
+
+        summary += `**📋 People Search Links (${investigation.people_search_links.length}):**\n`;
+        summary += `Click the links in the OSINT panel to search manually →\n\n`;
+        summary += `📊 **Summary:** ${investigation.summary}`;
+
         setChatMessages(prev => [...prev, {
           id: Date.now().toString(),
           role: 'agent',
-          content: `✅ Local OSINT complete. Found ${localResults.profiles.filter(p => p.exists === true).length} profiles.`,
+          content: summary,
           timestamp: new Date(),
         }]);
-      } catch (localError) {
+
+      } catch (error: any) {
+        console.error('Investigation error:', error);
         setChatMessages(prev => [...prev, {
           id: Date.now().toString(),
           role: 'agent',
-          content: `⚠️ OSINT search error: ${error?.message || 'Unknown error'}. Try manual search links.`,
+          content: `⚠️ Investigation error: ${error?.message || 'Unknown error'}\nFalling back to JavaScript search...`,
           timestamp: new Date(),
         }]);
+
+        // Fallback to JS search
+        await runJSFallbackSearch(fullName);
       }
+
+    } else {
+      // No Python backend - use JS search directly
+      setChatMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: 'agent',
+        content: `🔍 **OSINT SEARCH**: "${fullName}"\n📡 JavaScript OSINT Engine (Python backend not available)\n\nSearching platforms...`,
+        timestamp: new Date(),
+      }]);
+      scrollToBottom();
+
+      await runJSFallbackSearch(fullName);
     }
 
     setIsSearchingOSINT(false);
     scrollToBottom();
+  };
+
+  // JS fallback search
+  const runJSFallbackSearch = async (fullName: string) => {
+    try {
+      const localResults = await performOSINTSearch(fullName, { checkAllVariations: true });
+      setOsintResults(localResults.profiles);
+      setPeopleSearchResults(localResults.peopleSearchResults);
+
+      const updatedProfiles = generateSocialProfiles(fullName).map(profile => {
+        const osintResult = localResults.profiles.find(r =>
+          r.platform.toLowerCase() === profile.platform.toLowerCase()
+        );
+        if (osintResult) {
+          return {
+            ...profile,
+            status: osintResult.exists === true ? 'found' as const :
+                    osintResult.exists === false ? 'not_found' as const : 'searching' as const,
+            url: osintResult.profileUrl || profile.url,
+          };
+        }
+        return profile;
+      });
+      setSocialProfiles(updatedProfiles);
+
+      setChatMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: 'agent',
+        content: `✅ Local OSINT complete. Found ${localResults.profiles.filter(p => p.exists === true).length} profiles.`,
+        timestamp: new Date(),
+      }]);
+    } catch (localError: any) {
+      setChatMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: 'agent',
+        content: `⚠️ OSINT search error: ${localError?.message || 'Unknown error'}. Try manual search links.`,
+        timestamp: new Date(),
+      }]);
+    }
   };
 
   // Init greeting
@@ -845,10 +899,42 @@ ${result.explanation}`,
   const sendMessage = async () => {
     if (!inputText.trim() || isSending) return;
     const userText = inputText.trim();
+    const userTextLower = userText.toLowerCase();
     setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', content: userText, timestamp: new Date() }]);
     setInputText('');
     setIsSending(true);
     scrollToBottom();
+
+    // Detect OSINT commands
+    const osintCommands = [
+      'social search', 'run osint', 'do osint', 'find profiles', 'search profiles',
+      'find social', 'search social', 'osint search', 'osint sweep', 'run sweep',
+      'do search', 'find accounts', 'search accounts', 'run search', 'do social',
+      'sherlock', 'maigret', 'find username', 'search username'
+    ];
+
+    const isOsintCommand = osintCommands.some(cmd => userTextLower.includes(cmd));
+
+    if (isOsintCommand) {
+      const subjectName = parsedData?.subject?.fullName || caseData?.name;
+      if (subjectName) {
+        setOsintSearched(false);
+        await runOSINTSearch(subjectName);
+        setIsSending(false);
+        scrollToBottom();
+        return;
+      } else {
+        setChatMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'agent',
+          content: '⚠️ No subject name found. Upload a document with subject information first, or create a case with a name.',
+          timestamp: new Date(),
+        }]);
+        setIsSending(false);
+        scrollToBottom();
+        return;
+      }
+    }
 
     if (userText.length > 500) {
       try {
@@ -1212,6 +1298,70 @@ ${result.explanation}`,
               >
                 <Ionicons name="refresh" size={14} color="#fff" />
                 <Text style={styles.osintRunBtnText}>Re-scan OSINT ({osintResults.filter(r => r.exists === true).length} found)</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* TEST ALL TOOLS Button */}
+            {!isSearchingOSINT && (
+              <TouchableOpacity
+                style={[styles.osintRunBtn, { backgroundColor: DARK.warning, marginTop: 4 }]}
+                onPress={async () => {
+                  const testName = parsedData?.subject?.fullName || caseData?.name || 'Test User';
+                  const testEmail = (parsedData as any)?.emails?.[0] || undefined;
+
+                  setChatMessages(prev => [...prev, {
+                    id: Date.now().toString(),
+                    role: 'system',
+                    content: `🧪 **TEST MODE**: Intelligent Investigation Flow\n\n**Target:** ${testName}\n**Email:** ${testEmail || 'None'}\n\n**Testing:**\n1. Backend health check\n2. Smart person investigation\n3. Username variation search\n\nStarting...`,
+                    timestamp: new Date(),
+                  }]);
+                  scrollToBottom();
+
+                  // Step 1: Check backend health
+                  setChatMessages(prev => [...prev, {
+                    id: Date.now().toString(),
+                    role: 'agent',
+                    content: `⏳ **Step 1/2:** Checking Python OSINT backend...`,
+                    timestamp: new Date(),
+                  }]);
+                  scrollToBottom();
+
+                  const health = await checkBackendHealth();
+                  setPythonBackendAvailable(health?.status === 'healthy');
+
+                  setChatMessages(prev => [...prev, {
+                    id: Date.now().toString(),
+                    role: 'agent',
+                    content: health
+                      ? `✅ **Backend Status:** ${health.status}\n\n**Installed Tools:**\n• Sherlock: ${health.tools.sherlock}\n• Maigret: ${health.tools.maigret}\n• Holehe: ${health.tools.holehe}\n• Socialscan: ${health.tools.socialscan}\n\n**API URL:** https://elite-recovery-osint.onrender.com`
+                      : `❌ **Backend Status:** Not available\n\nWill use JavaScript fallback for OSINT`,
+                    timestamp: new Date(),
+                  }]);
+                  scrollToBottom();
+
+                  // Step 2: Run intelligent investigation
+                  setChatMessages(prev => [...prev, {
+                    id: Date.now().toString(),
+                    role: 'agent',
+                    content: `⏳ **Step 2/2:** Running intelligent investigation flow...\n\nThis will:\n• Generate people search links\n• Search username variations (${generateUsernameVariations(testName).slice(0, 3).join(', ')}...)\n• Find confirmed social profiles`,
+                    timestamp: new Date(),
+                  }]);
+                  scrollToBottom();
+
+                  setOsintSearched(false);
+                  await runOSINTSearch(testName, testEmail);
+
+                  setChatMessages(prev => [...prev, {
+                    id: Date.now().toString(),
+                    role: 'system',
+                    content: `🧪 **TEST COMPLETE**\n\nCheck the results above. If Python backend is working, you should see:\n• Step-by-step investigation flow\n• Username variations searched\n• Confirmed profiles found\n• People search links generated`,
+                    timestamp: new Date(),
+                  }]);
+                  scrollToBottom();
+                }}
+              >
+                <Ionicons name="flask" size={14} color="#000" />
+                <Text style={[styles.osintRunBtnText, { color: '#000' }]}>🧪 TEST ALL TOOLS</Text>
               </TouchableOpacity>
             )}
 

@@ -340,6 +340,119 @@ export async function quickSocialScan(
 }
 
 // ============================================================================
+// Intelligent Person Investigation (Smart Flow)
+// ============================================================================
+
+export interface InvestigationResult {
+  name: string;
+  searched_at: string;
+  flow_steps: {
+    step: number;
+    action: string;
+    status: string;
+    result?: string;
+  }[];
+  discovered_emails: string[];
+  discovered_usernames: string[];
+  confirmed_profiles: {
+    platform: string;
+    url: string;
+    username?: string;
+    source: string;
+  }[];
+  people_search_links: {
+    name: string;
+    url: string;
+    type: string;
+  }[];
+  summary: string;
+  execution_time: number;
+}
+
+/**
+ * Intelligent person investigation - the smart OSINT flow
+ * 1. Generates people search links
+ * 2. Checks email registrations (if provided)
+ * 3. Searches username variations with Sherlock
+ */
+export async function investigatePerson(
+  name: string,
+  email?: string,
+  phone?: string,
+  location?: string
+): Promise<InvestigationResult> {
+  const baseUrl = await getBackendUrl();
+  const response = await fetch(`${baseUrl}/api/investigate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({
+      name,
+      email,
+      phone,
+      location,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Investigation failed: ${response.statusText}`);
+  }
+
+  return await response.json();
+}
+
+// ============================================================================
+// Multi-Username Search (searches variations)
+// ============================================================================
+
+export interface MultiUsernameResult {
+  name: string;
+  searched_at: string;
+  usernames_searched: string[];
+  total_profiles_found: number;
+  profiles: {
+    platform: string;
+    url: string;
+    searched_username: string;
+  }[];
+  errors: string[];
+  execution_time: number;
+}
+
+/**
+ * Search multiple username variations for a person
+ */
+export async function multiUsernameSearch(
+  name: string,
+  usernames?: string[],
+  maxUsernames: number = 5,
+  timeout: number = 30
+): Promise<MultiUsernameResult> {
+  const baseUrl = await getBackendUrl();
+  const response = await fetch(`${baseUrl}/api/multi-username`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({
+      name,
+      usernames,
+      max_usernames: maxUsernames,
+      timeout,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Multi-username search failed: ${response.statusText}`);
+  }
+
+  return await response.json();
+}
+
+// ============================================================================
 // Smart Search (with fallback to JS implementation)
 // ============================================================================
 
