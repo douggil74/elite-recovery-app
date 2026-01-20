@@ -118,7 +118,7 @@ export default function UploadScreen() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity onPress={() => router.push(`/case/${id}`)} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={24} color={DARK.text} />
         </TouchableOpacity>
         <Text style={styles.title}>Upload Reports</Text>

@@ -1094,14 +1094,7 @@ ${result.explanation}`,
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => {
-            // Try to go back, fallback to home if no history
-            if (typeof window !== 'undefined' && window.history.length > 1) {
-              router.back();
-            } else {
-              router.replace('/');
-            }
-          }}
+          onPress={() => router.push('/(tabs)')}
           style={styles.backBtn}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >

@@ -30,7 +30,7 @@ export default function PurposeScreen() {
 
     try {
       await updateCase(caseId, { attestationAccepted: true });
-      router.back();
+      router.push(`/case/${caseId}`);
     } catch (error) {
       Alert.alert('Error', 'Failed to save attestation. Please try again.');
     } finally {

@@ -57,13 +57,13 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.content}>
-        {/* Logo */}
-        <View style={styles.logoContainer}>
+        {/* Logo - tap to go home */}
+        <TouchableOpacity style={styles.logoContainer} onPress={() => router.push('/')}>
           <View style={styles.logo}>
             <Ionicons name="shield-checkmark" size={32} color={COLORS.primary} />
           </View>
           <Text style={styles.title}>Elite Recovery System</Text>
-        </View>
+        </TouchableOpacity>
 
         {/* Form */}
         <View style={styles.form}>

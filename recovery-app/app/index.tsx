@@ -56,7 +56,7 @@ export default function HomeScreen() {
         <View style={styles.logoContainer}>
           <Ionicons name="shield-checkmark" size={48} color={COLORS.primary} />
         </View>
-        <Text style={styles.title}>Fugitive Recovery</Text>
+        <Text style={styles.title}>Elite Recovery</Text>
         <Text style={styles.subtitle}>
           {organization?.name || user?.displayName || 'Professional Case Management'}
         </Text>
