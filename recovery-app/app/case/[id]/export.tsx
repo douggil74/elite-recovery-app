@@ -16,6 +16,7 @@ import { maskAddress, maskPhone } from '@/lib/encryption';
 import { COLORS, PURPOSE_LABELS } from '@/constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { RankedLocation, CrossReference } from '@/lib/ai-squad';
+import type { PhotoIntelligence } from '@/lib/photo-intelligence';
 
 const isWeb = Platform.OS === 'web';
 
@@ -26,15 +27,19 @@ export default function ExportScreen() {
   const [squadLocations, setSquadLocations] = useState<RankedLocation[]>([]);
   const [squadConfidence, setSquadConfidence] = useState(0);
   const [crossRefs, setCrossRefs] = useState<CrossReference[]>([]);
+  const [subjectPhoto, setSubjectPhoto] = useState<string | null>(null);
+  const [socialProfiles, setSocialProfiles] = useState<any[]>([]);
+  const [photoIntel, setPhotoIntel] = useState<PhotoIntelligence | null>(null);
 
   const latestReport = reports[0];
   const brief = getBrief();
 
-  // Load AI Squad data from storage
+  // Load all case data from storage
   useEffect(() => {
-    const loadSquadData = async () => {
+    const loadAllData = async () => {
       if (!id) return;
       try {
+        // Load AI Squad data
         const squadData = await AsyncStorage.getItem(`case_squad_${id}`);
         if (squadData) {
           const parsed = JSON.parse(squadData);
@@ -42,11 +47,23 @@ export default function ExportScreen() {
           setSquadConfidence(parsed.confidence || 0);
           setCrossRefs(parsed.crossReferences || []);
         }
+
+        // Load subject photo
+        const photo = await AsyncStorage.getItem(`case_photo_${id}`);
+        if (photo) setSubjectPhoto(photo);
+
+        // Load social profiles
+        const social = await AsyncStorage.getItem(`case_social_${id}`);
+        if (social) setSocialProfiles(JSON.parse(social));
+
+        // Load photo intelligence (if stored)
+        const intel = await AsyncStorage.getItem(`case_photo_intel_${id}`);
+        if (intel) setPhotoIntel(JSON.parse(intel));
       } catch (e) {
-        console.log('No squad data found');
+        console.log('Error loading case data:', e);
       }
     };
-    loadSquadData();
+    loadAllData();
   }, [id]);
 
   const generatePdfHtml = (maskSensitive: boolean) => {
@@ -251,6 +268,100 @@ export default function ExportScreen() {
     `).join('')}
   </div>` : ''}
   ` : ''}
+
+  ${subjectPhoto ? `
+  <h2>Subject Photo</h2>
+  <div class="section" style="text-align: center;">
+    <img src="${subjectPhoto}" style="max-width: 300px; max-height: 300px; border-radius: 8px; border: 2px solid #dc2626;" alt="Subject Photo" />
+    <p style="font-size: 11px; color: #6b7280; margin-top: 8px;">Subject photograph - verify identity before approach</p>
+  </div>
+  ` : ''}
+
+  ${socialProfiles.filter(p => p.status === 'found').length > 0 ? `
+  <h2>Social Media Profiles Found</h2>
+  <div class="section">
+    <table>
+      <tr><th>Platform</th><th>Username</th><th>URL</th></tr>
+      ${socialProfiles.filter(p => p.status === 'found').map(p => `
+      <tr>
+        <td><strong>${p.platform}</strong></td>
+        <td>${p.username}</td>
+        <td style="font-size: 10px; word-break: break-all;">${p.url}</td>
+      </tr>
+      `).join('')}
+    </table>
+    <p style="font-size: 11px; color: #059669; margin-top: 10px;">
+      <strong>Tip:</strong> Monitor these profiles for location check-ins, tagged photos, and associate interactions.
+    </p>
+  </div>
+  ` : ''}
+
+  ${photoIntel && (photoIntel.addresses.length > 0 || photoIntel.vehicles.length > 0 || photoIntel.businesses.length > 0) ? `
+  <h2>Photo Intelligence</h2>
+  <div class="section">
+    ${photoIntel.addresses.length > 0 ? `
+    <h3 style="color: #dc2626; font-size: 14px;">Addresses Detected in Photo</h3>
+    <ul style="font-size: 13px;">
+      ${photoIntel.addresses.map(a => `<li><strong>${a.text}</strong> (${a.confidence}) - ${a.context}</li>`).join('')}
+    </ul>
+    ` : ''}
+    ${photoIntel.vehicles.length > 0 ? `
+    <h3 style="color: #1e40af; font-size: 14px;">Vehicles Detected</h3>
+    <ul style="font-size: 13px;">
+      ${photoIntel.vehicles.map(v => `<li>${v.color} ${v.make || ''} ${v.model || ''} ${v.type}${v.licensePlate ? ` - <strong>PLATE: ${v.licensePlate}</strong>` : ''}</li>`).join('')}
+    </ul>
+    ` : ''}
+    ${photoIntel.businesses.length > 0 ? `
+    <h3 style="color: #059669; font-size: 14px;">Businesses/Landmarks</h3>
+    <ul style="font-size: 13px;">
+      ${photoIntel.businesses.map(b => `<li><strong>${b.name}</strong> (${b.type})</li>`).join('')}
+    </ul>
+    ` : ''}
+  </div>
+  ` : ''}
+
+  <h2>Quick Search Links (Pre-filled)</h2>
+  <div class="section">
+    <p style="font-size: 11px; color: #6b7280; margin-bottom: 15px;">
+      Use these links on your mobile device. The subject's name is pre-filled in each search.
+    </p>
+
+    <h3 style="font-size: 13px; color: #374151;">Social Media</h3>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px;">
+      <div style="font-size: 11px;"><strong>Facebook:</strong><br>facebook.com/search/people/?q=${encodeURIComponent(subject.fullName)}</div>
+      <div style="font-size: 11px;"><strong>Instagram:</strong><br>instagram.com/${subject.fullName.toLowerCase().replace(/\s+/g, '')}</div>
+      <div style="font-size: 11px;"><strong>TikTok:</strong><br>tiktok.com/@${subject.fullName.toLowerCase().replace(/\s+/g, '')}</div>
+      <div style="font-size: 11px;"><strong>Twitter/X:</strong><br>twitter.com/search?q=${encodeURIComponent(subject.fullName)}</div>
+    </div>
+
+    <h3 style="font-size: 13px; color: #374151;">People Search</h3>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px;">
+      <div style="font-size: 11px;"><strong>TruePeopleSearch:</strong><br>truepeoplesearch.com/results?name=${encodeURIComponent(subject.fullName)}</div>
+      <div style="font-size: 11px;"><strong>FastPeopleSearch:</strong><br>fastpeoplesearch.com/name/${encodeURIComponent(subject.fullName.replace(/\s+/g, '-'))}</div>
+      <div style="font-size: 11px;"><strong>Whitepages:</strong><br>whitepages.com/name/${encodeURIComponent(subject.fullName.replace(/\s+/g, '-'))}</div>
+      <div style="font-size: 11px;"><strong>Spokeo:</strong><br>spokeo.com/${encodeURIComponent(subject.fullName.replace(/\s+/g, '-'))}</div>
+    </div>
+
+    <h3 style="font-size: 13px; color: #374151;">Court & Criminal</h3>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px;">
+      <div style="font-size: 11px;"><strong>CourtListener:</strong><br>courtlistener.com/?q=${encodeURIComponent(subject.fullName)}</div>
+      <div style="font-size: 11px;"><strong>Google Mugshots:</strong><br>google.com/search?q=${encodeURIComponent(subject.fullName + ' mugshot')}</div>
+    </div>
+
+    <h3 style="font-size: 13px; color: #374151;">Fraud Research</h3>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+      <div style="font-size: 11px;"><strong>Social Catfish:</strong><br>social-catfish.com/search/results?q=${encodeURIComponent(subject.fullName)}</div>
+      <div style="font-size: 11px;"><strong>ScamDigger:</strong><br>scamdigger.com/search?q=${encodeURIComponent(subject.fullName)}</div>
+    </div>
+  </div>
+
+  <div style="page-break-before: always;"></div>
+
+  <h2>Field Agent Notes</h2>
+  <div class="section" style="min-height: 200px; border: 2px dashed #e5e7eb; border-radius: 8px; padding: 15px;">
+    <p style="font-size: 11px; color: #9ca3af;">Use this space for field observations, contact attempts, and notes:</p>
+    <div style="height: 180px;"></div>
+  </div>
 
   <div class="footer">
     <p>This document is for authorized fugitive recovery use only.</p>

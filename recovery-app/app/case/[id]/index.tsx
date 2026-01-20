@@ -38,6 +38,14 @@ import {
   type UsernameSearchResult,
   type PersonSearchResult,
 } from '@/lib/osint-api';
+import {
+  photoIntelligence,
+  type PhotoIntelligence,
+} from '@/lib/photo-intelligence';
+import {
+  smartOsintSearch,
+  checkBackendHealth,
+} from '@/lib/python-osint';
 
 const DARK = {
   bg: '#000000',
@@ -190,6 +198,10 @@ export default function CaseDetailScreen() {
   const [facialFeatures, setFacialFeatures] = useState<FacialFeatures | null>(null);
   const [isExtractingFace, setIsExtractingFace] = useState(false);
   const [faceMatchService, setFaceMatchService] = useState<FaceMatchingService | null>(null);
+  const [photoIntel, setPhotoIntel] = useState<PhotoIntelligence | null>(null);
+  const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
+  const [tacticalAdvice, setTacticalAdvice] = useState<string[]>([]);
+  const [pythonBackendAvailable, setPythonBackendAvailable] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -272,6 +284,18 @@ export default function CaseDetailScreen() {
       }
     };
     initFaceMatch();
+  }, []);
+
+  // Check Python OSINT backend availability
+  useEffect(() => {
+    const checkPythonBackend = async () => {
+      const health = await checkBackendHealth();
+      if (health && health.status === 'healthy') {
+        setPythonBackendAvailable(true);
+        console.log('Python OSINT backend available:', health.tools);
+      }
+    };
+    checkPythonBackend();
   }, []);
 
   // Extract facial features when photo is set
@@ -413,10 +437,14 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
     setOsintSearched(true);
 
     // Add searching message to chat
+    const toolsMessage = pythonBackendAvailable
+      ? '🐍 **Sherlock + Maigret + holehe** (Python backend active)'
+      : '📡 **JavaScript OSINT Engine**';
+
     setChatMessages(prev => [...prev, {
       id: Date.now().toString(),
       role: 'agent',
-      content: `🔍 **AUTO-OSINT**: Searching for "${fullName}" across 70+ platforms...`,
+      content: `🔍 **AUTO-OSINT**: Searching for "${fullName}"\n${toolsMessage}\nSearching 400+ platforms...`,
       timestamp: new Date(),
     }]);
     scrollToBottom();
@@ -580,6 +608,110 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
     Linking.openURL(url);
   };
 
+  // Analyze photo for investigative intelligence
+  const analyzePhotoForIntel = async (imageData: string) => {
+    setIsAnalyzingPhoto(true);
+    try {
+      const intel = await photoIntelligence.analyzePhoto(imageData);
+      if (intel) {
+        setPhotoIntel(intel);
+        const advice = photoIntelligence.generateTacticalAdvice(intel);
+        setTacticalAdvice(advice);
+
+        // Build detailed message for chat
+        const parts: string[] = ['📷 **PHOTO INTELLIGENCE REPORT**\n'];
+
+        if (intel.addresses.length > 0) {
+          parts.push(`\n🏠 **ADDRESSES DETECTED (${intel.addresses.length}):**`);
+          intel.addresses.forEach(a => {
+            parts.push(`• "${a.text}" (${a.confidence} confidence) - ${a.context}`);
+          });
+        }
+
+        if (intel.vehicles.length > 0) {
+          parts.push(`\n🚗 **VEHICLES DETECTED (${intel.vehicles.length}):**`);
+          intel.vehicles.forEach(v => {
+            const plateInfo = v.licensePlate ? ` - PLATE: ${v.licensePlate}${v.plateState ? ` (${v.plateState})` : ''}` : '';
+            parts.push(`• ${v.color} ${v.make || ''} ${v.model || ''} ${v.type}${plateInfo}`);
+          });
+        }
+
+        if (intel.businesses.length > 0) {
+          parts.push(`\n🏪 **BUSINESSES/LANDMARKS (${intel.businesses.length}):**`);
+          intel.businesses.forEach(b => {
+            parts.push(`• ${b.name} (${b.type})`);
+          });
+        }
+
+        if (intel.people.length > 0) {
+          parts.push(`\n👥 **PEOPLE IN PHOTO (${intel.people.length}):**`);
+          intel.people.forEach(p => {
+            parts.push(`• ${p.description} - ${p.clothing}`);
+            if (p.distinguishingFeatures?.length > 0) {
+              parts.push(`  Features: ${p.distinguishingFeatures.join(', ')}`);
+            }
+          });
+        }
+
+        if (intel.geography.length > 0) {
+          parts.push(`\n🌍 **GEOGRAPHIC INDICATORS:**`);
+          intel.geography.forEach(g => {
+            parts.push(`• ${g.indicator}${g.possibleRegion ? ` → Possible: ${g.possibleRegion}` : ''}`);
+          });
+        }
+
+        if (intel.leads.length > 0) {
+          const highPriority = intel.leads.filter(l => l.priority === 'high');
+          if (highPriority.length > 0) {
+            parts.push(`\n⚠️ **HIGH PRIORITY LEADS (${highPriority.length}):**`);
+            highPriority.forEach(l => {
+              parts.push(`• ${l.description}`);
+              parts.push(`  Action: ${l.actionItem}`);
+            });
+          }
+        }
+
+        parts.push(`\n📍 **SETTING:** ${intel.metadata.settingType} (${intel.metadata.indoorOutdoor})`);
+        parts.push(`⏰ **TIME:** ${intel.metadata.estimatedTimeOfDay}, ${intel.metadata.estimatedSeason}`);
+
+        setChatMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'agent',
+          content: parts.join('\n'),
+          timestamp: new Date(),
+        }]);
+
+        // Add tactical advice
+        if (advice.length > 0) {
+          setChatMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            role: 'agent',
+            content: `💡 **TACTICAL RECOMMENDATIONS:**\n\n${advice.map(a => `• ${a}`).join('\n')}`,
+            timestamp: new Date(),
+          }]);
+        }
+
+        scrollToBottom();
+      } else {
+        setChatMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'agent',
+          content: '⚠️ Could not analyze photo. Make sure OpenAI API key is configured in Settings.',
+          timestamp: new Date(),
+        }]);
+      }
+    } catch (error: any) {
+      setChatMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: 'agent',
+        content: `❌ Photo analysis error: ${error?.message || 'Unknown error'}`,
+        timestamp: new Date(),
+      }]);
+    }
+    setIsAnalyzingPhoto(false);
+    scrollToBottom();
+  };
+
   // Handle file upload
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -665,8 +797,11 @@ ${result.explanation}`,
             setSubjectPhoto(dataUrl);
             try { await AsyncStorage.setItem(`case_photo_${id}`, dataUrl); } catch {}
             setUploadedFiles(prev => [...prev, { id: Date.now().toString(), name: currentFileName, type: 'image', uploadedAt: new Date() }]);
-            setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'agent', content: `📸 Subject photo set: ${currentFileName}`, timestamp: new Date() }]);
+            setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'agent', content: `📸 Subject photo set: ${currentFileName}\n\n🔍 Analyzing photo for investigative leads...`, timestamp: new Date() }]);
             scrollToBottom();
+
+            // Run photo intelligence analysis
+            analyzePhotoForIntel(dataUrl);
           }
         };
         reader.readAsDataURL(file);
