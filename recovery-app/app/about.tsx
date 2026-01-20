@@ -11,17 +11,24 @@ interface FeatureSection {
 
 const FEATURES: FeatureSection[] = [
   {
-    title: 'AI Models & Intelligence',
+    title: 'AI (GPT-4o-mini) - Actual Intelligence',
     icon: 'hardware-chip',
     items: [
-      { name: 'GPT-4o (OpenAI)', description: 'Primary AI for document analysis, chat, and investigation planning', type: 'ai' },
-      { name: 'GPT-4o Vision', description: 'Photo intelligence - extracts addresses, plates, landmarks from images', type: 'ai' },
-      { name: 'EXTRACTOR Agent', description: 'Analyzes bail documents and extracts subject data', type: 'ai' },
-      { name: 'EYES Agent', description: 'Processes photos for facial features and background analysis', type: 'ai' },
-      { name: 'BRAIN Agent', description: 'Synthesizes all data to predict likely locations', type: 'ai' },
-      { name: 'HUNTER Agent', description: 'OSINT specialist - finds digital footprints and associates', type: 'ai' },
-      { name: 'COORDINATOR Agent', description: 'Orchestrates all agents and provides tactical recommendations', type: 'ai' },
-      { name: 'Face Matching AI', description: 'Compares facial bone structure, not just pose/skin color', type: 'ai' },
+      { name: 'AI Chat', description: 'Understands questions, provides intelligent investigation advice', type: 'ai' },
+      { name: 'Document Analysis', description: 'Reads skip-trace reports, extracts addresses/phones/names', type: 'ai' },
+      { name: 'Recovery Brief', description: 'Generates tactical plans for locating subjects', type: 'ai' },
+      { name: 'Photo Intelligence', description: 'Analyzes images for addresses, plates, landmarks', type: 'ai' },
+      { name: 'Face Matching', description: 'Compares facial structure for identity verification', type: 'ai' },
+    ],
+  },
+  {
+    title: 'OSINT Tools (NOT AI - Automated Scrapers)',
+    icon: 'logo-python',
+    items: [
+      { name: 'Sherlock', description: 'Scrapes 400+ websites checking if username exists - no intelligence, just lookups', type: 'tool' },
+      { name: 'Maigret', description: 'Same as Sherlock - automated username checking across sites', type: 'tool' },
+      { name: 'Holehe', description: 'Checks if email is registered on services (Google, Amazon, etc) - API checks only', type: 'tool' },
+      { name: 'Socialscan', description: 'Checks username availability - simple web requests, no AI', type: 'tool' },
     ],
   },
   {
@@ -172,14 +179,13 @@ const FEATURES: FeatureSection[] = [
 ];
 
 const PYTHON_TOOLS_LIVE = [
-  { name: 'Sherlock', description: 'Username hunting across 400+ sites', status: 'live' },
-  { name: 'Maigret', description: 'Comprehensive username search', status: 'live' },
-  { name: 'holehe', description: 'Email to registered accounts', status: 'live' },
-  { name: 'socialscan', description: 'Email/username availability', status: 'live' },
-  { name: 'Intelligent Investigation', description: 'Smart flow: name → usernames → profiles', status: 'live' },
-  { name: 'Multi-Username Search', description: 'Searches username variations automatically', status: 'live' },
-  { name: 'phoneinfoga', description: 'Advanced phone OSINT', status: 'planned' },
-  { name: 'GHunt', description: 'Google account investigation', status: 'planned' },
+  { name: 'Sherlock', description: 'Web scraper - checks 400+ sites for username (NOT AI)', status: 'live' },
+  { name: 'Maigret', description: 'Web scraper - similar to Sherlock (NOT AI)', status: 'live' },
+  { name: 'Holehe', description: 'API checker - sees if email registered on services (NOT AI)', status: 'live' },
+  { name: 'Socialscan', description: 'Availability checker - is username taken? (NOT AI)', status: 'live' },
+  { name: 'GPT-4o-mini Chat', description: 'ACTUAL AI - understands language, gives advice', status: 'live' },
+  { name: 'GPT-4o-mini Analysis', description: 'ACTUAL AI - reads documents, extracts data', status: 'live' },
+  { name: 'GPT-4o-mini Brief', description: 'ACTUAL AI - writes tactical recovery plans', status: 'live' },
 ];
 
 const BACKEND_INFO = {
@@ -247,20 +253,20 @@ export default function AboutScreen() {
         {/* Stats */}
         <View style={styles.statsRow}>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>5</Text>
-            <Text style={styles.statLabel}>AI Agents</Text>
+            <Text style={styles.statNumber}>1</Text>
+            <Text style={styles.statLabel}>AI (GPT-4o)</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>70+</Text>
-            <Text style={styles.statLabel}>Platforms</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statNumber}>40+</Text>
-            <Text style={styles.statLabel}>Databases</Text>
+            <Text style={styles.statNumber}>4</Text>
+            <Text style={styles.statLabel}>OSINT Tools</Text>
           </View>
           <View style={styles.statBox}>
             <Text style={styles.statNumber}>400+</Text>
-            <Text style={styles.statLabel}>Username Sites</Text>
+            <Text style={styles.statLabel}>Sites Scraped</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={styles.statNumber}>0</Text>
+            <Text style={styles.statLabel}>API Keys Needed</Text>
           </View>
         </View>
 

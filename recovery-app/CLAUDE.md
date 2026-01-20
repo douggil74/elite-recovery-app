@@ -91,8 +91,39 @@ Firebase project: `fugitive-database`
 3. **Logo**: Clicking logo navigates to home page
 4. **Branding**: App is called "Elite Recovery System" throughout
 
+## AI Services Status
+
+**All working - NO API KEYS NEEDED by user**
+
+| Service | Status | What It Does |
+|---------|--------|--------------|
+| Sherlock | WORKING | Username search (400+ sites) |
+| Maigret | WORKING | Username intelligence |
+| Holehe | WORKING | Email account discovery |
+| Socialscan | WORKING | Username availability |
+| GPT-4o-mini Chat | WORKING | AI chat responses |
+| GPT-4o-mini Analysis | WORKING | Document analysis |
+| Recovery Brief | WORKING | Tactical brief generation |
+
+OpenAI API key is configured on the Render backend - users don't need their own keys.
+
+## Admin Page
+
+Go to Settings → Admin/Diagnostics to test all backend services.
+
+Tests available:
+- Backend health check
+- AI chat test
+- AI brief generation
+- Sherlock username search
+- Holehe email discovery
+
 ## Recent Changes (Jan 2026)
 
+- Added Admin/Diagnostics page for backend testing
+- Fixed document analysis to use backend (no local API key needed)
+- Smart chat detection for OSINT commands
+- Simplified right panel UI
 - Fixed login issues (Firestore offline errors)
 - Made login page compact card-style
 - Added clickable logo navigation
