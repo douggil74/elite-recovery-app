@@ -229,52 +229,57 @@ export async function signUp(
   try {
     await initializeFirebase();
     const authInstance = getAuthInstance();
-    if (!authInstance || !db) {
+    if (!authInstance) {
       return { user: null, error: 'Firebase not initialized' };
     }
 
+    // Create auth user first
     const credential = await createUserWithEmailAndPassword(authInstance, email, password);
 
     // Update display name
     await updateProfile(credential.user, { displayName });
 
-    // Create or join organization
-    let organizationId: string;
+    // Try to create Firestore profile (but don't fail if it doesn't work)
+    let organizationId: string | undefined;
 
-    if (organizationName) {
-      // Create new organization
-      const orgRef = doc(collection(db, 'organizations'));
-      organizationId = orgRef.id;
+    if (db) {
+      try {
+        if (organizationName) {
+          const orgRef = doc(collection(db, 'organizations'));
+          organizationId = orgRef.id;
 
-      await setDoc(orgRef, {
-        name: organizationName,
-        createdAt: serverTimestamp(),
-        createdBy: credential.user.uid,
-        plan: 'free',
-        memberCount: 1,
-      });
-    } else {
-      // Default organization for solo users
-      organizationId = `personal_${credential.user.uid}`;
+          await setDoc(orgRef, {
+            name: organizationName,
+            createdAt: serverTimestamp(),
+            createdBy: credential.user.uid,
+            plan: 'free',
+            memberCount: 1,
+          });
+        } else {
+          organizationId = `personal_${credential.user.uid}`;
 
-      await setDoc(doc(db, 'organizations', organizationId), {
-        name: `${displayName}'s Workspace`,
-        createdAt: serverTimestamp(),
-        createdBy: credential.user.uid,
-        plan: 'free',
-        memberCount: 1,
-        isPersonal: true,
-      });
+          await setDoc(doc(db, 'organizations', organizationId), {
+            name: `${displayName}'s Workspace`,
+            createdAt: serverTimestamp(),
+            createdBy: credential.user.uid,
+            plan: 'free',
+            memberCount: 1,
+            isPersonal: true,
+          });
+        }
+
+        await setDoc(doc(db, 'users', credential.user.uid), {
+          email,
+          displayName,
+          organizationId,
+          role: 'admin',
+          createdAt: serverTimestamp(),
+        });
+      } catch (firestoreError) {
+        console.warn('Firestore profile creation failed, continuing:', firestoreError);
+        // Continue anyway - auth user was created
+      }
     }
-
-    // Create user profile in Firestore
-    await setDoc(doc(db, 'users', credential.user.uid), {
-      email,
-      displayName,
-      organizationId,
-      role: 'admin', // Creator is admin
-      createdAt: serverTimestamp(),
-    });
 
     return {
       user: {
