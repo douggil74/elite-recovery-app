@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 
 // URL to the deployed recovery app
-const RECOVERY_APP_URL = 'https://recovery-app-three-rho.vercel.app';
+const RECOVERY_APP_URL = 'https://recovery-app-blond.vercel.app';
 
 export default function AppRedirect() {
   useEffect(() => {
