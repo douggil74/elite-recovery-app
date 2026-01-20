@@ -55,10 +55,9 @@ export default function LoginScreen() {
         {/* Logo */}
         <View style={styles.logoContainer}>
           <View style={styles.logo}>
-            <Ionicons name="eye" size={40} color={COLORS.primary} />
+            <Ionicons name="shield-checkmark" size={32} color={COLORS.primary} />
           </View>
-          <Text style={styles.title}>Elite Recovery</Text>
-          <Text style={styles.subtitle}>Elite Recovery System</Text>
+          <Text style={styles.title}>Elite Recovery System</Text>
         </View>
 
         {/* Form */}
@@ -151,32 +150,35 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 24,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   logoContainer: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 24,
   },
   logo: {
-    width: 80,
-    height: 80,
-    borderRadius: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 14,
     backgroundColor: COLORS.primaryMuted,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
+    fontSize: 20,
+    fontWeight: '600',
     color: COLORS.text,
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
   },
   form: {
-    marginBottom: 24,
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 16,
   },
   errorBox: {
     flexDirection: 'row',
@@ -193,42 +195,42 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   inputGroup: {
-    marginBottom: 16,
+    marginBottom: 14,
   },
   label: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
-    color: COLORS.text,
-    marginBottom: 8,
+    color: COLORS.textSecondary,
+    marginBottom: 6,
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    backgroundColor: COLORS.background,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: COLORS.border,
-    paddingHorizontal: 16,
-    gap: 12,
+    paddingHorizontal: 12,
+    gap: 10,
   },
   input: {
     flex: 1,
-    height: 50,
-    fontSize: 16,
+    height: 44,
+    fontSize: 15,
     color: COLORS.text,
   },
   forgotPassword: {
     alignSelf: 'flex-end',
-    marginBottom: 24,
+    marginBottom: 16,
   },
   forgotPasswordText: {
     color: COLORS.primary,
-    fontSize: 14,
+    fontSize: 13,
   },
   button: {
     backgroundColor: COLORS.primary,
-    borderRadius: 12,
-    height: 50,
+    borderRadius: 10,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -237,7 +239,7 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
   },
   footer: {
