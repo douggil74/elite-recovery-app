@@ -123,9 +123,9 @@ export async function signIn(email: string, password: string): Promise<{ user: A
 
     const credential = await signInWithEmailAndPassword(authInstance, email, password);
 
-    // Get user profile from Firestore
-    const userDoc = await getDoc(doc(db!, 'users', credential.user.uid));
-    const userData = userDoc.data();
+    // Skip Firestore for now - just use auth data
+    // Firestore profile is optional and can be created later
+    const userData: any = null;
 
     return {
       user: {
@@ -139,7 +139,20 @@ export async function signIn(email: string, password: string): Promise<{ user: A
     };
   } catch (error: any) {
     console.error('Sign in error:', error);
-    return { user: null, error: error.message || 'Failed to sign in' };
+    // Provide user-friendly error messages
+    let errorMessage = 'Failed to sign in';
+    if (error.code === 'auth/user-not-found') {
+      errorMessage = 'No account found with this email';
+    } else if (error.code === 'auth/wrong-password') {
+      errorMessage = 'Incorrect password';
+    } else if (error.code === 'auth/invalid-email') {
+      errorMessage = 'Invalid email address';
+    } else if (error.code === 'auth/invalid-credential') {
+      errorMessage = 'Invalid email or password';
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+    return { user: null, error: errorMessage };
   }
 }
 

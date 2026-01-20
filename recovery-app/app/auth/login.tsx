@@ -35,15 +35,20 @@ export default function LoginScreen() {
     setLoading(true);
     setError(null);
 
-    const result = await signIn(email, password);
+    try {
+      const result = await signIn(email, password);
 
-    if (result.success) {
-      router.replace('/(tabs)');
-    } else {
-      setError(result.error || 'Failed to sign in');
+      if (result.success) {
+        router.replace('/(tabs)');
+      } else {
+        setError(result.error || 'Failed to sign in');
+        setLoading(false);
+      }
+    } catch (err: any) {
+      console.error('Login error:', err);
+      setError(err?.message || 'An unexpected error occurred');
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   return (
