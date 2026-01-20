@@ -839,18 +839,66 @@ ${result.explanation}`,
     setIsSending(true);
     scrollToBottom();
 
-    // Detect OSINT commands
-    const osintCommands = [
-      'social search', 'run osint', 'do osint', 'find profiles', 'search profiles',
-      'find social', 'search social', 'osint search', 'osint sweep', 'run sweep',
-      'do search', 'find accounts', 'search accounts', 'run search', 'do social',
-      'sherlock', 'maigret', 'find username', 'search username'
+    // Detect OSINT commands - be aggressive about detecting search intent
+    const osintKeywords = [
+      'osint', 'social', 'search', 'find', 'lookup', 'locate', 'profile', 'account',
+      'sherlock', 'maigret', 'python', 'test it', 'run it', 'scan', 'sweep', 'check'
     ];
+    const isOsintCommand = osintKeywords.some(kw => userTextLower.includes(kw));
 
-    const isOsintCommand = osintCommands.some(cmd => userTextLower.includes(cmd));
+    // Detect if user entered a username (short, no spaces, alphanumeric)
+    const looksLikeUsername = /^[a-z0-9._-]{3,30}$/i.test(userText.trim()) && !userText.includes(' ');
 
-    if (isOsintCommand) {
+    if (isOsintCommand || looksLikeUsername) {
       const subjectName = parsedData?.subject?.fullName || caseData?.name;
+
+      // If it looks like a username, search that directly
+      if (looksLikeUsername) {
+        setChatMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'agent',
+          content: `🔍 Searching username: "${userText}"...`,
+          timestamp: new Date(),
+        }]);
+        setIsSearchingOSINT(true);
+
+        try {
+          if (pythonBackendAvailable) {
+            const { searchWithSherlock } = await import('@/lib/python-osint');
+            const result = await searchWithSherlock(userText.trim(), 60);
+            const foundCount = result.found?.length || 0;
+            setChatMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              role: 'agent',
+              content: foundCount > 0
+                ? `✅ Found ${foundCount} profiles for "${userText}":\n${result.found.slice(0, 10).map(p => `• ${p.platform}: ${p.url}`).join('\n')}${foundCount > 10 ? `\n+${foundCount - 10} more` : ''}`
+                : `No profiles found for username "${userText}".`,
+              timestamp: new Date(),
+            }]);
+          } else {
+            setChatMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              role: 'agent',
+              content: `Backend offline. Try: https://whatsmyname.app/?q=${encodeURIComponent(userText)}`,
+              timestamp: new Date(),
+            }]);
+          }
+        } catch (err: any) {
+          setChatMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            role: 'agent',
+            content: `Search error: ${err?.message || 'Unknown'}`,
+            timestamp: new Date(),
+          }]);
+        }
+
+        setIsSearchingOSINT(false);
+        setIsSending(false);
+        scrollToBottom();
+        return;
+      }
+
+      // Otherwise, search the subject name
       if (subjectName) {
         setOsintSearched(false);
         await runOSINTSearch(subjectName);
@@ -861,7 +909,7 @@ ${result.explanation}`,
         setChatMessages(prev => [...prev, {
           id: Date.now().toString(),
           role: 'agent',
-          content: '⚠️ No subject name found. Upload a document with subject information first, or create a case with a name.',
+          content: '⚠️ No subject name found. Enter a username to search directly.',
           timestamp: new Date(),
         }]);
         setIsSending(false);
