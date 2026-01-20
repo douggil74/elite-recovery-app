@@ -44,7 +44,7 @@ export default function PurposeScreen() {
         <Ionicons name="shield-checkmark" size={48} color={COLORS.primary} />
         <Text style={styles.title}>Lawful Use Attestation</Text>
         <Text style={styles.subtitle}>
-          This app is for authorized bail recovery professionals only
+          This app is for authorized fugitive recovery professionals only
         </Text>
       </View>
 
@@ -92,7 +92,7 @@ export default function PurposeScreen() {
         </View>
         <Text style={styles.checkboxLabel}>
           I will NOT use this data for harassment, stalking, intimidation, or any
-          purpose outside the lawful scope of bail recovery.
+          purpose outside the lawful scope of fugitive recovery.
         </Text>
       </TouchableOpacity>
 

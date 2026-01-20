@@ -56,7 +56,7 @@ export default function NewCaseScreen() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <WarningBanner
         title="Lawful Use Required"
-        message="Only create cases for authorized bail recovery purposes. All activity is logged."
+        message="Only create cases for authorized fugitive recovery purposes. All activity is logged."
         severity="info"
       />
 

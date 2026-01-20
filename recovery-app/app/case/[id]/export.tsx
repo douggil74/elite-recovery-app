@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,8 @@ import { useCase } from '@/hooks/useCase';
 import { audit } from '@/lib/audit';
 import { maskAddress, maskPhone } from '@/lib/encryption';
 import { COLORS, PURPOSE_LABELS } from '@/constants';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { RankedLocation, CrossReference } from '@/lib/ai-squad';
 
 const isWeb = Platform.OS === 'web';
 
@@ -21,9 +23,31 @@ export default function ExportScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { caseData, reports, getBrief } = useCase(id!);
   const [isExporting, setIsExporting] = useState(false);
+  const [squadLocations, setSquadLocations] = useState<RankedLocation[]>([]);
+  const [squadConfidence, setSquadConfidence] = useState(0);
+  const [crossRefs, setCrossRefs] = useState<CrossReference[]>([]);
 
   const latestReport = reports[0];
   const brief = getBrief();
+
+  // Load AI Squad data from storage
+  useEffect(() => {
+    const loadSquadData = async () => {
+      if (!id) return;
+      try {
+        const squadData = await AsyncStorage.getItem(`case_squad_${id}`);
+        if (squadData) {
+          const parsed = JSON.parse(squadData);
+          setSquadLocations(parsed.topLocations || []);
+          setSquadConfidence(parsed.confidence || 0);
+          setCrossRefs(parsed.crossReferences || []);
+        }
+      } catch (e) {
+        console.log('No squad data found');
+      }
+    };
+    loadSquadData();
+  }, [id]);
 
   const generatePdfHtml = (maskSensitive: boolean) => {
     if (!caseData || !latestReport) return '';
@@ -79,7 +103,7 @@ export default function ExportScreen() {
 
   <div class="warning">
     <div class="warning-title">Lawful Use Only</div>
-    This document contains sensitive personal information. Use only for authorized bail recovery purposes.
+    This document contains sensitive personal information. Use only for authorized fugitive recovery purposes.
   </div>
 
   <h2>Subject Information</h2>
@@ -175,10 +199,63 @@ export default function ExportScreen() {
     </table>
   </div>` : ''}
 
+  ${squadLocations.length > 0 ? `
+  <h2>AI Cross-Reference Analysis</h2>
+  <div class="section">
+    <div style="background: #f0fdf4; border: 1px solid #22c55e; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+      <div style="font-size: 12px; color: #166534; font-weight: bold;">OVERALL CONFIDENCE</div>
+      <div style="font-size: 32px; font-weight: bold; color: ${squadConfidence >= 70 ? '#22c55e' : squadConfidence >= 40 ? '#f59e0b' : '#ef4444'};">${squadConfidence}%</div>
+      <div style="font-size: 11px; color: #6b7280;">Based on ${crossRefs.length} cross-referenced data points</div>
+    </div>
+
+    <h3 style="color: #dc2626; margin-top: 20px;">AI-Ranked Top Locations</h3>
+    ${squadLocations.slice(0, 4).map((loc, idx) => `
+    <div class="card" style="border-left: 4px solid ${idx === 0 ? '#dc2626' : idx === 1 ? '#f59e0b' : '#3b82f6'};">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+        <div>
+          <span class="rank" style="background: ${idx === 0 ? '#dc2626' : '#dbeafe'}; color: ${idx === 0 ? '#fff' : '#1e40af'};">#${loc.rank}</span>
+          <span style="margin-left: 8px; font-size: 12px; color: #6b7280; text-transform: uppercase;">${(loc.type || '').replace('_', ' ')}</span>
+        </div>
+        <div style="font-size: 24px; font-weight: bold; color: ${loc.probability >= 70 ? '#22c55e' : loc.probability >= 40 ? '#f59e0b' : '#6b7280'};">${loc.probability}%</div>
+      </div>
+      <p style="margin: 10px 0; font-weight: 600;">${formatAddress(loc.address)}</p>
+      ${loc.bestTime ? `<div style="font-size: 12px; color: #059669;"><strong>Best time:</strong> ${loc.bestTime}</div>` : ''}
+      ${loc.whoMightBeThere && loc.whoMightBeThere.length > 0 ? `<div style="font-size: 12px; color: #6b7280;"><strong>May encounter:</strong> ${loc.whoMightBeThere.join(', ')}</div>` : ''}
+      ${loc.reasoning && loc.reasoning.length > 0 ? `
+      <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #e5e7eb;">
+        <div style="font-size: 11px; color: #6b7280; font-weight: bold;">REASONING:</div>
+        <ul style="margin: 5px 0; padding-left: 20px; font-size: 12px; color: #374151;">
+          ${loc.reasoning.slice(0, 3).map(r => `<li>${r}</li>`).join('')}
+        </ul>
+      </div>` : ''}
+      ${loc.risks && loc.risks.length > 0 ? `
+      <div style="background: #fef3c7; padding: 8px; border-radius: 4px; margin-top: 10px; font-size: 11px;">
+        <strong style="color: #92400e;">Risks:</strong> ${loc.risks.join('; ')}
+      </div>` : ''}
+    </div>
+    `).join('')}
+  </div>
+
+  ${crossRefs.length > 0 ? `
+  <h3 style="margin-top: 20px;">Key Cross-References</h3>
+  <div class="section">
+    ${crossRefs.filter(c => c.confidence >= 60).slice(0, 5).map(ref => `
+    <div style="padding: 10px; border-bottom: 1px solid #e5e7eb;">
+      <div style="display: flex; justify-content: space-between;">
+        <span style="font-size: 12px; font-weight: bold; color: #374151;">${ref.type.replace('_', ' ').toUpperCase()}</span>
+        <span style="font-size: 12px; color: ${ref.confidence >= 80 ? '#22c55e' : '#6b7280'};">${ref.confidence}% confidence</span>
+      </div>
+      <p style="font-size: 13px; margin: 5px 0;">${ref.description}</p>
+      <p style="font-size: 11px; color: #059669; font-style: italic;">${ref.implication}</p>
+    </div>
+    `).join('')}
+  </div>` : ''}
+  ` : ''}
+
   <div class="footer">
-    <p>This document is for authorized bail recovery use only.</p>
+    <p>This document is for authorized fugitive recovery use only.</p>
     <p>All access has been logged for compliance purposes.</p>
-    <p>Generated by Bail Recovery App</p>
+    <p>Generated by Fugitive Recovery App</p>
   </div>
 </body>
 </html>

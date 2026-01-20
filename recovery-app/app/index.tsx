@@ -31,7 +31,7 @@ export default function HomeScreen() {
         <View style={styles.logoContainer}>
           <Ionicons name="shield-checkmark" size={48} color={COLORS.primary} />
         </View>
-        <Text style={styles.title}>Bail Recovery</Text>
+        <Text style={styles.title}>Fugitive Recovery</Text>
         <Text style={styles.subtitle}>Professional Case Management</Text>
       </View>
 
@@ -119,7 +119,7 @@ export default function HomeScreen() {
       <View style={styles.infoBanner}>
         <Ionicons name="information-circle" size={20} color={COLORS.primary} />
         <Text style={styles.infoText}>
-          All activity is logged for compliance. Use only for authorized bail recovery purposes.
+          All activity is logged for compliance. Use only for authorized fugitive recovery purposes.
         </Text>
       </View>
 

@@ -30,6 +30,17 @@ import { getSettings } from './storage';
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
 
+// Hardcoded Firebase config for Elite Recovery
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCqfAmWsCdAOnJp_r3A_19boRcynTK639k",
+  authDomain: "fugitive-database.firebaseapp.com",
+  projectId: "fugitive-database",
+  storageBucket: "fugitive-database.firebasestorage.app",
+  messagingSenderId: "249201297502",
+  appId: "1:249201297502:web:d054894322fc1ecc5b8ccf",
+  measurementId: "G-FJWP0PBSR4"
+};
+
 export interface FirebaseConfig {
   apiKey: string;
   authDomain: string;
@@ -40,28 +51,14 @@ export interface FirebaseConfig {
 }
 
 /**
- * Initialize Firebase with config from settings
+ * Initialize Firebase with hardcoded config
  */
 export async function initializeFirebase(): Promise<Firestore | null> {
   if (db) return db;
 
   try {
-    const settings = await getSettings();
-
-    if (!settings.firebaseConfig) {
-      console.log('Firebase not configured - using local storage only');
-      return null;
-    }
-
-    const config: FirebaseConfig = JSON.parse(settings.firebaseConfig);
-
-    if (!config.projectId || !config.apiKey) {
-      console.log('Invalid Firebase config');
-      return null;
-    }
-
     if (getApps().length === 0) {
-      app = initializeApp(config);
+      app = initializeApp(FIREBASE_CONFIG);
     } else {
       app = getApps()[0];
     }

@@ -3,17 +3,31 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { COLORS } from '@/constants';
+import { initializeFirebase } from '@/lib/firebase';
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   useEffect(() => {
+    // Initialize Firebase on app start - always sync to cloud
+    initializeFirebase()
+      .then((db) => {
+        if (db) {
+          console.log('Firebase connected - cloud sync enabled');
+        } else {
+          console.warn('Firebase initialization failed - running in local mode');
+        }
+      })
+      .catch((err) => {
+        console.error('Firebase init error:', err);
+      });
+
     SplashScreen.hideAsync();
   }, []);
 
   return (
     <>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <Stack
         screenOptions={{
           headerStyle: {
@@ -51,6 +65,7 @@ export default function RootLayout() {
         />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="case" options={{ headerShown: false }} />
+        <Stack.Screen name="about" options={{ headerShown: false }} />
       </Stack>
     </>
   );

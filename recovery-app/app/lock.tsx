@@ -14,6 +14,7 @@ import { COLORS } from '@/constants';
 export default function LockScreen() {
   const router = useRouter();
   const {
+    isLoading,
     passcodeEnabled,
     biometricsEnabled,
     biometricsAvailable,
@@ -26,6 +27,13 @@ export default function LockScreen() {
   const [attempts, setAttempts] = useState(0);
 
   const MAX_ATTEMPTS = 5;
+
+  // If no auth is configured, skip lock screen
+  useEffect(() => {
+    if (!isLoading && !passcodeEnabled && !biometricsEnabled) {
+      router.replace('/(tabs)');
+    }
+  }, [isLoading, passcodeEnabled, biometricsEnabled]);
 
   useEffect(() => {
     // Try biometrics on mount

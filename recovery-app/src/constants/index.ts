@@ -43,7 +43,7 @@ export const PURPOSE_LABELS = {
 export const DEFAULT_SETTINGS = {
   passcodeEnabled: false,
   biometricsEnabled: false,
-  storageMode: 'local' as const,
+  storageMode: 'cloud' as const,  // Always sync to cloud by default
   autoDeleteDays: null,
   maskFieldsByDefault: true,
 };

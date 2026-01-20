@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import uuid from 'react-native-uuid';
 import type { Case, Report, AuditLogEntry, CasePurpose, AuditAction, ParsedReport } from '@/types';
+import { syncCase, syncReport, deleteSyncedCase, isSyncEnabled } from './sync';
 
 // Web uses AsyncStorage, native uses SQLite
 const isWeb = Platform.OS === 'web';
@@ -141,15 +142,17 @@ export async function createCase(
     await initWeb();
     casesCache.push(newCase);
     await saveWebData();
-    return newCase;
+  } else {
+    const database = await getDatabase();
+    await database.runAsync(
+      `INSERT INTO cases (id, name, internal_case_id, purpose, notes, attestation_accepted, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+      [id, name, internalCaseId || null, purpose, notes || null, now, now]
+    );
   }
 
-  const database = await getDatabase();
-  await database.runAsync(
-    `INSERT INTO cases (id, name, internal_case_id, purpose, notes, attestation_accepted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
-    [id, name, internalCaseId || null, purpose, notes || null, now, now]
-  );
+  // Auto-sync to cloud
+  syncCase(newCase).catch(err => console.warn('Auto-sync failed:', err));
 
   return newCase;
 }
@@ -238,6 +241,8 @@ export async function updateCase(
         updatedAt: now,
       };
       await saveWebData();
+      // Auto-sync to cloud
+      syncCase(casesCache[idx]).catch(err => console.warn('Auto-sync failed:', err));
     }
     return;
   }
@@ -272,6 +277,12 @@ export async function updateCase(
     `UPDATE cases SET ${setClauses.join(', ')} WHERE id = ?`,
     values
   );
+
+  // Auto-sync to cloud - fetch updated case and sync
+  const updatedCase = await getCase(id);
+  if (updatedCase) {
+    syncCase(updatedCase).catch(err => console.warn('Auto-sync failed:', err));
+  }
 }
 
 export async function deleteCase(id: string): Promise<void> {
@@ -280,11 +291,13 @@ export async function deleteCase(id: string): Promise<void> {
     casesCache = casesCache.filter(c => c.id !== id);
     reportsCache = reportsCache.filter(r => r.caseId !== id);
     await saveWebData();
-    return;
+  } else {
+    const database = await getDatabase();
+    await database.runAsync('DELETE FROM cases WHERE id = ?', [id]);
   }
 
-  const database = await getDatabase();
-  await database.runAsync('DELETE FROM cases WHERE id = ?', [id]);
+  // Auto-delete from cloud
+  deleteSyncedCase(id).catch(err => console.warn('Cloud delete failed:', err));
 }
 
 // Reports CRUD
@@ -311,24 +324,28 @@ export async function createReport(
     const caseIdx = casesCache.findIndex(c => c.id === caseId);
     if (caseIdx !== -1) {
       casesCache[caseIdx].updatedAt = now;
+      // Auto-sync case to cloud
+      syncCase(casesCache[caseIdx]).catch(err => console.warn('Auto-sync failed:', err));
     }
     await saveWebData();
-    return newReport;
+  } else {
+    const database = await getDatabase();
+    const encryptedData = JSON.stringify(parsedData); // Skip encryption for simplicity on native too
+
+    await database.runAsync(
+      `INSERT INTO reports (id, case_id, pdf_path, parsed_data, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [id, caseId, pdfPath || null, encryptedData, now]
+    );
+
+    await database.runAsync(
+      'UPDATE cases SET updated_at = ? WHERE id = ?',
+      [now, caseId]
+    );
   }
 
-  const database = await getDatabase();
-  const encryptedData = JSON.stringify(parsedData); // Skip encryption for simplicity on native too
-
-  await database.runAsync(
-    `INSERT INTO reports (id, case_id, pdf_path, parsed_data, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
-    [id, caseId, pdfPath || null, encryptedData, now]
-  );
-
-  await database.runAsync(
-    'UPDATE cases SET updated_at = ? WHERE id = ?',
-    [now, caseId]
-  );
+  // Auto-sync report to cloud
+  syncReport(caseId, newReport).catch(err => console.warn('Report auto-sync failed:', err));
 
   return newReport;
 }

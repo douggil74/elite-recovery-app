@@ -7,7 +7,9 @@ import {
   Switch,
   TouchableOpacity,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/hooks/useAuth';
 import { useSettings } from '@/hooks/useSettings';
@@ -15,8 +17,12 @@ import { getStorageUsage, clearAllData } from '@/lib/storage';
 import { confirm, showAlert } from '@/lib/confirm';
 import { Button, Input } from '@/components';
 import { COLORS, VERSION } from '@/constants';
+import { getAllCases } from '@/lib/database';
+import { isSyncEnabled, fetchSyncedCases } from '@/lib/sync';
+import { isFirebaseReady } from '@/lib/firebase';
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const {
     passcodeEnabled,
     biometricsEnabled,
@@ -38,9 +44,68 @@ export default function SettingsScreen() {
   const [firebaseConfig, setFirebaseConfig] = useState(settings.firebaseConfig || '');
   const [userId, setUserId] = useState(settings.userId || '');
 
+  // Database status
+  const [dbStatus, setDbStatus] = useState<{
+    localWorking: boolean | null;
+    cloudWorking: boolean | null;
+    localCases: number;
+    cloudCases: number;
+    testing: boolean;
+    lastTested: string | null;
+  }>({
+    localWorking: null,
+    cloudWorking: null,
+    localCases: 0,
+    cloudCases: 0,
+    testing: false,
+    lastTested: null,
+  });
+
   useEffect(() => {
     loadStorageUsage();
+    testDatabaseConnections();
   }, []);
+
+  const testDatabaseConnections = async () => {
+    setDbStatus(prev => ({ ...prev, testing: true }));
+
+    let localWorking = false;
+    let cloudWorking = false;
+    let localCases = 0;
+    let cloudCases = 0;
+
+    // Test local storage
+    try {
+      const cases = await getAllCases();
+      localCases = cases.length;
+      localWorking = true;
+    } catch (e) {
+      console.error('Local DB test failed:', e);
+      localWorking = false;
+    }
+
+    // Test Firebase connection
+    try {
+      const firebaseReady = await isFirebaseReady();
+      if (firebaseReady) {
+        const syncedCases = await fetchSyncedCases();
+        cloudCases = syncedCases.length;
+        cloudWorking = true;
+      }
+    } catch (e) {
+      console.error('Cloud DB test failed:', e);
+      cloudWorking = false;
+    }
+
+    setDbStatus({
+      localWorking,
+      cloudWorking,
+      localCases,
+      cloudCases,
+      testing: false,
+      lastTested: new Date().toLocaleTimeString(),
+    });
+  };
 
   useEffect(() => {
     setApiKey(settings.openaiApiKey || '');
@@ -193,6 +258,7 @@ export default function SettingsScreen() {
               value={newPasscode}
               onChangeText={setNewPasscode}
               placeholder="Enter 4-8 digit passcode"
+              placeholderTextColor={COLORS.textMuted}
               keyboardType="number-pad"
               secureTextEntry
               maxLength={8}
@@ -274,6 +340,7 @@ export default function SettingsScreen() {
               value={apiKey}
               onChangeText={setApiKey}
               placeholder="sk-..."
+              placeholderTextColor={COLORS.textMuted}
               secureTextEntry
               autoCapitalize="none"
               autoCorrect={false}
@@ -321,6 +388,7 @@ export default function SettingsScreen() {
               value={firebaseConfig}
               onChangeText={setFirebaseConfig}
               placeholder='{"apiKey": "...", "projectId": "...", ...}'
+              placeholderTextColor={COLORS.textMuted}
               multiline
               autoCapitalize="none"
               autoCorrect={false}
@@ -333,12 +401,97 @@ export default function SettingsScreen() {
               value={userId}
               onChangeText={setUserId}
               placeholder="your-email@example.com"
+              placeholderTextColor={COLORS.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
             />
             <Button title="Save Firebase Config" onPress={handleSaveFirebase} size="small" style={{ marginTop: 12 }} />
           </View>
         )}
+      </View>
+
+      {/* Database Status Section */}
+      <Text style={styles.sectionTitle}>Database Status</Text>
+      <View style={styles.section}>
+        <View style={styles.settingRow}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>Local Storage</Text>
+            <Text style={styles.settingDescription}>
+              {dbStatus.testing ? 'Testing...' :
+                dbStatus.localWorking === null ? 'Not tested' :
+                dbStatus.localWorking ? `Working - ${dbStatus.localCases} cases` : 'Error'}
+            </Text>
+          </View>
+          {dbStatus.testing ? (
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          ) : (
+            <View style={[styles.statusBadge, {
+              backgroundColor: dbStatus.localWorking === null ? COLORS.textSecondary + '20' :
+                dbStatus.localWorking ? COLORS.success + '20' : COLORS.danger + '20'
+            }]}>
+              <Ionicons
+                name={dbStatus.localWorking === null ? 'help-circle' : dbStatus.localWorking ? 'checkmark-circle' : 'close-circle'}
+                size={16}
+                color={dbStatus.localWorking === null ? COLORS.textSecondary : dbStatus.localWorking ? COLORS.success : COLORS.danger}
+              />
+              <Text style={[styles.statusText, {
+                color: dbStatus.localWorking === null ? COLORS.textSecondary : dbStatus.localWorking ? COLORS.success : COLORS.danger
+              }]}>
+                {dbStatus.localWorking === null ? 'Unknown' : dbStatus.localWorking ? 'OK' : 'Error'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={[styles.settingRow, styles.settingRowBorder]}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>Cloud Database</Text>
+            <Text style={styles.settingDescription}>
+              {dbStatus.testing ? 'Testing...' :
+                dbStatus.cloudWorking === null ? 'Not tested' :
+                dbStatus.cloudWorking ? `Connected - ${dbStatus.cloudCases} cases synced` : 'Not connected'}
+            </Text>
+          </View>
+          {dbStatus.testing ? (
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          ) : (
+            <View style={[styles.statusBadge, {
+              backgroundColor: dbStatus.cloudWorking === null ? COLORS.textSecondary + '20' :
+                dbStatus.cloudWorking ? COLORS.success + '20' : COLORS.warning + '20'
+            }]}>
+              <Ionicons
+                name={dbStatus.cloudWorking === null ? 'help-circle' : dbStatus.cloudWorking ? 'cloud-done' : 'cloud-offline'}
+                size={16}
+                color={dbStatus.cloudWorking === null ? COLORS.textSecondary : dbStatus.cloudWorking ? COLORS.success : COLORS.warning}
+              />
+              <Text style={[styles.statusText, {
+                color: dbStatus.cloudWorking === null ? COLORS.textSecondary : dbStatus.cloudWorking ? COLORS.success : COLORS.warning
+              }]}>
+                {dbStatus.cloudWorking === null ? 'Unknown' : dbStatus.cloudWorking ? 'Synced' : 'Offline'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <TouchableOpacity
+          style={[styles.settingRow, styles.settingRowBorder]}
+          onPress={testDatabaseConnections}
+          disabled={dbStatus.testing}
+        >
+          <View style={styles.settingInfo}>
+            <Text style={[styles.settingLabel, { color: COLORS.primary }]}>
+              Test Connections
+            </Text>
+            <Text style={styles.settingDescription}>
+              {dbStatus.lastTested ? `Last tested: ${dbStatus.lastTested}` : 'Never tested'}
+            </Text>
+          </View>
+          {dbStatus.testing ? (
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          ) : (
+            <Ionicons name="refresh" size={20} color={COLORS.primary} />
+          )}
+        </TouchableOpacity>
       </View>
 
       {/* Data Management Section */}
@@ -427,8 +580,19 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/* About This App Link */}
+      <TouchableOpacity
+        style={styles.aboutLink}
+        onPress={() => router.push('/about')}
+      >
+        <Ionicons name="information-circle-outline" size={20} color={COLORS.primary} />
+        <Text style={styles.aboutLinkText}>About This App</Text>
+        <Text style={styles.aboutLinkSubtext}>Features, databases, AI models & support</Text>
+        <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
+      </TouchableOpacity>
+
       <Text style={styles.footer}>
-        Bail Recovery App - For authorized use only
+        Elite Recovery LA - For authorized use only
       </Text>
     </ScrollView>
   );
@@ -496,6 +660,18 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.success,
   },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
   optionsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -535,6 +711,7 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     marginBottom: 12,
+    color: COLORS.text,
   },
   passcodeButtons: {
     flexDirection: 'row',
@@ -554,6 +731,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 8,
     fontFamily: 'monospace',
+    color: COLORS.text,
   },
   apiKeyHint: {
     fontSize: 12,
@@ -563,6 +741,28 @@ const styles = StyleSheet.create({
   versionText: {
     fontSize: 14,
     color: COLORS.textSecondary,
+  },
+  aboutLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 20,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: COLORS.primary + '40',
+  },
+  aboutLinkText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  aboutLinkSubtext: {
+    flex: 1,
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    textAlign: 'right',
   },
   footer: {
     textAlign: 'center',
