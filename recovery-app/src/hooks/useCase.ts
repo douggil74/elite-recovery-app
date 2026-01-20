@@ -131,13 +131,10 @@ export function useCase(caseId: string): UseCaseReturn {
       }
 
       try {
-        // Get settings for API key
-        const settings = await getSettings();
-
-        // Analyze the text
+        // Always use AI via backend - no local key needed
         const result = await analyzeReport(text, {
-          useAI: !!settings.openaiApiKey,
-          apiKey: settings.openaiApiKey,
+          useAI: true,
+          useBackend: true,  // Use our backend proxy
         });
 
         if (!result.success || !result.data) {

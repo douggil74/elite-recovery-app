@@ -1,6 +1,10 @@
 import OpenAI from 'openai';
 import { parseReportText } from './parser';
 import type { ParsedReport, AnalyzeResponse } from '@/types';
+import { sendChatMessage } from './ai-service';
+
+// Backend URL
+const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
 
 // Token estimation: ~4 chars per token for English text
 const CHARS_PER_TOKEN = 4;
@@ -513,6 +517,7 @@ export async function analyzeReport(
   options?: {
     useAI?: boolean;
     apiKey?: string;
+    useBackend?: boolean;  // Use our backend proxy (no local key needed)
     forceAI?: boolean;
     onProgress?: (progress: number, message: string) => void;
   }
@@ -534,6 +539,20 @@ export async function analyzeReport(
   }
 
   try {
+    // Use backend proxy for AI (no local key needed)
+    if (options?.useBackend) {
+      options.onProgress?.(0.1, 'Analyzing via AI backend...');
+      try {
+        const backendResult = await analyzeViaBackend(trimmedText);
+        if (backendResult.success) {
+          options.onProgress?.(1.0, 'Analysis complete');
+          return backendResult;
+        }
+      } catch (err) {
+        console.warn('Backend analysis failed, falling back:', err);
+      }
+    }
+
     // If we have an API key, use AI analysis (this is the primary path)
     if (options?.apiKey) {
       // Check if report is large enough to need chunking

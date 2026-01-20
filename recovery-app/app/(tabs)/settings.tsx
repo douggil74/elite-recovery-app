@@ -614,6 +614,17 @@ export default function SettingsScreen() {
         <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
       </TouchableOpacity>
 
+      {/* Admin - Backend Testing */}
+      <TouchableOpacity
+        style={[styles.aboutLink, { borderColor: COLORS.warning + '40', marginTop: 8 }]}
+        onPress={() => router.push('/admin')}
+      >
+        <Ionicons name="flask" size={20} color={COLORS.warning} />
+        <Text style={styles.aboutLinkText}>Admin / Diagnostics</Text>
+        <Text style={styles.aboutLinkSubtext}>Test backend, AI, OSINT tools</Text>
+        <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
+      </TouchableOpacity>
+
       <Text style={styles.footer}>
         Elite Recovery LA - For authorized use only
       </Text>
