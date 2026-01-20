@@ -12,22 +12,13 @@ const LOCAL_DEV_URL = 'http://localhost:8000';
 
 const getBackendUrl = async (): Promise<string> => {
   const settings = await getSettings();
-  // Check for custom backend URL in settings, then production, then localhost
+  // Check for custom backend URL in settings
   const customUrl = (settings as any).osintBackendUrl;
   if (customUrl) return customUrl;
 
-  // Try production first, then fall back to localhost
-  try {
-    const prodCheck = await fetch(`${PRODUCTION_BACKEND_URL}/health`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(3000)
-    });
-    if (prodCheck.ok) return PRODUCTION_BACKEND_URL;
-  } catch {
-    // Production not available, try localhost
-  }
-
-  return LOCAL_DEV_URL;
+  // Always use production URL - Render handles cold starts
+  // The health check timeout should be longer (30s) to allow for cold starts
+  return PRODUCTION_BACKEND_URL;
 };
 
 // ============================================================================
@@ -148,10 +139,17 @@ export interface BackendHealth {
 export async function checkBackendHealth(): Promise<BackendHealth | null> {
   try {
     const baseUrl = await getBackendUrl();
+    // Allow 30 seconds for Render cold start
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
     const response = await fetch(`${baseUrl}/health`, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) return null;
     return await response.json();
