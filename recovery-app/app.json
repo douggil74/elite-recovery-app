@@ -1,21 +1,21 @@
 {
   "expo": {
-    "name": "Bail Recovery",
-    "slug": "bail-recovery-app",
+    "name": "Elite Recovery",
+    "slug": "elite-recovery-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "scheme": "bailrecovery",
-    "userInterfaceStyle": "light",
+    "scheme": "eliterecovery",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#1a1a2e"
+      "backgroundColor": "#000000"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.bailrecovery.app",
+      "bundleIdentifier": "com.eliterecovery.app",
       "infoPlist": {
         "NSFaceIDUsageDescription": "Authenticate to access case data",
         "NSPhotoLibraryUsageDescription": "Export case briefs to photos"
@@ -24,9 +24,9 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#1a1a2e"
+        "backgroundColor": "#000000"
       },
-      "package": "com.bailrecovery.app",
+      "package": "com.eliterecovery.app",
       "permissions": [
         "USE_BIOMETRIC",
         "USE_FINGERPRINT"

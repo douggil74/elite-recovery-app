@@ -16,10 +16,10 @@ interface CaseCardProps {
 }
 
 const STATUS_CONFIG: Record<CaseStatus, { label: string; color: string; bg: string }> = {
-  new: { label: 'New', color: '#8b949e', bg: '#8b949e15' },
-  has_data: { label: 'Ready', color: '#58a6ff', bg: '#58a6ff15' },
-  active: { label: 'Active', color: '#d29922', bg: '#d2992215' },
-  located: { label: 'Located', color: '#3fb950', bg: '#3fb95015' },
+  new: { label: 'New', color: '#71717a', bg: '#71717a20' },
+  has_data: { label: 'Ready', color: '#dc2626', bg: '#dc262620' },
+  active: { label: 'Active', color: '#f59e0b', bg: '#f59e0b20' },
+  located: { label: 'Located', color: '#22c55e', bg: '#22c55e20' },
 };
 
 export function CaseCard({
@@ -108,7 +108,7 @@ export function CaseCard({
             <Ionicons name="trash-outline" size={18} color={COLORS.danger} />
           </TouchableOpacity>
         )}
-        <Ionicons name="chevron-forward" size={20} color={COLORS.textSecondary} />
+        <Ionicons name="chevron-forward" size={20} color={COLORS.textMuted} />
       </View>
     </TouchableOpacity>
   );
@@ -118,13 +118,13 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1c2128',
+    backgroundColor: '#0a0a0a',
     borderRadius: 12,
     padding: 14,
     marginBottom: 10,
     borderLeftWidth: 4,
     borderWidth: 1,
-    borderColor: '#30363d',
+    borderColor: '#27272a',
   },
   content: {
     flex: 1,
@@ -138,7 +138,7 @@ const styles = StyleSheet.create({
   name: {
     fontSize: 17,
     fontWeight: '600',
-    color: '#e6edf3',
+    color: '#fafafa',
     flex: 1,
     marginRight: 10,
   },
@@ -163,11 +163,11 @@ const styles = StyleSheet.create({
   },
   statText: {
     fontSize: 13,
-    color: '#8b949e',
+    color: '#a1a1aa',
   },
   noDataText: {
     fontSize: 13,
-    color: '#6e7681',
+    color: '#52525b',
     fontStyle: 'italic',
     marginBottom: 8,
   },
@@ -178,12 +178,12 @@ const styles = StyleSheet.create({
   },
   caseId: {
     fontSize: 12,
-    color: '#6e7681',
+    color: '#52525b',
     fontFamily: 'monospace',
   },
   date: {
     fontSize: 12,
-    color: '#6e7681',
+    color: '#52525b',
   },
   actions: {
     flexDirection: 'row',

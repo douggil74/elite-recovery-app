@@ -1,16 +1,26 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '@/constants';
+
+// Dark Red Theme
+const THEME = {
+  bg: '#000000',
+  surface: '#0a0a0a',
+  border: '#27272a',
+  primary: '#dc2626',
+  text: '#fafafa',
+  textMuted: '#71717a',
+};
 
 export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: COLORS.primary,
-        tabBarInactiveTintColor: COLORS.textSecondary,
+        tabBarActiveTintColor: THEME.primary,
+        tabBarInactiveTintColor: THEME.textMuted,
         tabBarStyle: {
-          backgroundColor: COLORS.surface,
-          borderTopColor: COLORS.border,
+          backgroundColor: THEME.surface,
+          borderTopColor: THEME.border,
+          borderTopWidth: 1,
           paddingTop: 4,
           height: 85,
         },
@@ -20,9 +30,9 @@ export default function TabLayout() {
           marginTop: 2,
         },
         headerStyle: {
-          backgroundColor: COLORS.surface,
+          backgroundColor: THEME.bg,
         },
-        headerTintColor: COLORS.text,
+        headerTintColor: THEME.text,
         headerTitleStyle: {
           fontWeight: '600',
         },
@@ -33,8 +43,9 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Cases',
+          headerShown: false,
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="folder-outline" size={size} color={color} />
+            <Ionicons name="briefcase-outline" size={size} color={color} />
           ),
         }}
       />
@@ -43,7 +54,7 @@ export default function TabLayout() {
         options={{
           title: 'Audit Log',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="document-text-outline" size={size} color={color} />
+            <Ionicons name="shield-checkmark-outline" size={size} color={color} />
           ),
         }}
       />

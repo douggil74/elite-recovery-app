@@ -1,6 +1,6 @@
 // App constants
 
-export const APP_NAME = 'Bail Recovery';
+export const APP_NAME = 'Elite Recovery';
 export const VERSION = '1.0.0';
 
 // Database
@@ -61,32 +61,51 @@ export const DEFAULT_JOURNEY_CHECKLIST = [
   'Review local jurisdiction requirements',
 ];
 
-// Colors
+// Colors - Dark Red Theme
 export const COLORS = {
-  primary: '#2563eb',
-  primaryDark: '#1d4ed8',
-  secondary: '#64748b',
-  success: '#10b981',
-  warning: '#f59e0b',
-  danger: '#ef4444',
-  background: '#f8fafc',
-  surface: '#ffffff',
-  text: '#1e293b',
-  textSecondary: '#64748b',
-  border: '#e2e8f0',
-  masked: '#94a3b8',
+  // Primary red
+  primary: '#dc2626',      // red-600
+  primaryDark: '#b91c1c',  // red-700
+  primaryLight: '#ef4444', // red-500
+  primaryMuted: '#450a0a', // red-950 for backgrounds
+
+  // Secondary/neutral
+  secondary: '#71717a',    // zinc-500
+
+  // Status colors
+  success: '#22c55e',      // green-500
+  warning: '#f59e0b',      // amber-500
+  danger: '#ef4444',       // red-500
+
+  // Dark backgrounds
+  background: '#000000',   // pure black
+  surface: '#18181b',      // zinc-900
+  surfaceLight: '#27272a', // zinc-800
+  card: '#0a0a0a',         // near black
+
+  // Text
+  text: '#fafafa',         // zinc-50
+  textSecondary: '#a1a1aa', // zinc-400
+  textMuted: '#71717a',    // zinc-500
+
+  // Borders
+  border: '#27272a',       // zinc-800
+  borderLight: '#3f3f46',  // zinc-700
+
+  // Misc
+  masked: '#52525b',       // zinc-600
 };
 
 // Risk severity colors
 export const SEVERITY_COLORS = {
-  low: '#10b981',
-  medium: '#f59e0b',
-  high: '#ef4444',
+  low: '#22c55e',    // green-500
+  medium: '#f59e0b', // amber-500
+  high: '#ef4444',   // red-500
 };
 
 // Identity check colors
 export const IDENTITY_STATUS_COLORS = {
-  pass: '#10b981',
-  concern: '#f59e0b',
-  fail: '#ef4444',
+  pass: '#22c55e',   // green-500
+  concern: '#f59e0b', // amber-500
+  fail: '#ef4444',   // red-500
 };

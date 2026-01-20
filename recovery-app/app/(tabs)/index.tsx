@@ -13,15 +13,19 @@ import { CaseCard } from '@/components';
 import { useCases } from '@/hooks/useCases';
 import { confirm } from '@/lib/confirm';
 
-const DARK = {
-  bg: '#0d1117',
-  surface: '#161b22',
-  border: '#30363d',
-  primary: '#58a6ff',
-  success: '#3fb950',
-  text: '#e6edf3',
-  textSecondary: '#8b949e',
-  textMuted: '#6e7681',
+// Dark Red Theme
+const THEME = {
+  bg: '#000000',
+  surface: '#0a0a0a',
+  surfaceLight: '#18181b',
+  border: '#27272a',
+  borderLight: '#3f3f46',
+  primary: '#dc2626',
+  primaryMuted: '#450a0a',
+  success: '#22c55e',
+  text: '#fafafa',
+  textSecondary: '#a1a1aa',
+  textMuted: '#71717a',
 };
 
 export default function CasesScreen() {
@@ -63,15 +67,15 @@ export default function CasesScreen() {
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
       <View style={styles.emptyIcon}>
-        <Ionicons name="briefcase-outline" size={48} color={DARK.primary} />
+        <Ionicons name="eye-outline" size={48} color={THEME.primary} />
       </View>
-      <Text style={styles.emptyTitle}>No Cases Yet</Text>
+      <Text style={styles.emptyTitle}>No Active Cases</Text>
       <Text style={styles.emptyText}>
-        Add your first recovery case to get started with AI-powered skip trace analysis.
+        Add your first recovery case to begin AI-powered skip trace analysis.
       </Text>
       <TouchableOpacity style={styles.emptyButton} onPress={handleNewCase}>
         <Ionicons name="add" size={20} color="#fff" />
-        <Text style={styles.emptyButtonText}>Create First Case</Text>
+        <Text style={styles.emptyButtonText}>New Case</Text>
       </TouchableOpacity>
     </View>
   );
@@ -81,11 +85,11 @@ export default function CasesScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>Recovery Dashboard</Text>
+          <Text style={styles.greeting}>ELITE RECOVERY</Text>
           <Text style={styles.subtitle}>
             {totalCases === 0
-              ? 'Ready to start'
-              : `${totalCases} case${totalCases !== 1 ? 's' : ''} · ${totalAddresses} locations tracked`}
+              ? 'Ready to hunt'
+              : `${totalCases} case${totalCases !== 1 ? 's' : ''} · ${totalAddresses} locations`}
           </Text>
         </View>
         {totalCases > 0 && (
@@ -109,7 +113,7 @@ export default function CasesScreen() {
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
-            <Text style={styles.statValue}>{totalAddresses}</Text>
+            <Text style={[styles.statValue, { color: THEME.primary }]}>{totalAddresses}</Text>
             <Text style={styles.statLabel}>Locations</Text>
           </View>
         </View>
@@ -118,7 +122,7 @@ export default function CasesScreen() {
       {/* Error state */}
       {error && (
         <View style={styles.errorContainer}>
-          <Ionicons name="warning" size={18} color="#f85149" />
+          <Ionicons name="warning" size={18} color="#ef4444" />
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity onPress={refresh}>
             <Text style={styles.retryText}>Retry</Text>
@@ -148,7 +152,7 @@ export default function CasesScreen() {
           <RefreshControl
             refreshing={isLoading}
             onRefresh={refresh}
-            tintColor={DARK.primary}
+            tintColor={THEME.primary}
           />
         }
         ListEmptyComponent={!isLoading ? renderEmptyState : null}
@@ -161,7 +165,7 @@ export default function CasesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: DARK.bg,
+    backgroundColor: THEME.bg,
   },
   header: {
     flexDirection: 'row',
@@ -172,20 +176,21 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   greeting: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: DARK.text,
+    fontSize: 22,
+    fontWeight: '800',
+    color: THEME.text,
+    letterSpacing: 1,
   },
   subtitle: {
     fontSize: 14,
-    color: DARK.textSecondary,
+    color: THEME.textSecondary,
     marginTop: 2,
   },
   addButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: DARK.primary,
+    backgroundColor: THEME.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -196,10 +201,10 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     marginBottom: 16,
     paddingVertical: 12,
-    backgroundColor: DARK.surface,
+    backgroundColor: THEME.surface,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: DARK.border,
+    borderColor: THEME.border,
   },
   statItem: {
     alignItems: 'center',
@@ -208,11 +213,11 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 20,
     fontWeight: '700',
-    color: DARK.text,
+    color: THEME.text,
   },
   statLabel: {
     fontSize: 11,
-    color: DARK.textSecondary,
+    color: THEME.textMuted,
     marginTop: 2,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -220,7 +225,7 @@ const styles = StyleSheet.create({
   statDivider: {
     width: 1,
     height: 30,
-    backgroundColor: DARK.border,
+    backgroundColor: THEME.border,
   },
   listContent: {
     paddingHorizontal: 16,
@@ -239,7 +244,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: DARK.primary + '20',
+    backgroundColor: THEME.primaryMuted,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 20,
@@ -247,11 +252,11 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 22,
     fontWeight: '600',
-    color: DARK.text,
+    color: THEME.text,
   },
   emptyText: {
     fontSize: 15,
-    color: DARK.textSecondary,
+    color: THEME.textSecondary,
     textAlign: 'center',
     marginTop: 8,
     marginBottom: 24,
@@ -262,7 +267,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: DARK.primary,
+    backgroundColor: THEME.primary,
     paddingHorizontal: 24,
     paddingVertical: 14,
     borderRadius: 12,
@@ -276,19 +281,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: '#f8514920',
+    backgroundColor: '#ef444420',
     padding: 12,
     marginHorizontal: 16,
     marginBottom: 12,
     borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#ef444440',
   },
   errorText: {
     flex: 1,
-    color: '#f85149',
+    color: '#ef4444',
     fontSize: 14,
   },
   retryText: {
-    color: DARK.primary,
+    color: THEME.primary,
     fontSize: 14,
     fontWeight: '600',
   },
