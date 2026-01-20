@@ -479,44 +479,18 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
     setIsSearchingOSINT(true);
     setOsintSearched(true);
 
-    // Generate username variations for display
-    const usernameVariations = generateUsernameVariations(fullName);
-
-    // Check if Python backend is available
-    if (pythonBackendAvailable) {
-      // Use intelligent investigation flow
-      setChatMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        role: 'agent',
-        content: `🔍 **INTELLIGENT INVESTIGATION**: "${fullName}"\n🐍 Python OSINT Backend Active\n\n**Investigation Flow:**\n1️⃣ Generate people search links\n2️⃣ ${email ? `Check email: ${email}` : 'Skip email (none provided)'}\n3️⃣ Search username variations with Sherlock\n\n**Usernames to try:**\n${usernameVariations.slice(0, 5).map(u => `• ${u}`).join('\n')}\n\n⏳ Starting investigation...`,
-        timestamp: new Date(),
-      }]);
-      scrollToBottom();
-
-      try {
+    try {
+      if (pythonBackendAvailable) {
+        // Use Python backend
         const investigation = await investigatePerson(fullName, email);
 
-        // Show each step as it completes
-        for (const step of investigation.flow_steps) {
-          setChatMessages(prev => [...prev, {
-            id: Date.now().toString(),
-            role: 'agent',
-            content: `${step.status === 'complete' ? '✅' : step.status === 'error' ? '❌' : '⏳'} **Step ${step.step}:** ${step.action}\n${step.result || ''}`,
-            timestamp: new Date(),
-          }]);
-          scrollToBottom();
-        }
-
-        // Update social profiles from confirmed profiles
+        // Update social profiles
         const updatedProfiles = generateSocialProfiles(fullName).map(profile => {
           const foundMatch = investigation.confirmed_profiles.find(p =>
             p.platform.toLowerCase().includes(profile.platform.toLowerCase().split('/')[0]) ||
             profile.platform.toLowerCase().includes(p.platform.toLowerCase())
           );
-          if (foundMatch) {
-            return { ...profile, status: 'found' as const, url: foundMatch.url };
-          }
-          return profile;
+          return foundMatch ? { ...profile, status: 'found' as const, url: foundMatch.url } : profile;
         });
         setSocialProfiles(updatedProfiles);
 
@@ -529,69 +503,29 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
           confidence: 95,
         })));
 
-        // Store people search links
         setPeopleSearchResults(investigation.people_search_links.map(l => ({
           source: l.name,
           url: l.url,
           status: 'unknown' as const,
         })));
 
-        // Build final summary
-        let summary = `✅ **INVESTIGATION COMPLETE**\n\n`;
-        summary += `👤 **Subject:** ${investigation.name}\n`;
-        summary += `⏱️ **Time:** ${investigation.execution_time.toFixed(1)}s\n\n`;
-
-        if (investigation.discovered_usernames.length > 0) {
-          summary += `**🔎 Usernames Searched:**\n${investigation.discovered_usernames.map(u => `• ${u}`).join('\n')}\n\n`;
-        }
-
-        if (investigation.confirmed_profiles.length > 0) {
-          summary += `**🟢 CONFIRMED PROFILES (${investigation.confirmed_profiles.length}):**\n`;
-          investigation.confirmed_profiles.slice(0, 20).forEach(p => {
-            summary += `• [${p.platform}](${p.url}) (via ${p.source})\n`;
-          });
-          if (investigation.confirmed_profiles.length > 20) {
-            summary += `• ... and ${investigation.confirmed_profiles.length - 20} more\n`;
-          }
-          summary += '\n';
-        } else {
-          summary += `**🔴 No confirmed profiles found**\n\n`;
-        }
-
-        summary += `**📋 People Search Links (${investigation.people_search_links.length}):**\n`;
-        summary += `Click the links in the OSINT panel to search manually →\n\n`;
-        summary += `📊 **Summary:** ${investigation.summary}`;
-
+        // Single summary message
+        const found = investigation.confirmed_profiles.length;
         setChatMessages(prev => [...prev, {
           id: Date.now().toString(),
           role: 'agent',
-          content: summary,
+          content: found > 0
+            ? `✅ Found ${found} profiles for "${fullName}" in ${investigation.execution_time.toFixed(1)}s.\n\n${investigation.confirmed_profiles.slice(0, 5).map(p => `• ${p.platform}: ${p.url}`).join('\n')}${found > 5 ? `\n• +${found - 5} more` : ''}`
+            : `No profiles found for "${fullName}". Try the search links in the right panel.`,
           timestamp: new Date(),
         }]);
 
-      } catch (error: any) {
-        console.error('Investigation error:', error);
-        setChatMessages(prev => [...prev, {
-          id: Date.now().toString(),
-          role: 'agent',
-          content: `⚠️ Investigation error: ${error?.message || 'Unknown error'}\nFalling back to JavaScript search...`,
-          timestamp: new Date(),
-        }]);
-
+      } else {
         // Fallback to JS search
         await runJSFallbackSearch(fullName);
       }
-
-    } else {
-      // No Python backend - use JS search directly
-      setChatMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        role: 'agent',
-        content: `🔍 **OSINT SEARCH**: "${fullName}"\n📡 JavaScript OSINT Engine (Python backend not available)\n\nSearching platforms...`,
-        timestamp: new Date(),
-      }]);
-      scrollToBottom();
-
+    } catch (error: any) {
+      console.error('OSINT error:', error);
       await runJSFallbackSearch(fullName);
     }
 
@@ -1211,64 +1145,18 @@ ${result.explanation}`,
           </ScrollView>
         </View>
 
-        {/* COLUMN 3: Social Media */}
-        <View style={[styles.col, styles.socialCol, isWeb && { width: 320, minWidth: 280 }]}>
-          <Text style={styles.colTitle}>🔍 OSINT & SOCIAL</Text>
+        {/* COLUMN 3: Quick Links */}
+        <View style={[styles.col, styles.socialCol, isWeb && { width: 280, minWidth: 240 }]}>
+          <Text style={styles.colTitle}>🔍 SEARCH</Text>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8 }}>
-            {/* Subject Photo + Reverse Image Search */}
+            {/* Subject Photo */}
             {subjectPhoto && (
               <View style={styles.subjectSection}>
                 <Image source={{ uri: subjectPhoto }} style={styles.subjectImg} />
                 <Text style={styles.subjectName}>{parsedData?.subject?.fullName || caseData.name}</Text>
-
-                {/* Face Biometrics */}
-                {isExtractingFace ? (
-                  <View style={styles.faceAnalyzing}>
-                    <ActivityIndicator size="small" color={DARK.warning} />
-                    <Text style={styles.faceAnalyzingText}>Analyzing facial structure...</Text>
-                  </View>
-                ) : facialFeatures ? (
-                  <View style={styles.faceBiometrics}>
-                    <Text style={styles.faceBioTitle}>🧬 FACIAL BIOMETRICS</Text>
-                    <View style={styles.faceBioRow}>
-                      <Text style={styles.faceBioLabel}>Face:</Text>
-                      <Text style={styles.faceBioValue}>{facialFeatures.faceShape}, {facialFeatures.jawline} jaw</Text>
-                    </View>
-                    <View style={styles.faceBioRow}>
-                      <Text style={styles.faceBioLabel}>Eyes:</Text>
-                      <Text style={styles.faceBioValue}>{facialFeatures.eyeShape}, {facialFeatures.eyeSpacing}</Text>
-                    </View>
-                    <View style={styles.faceBioRow}>
-                      <Text style={styles.faceBioLabel}>Nose:</Text>
-                      <Text style={styles.faceBioValue}>{facialFeatures.noseShape}</Text>
-                    </View>
-                    {facialFeatures.distinctiveFeatures?.length > 0 && (
-                      <View style={styles.faceBioRow}>
-                        <Text style={styles.faceBioLabel}>Marks:</Text>
-                        <Text style={styles.faceBioValue}>{facialFeatures.distinctiveFeatures.join(', ')}</Text>
-                      </View>
-                    )}
-                    <Text style={styles.faceBioNote}>
-                      ✓ Face signature ready for matching
-                    </Text>
-                  </View>
-                ) : null}
-
-                {/* Reverse Image Search */}
-                <View style={styles.reverseSearchSection}>
-                  <Text style={styles.reverseSearchTitle}>🔎 REVERSE IMAGE SEARCH</Text>
-                  {generateReverseImageSearchUrls(subjectPhoto).map((search, idx) => (
-                    <TouchableOpacity
-                      key={idx}
-                      style={styles.reverseSearchRow}
-                      onPress={() => openUrl(search.url)}
-                    >
-                      <Text style={styles.reverseSearchName}>{search.name}</Text>
-                      <Text style={styles.reverseSearchNote}>{search.note}</Text>
-                      <Ionicons name="open-outline" size={14} color={DARK.primary} />
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                {facialFeatures && (
+                  <Text style={styles.faceReadyBadge}>✓ Face ready for matching</Text>
+                )}
               </View>
             )}
 
@@ -1276,11 +1164,11 @@ ${result.explanation}`,
             {isSearchingOSINT && (
               <View style={styles.osintSearching}>
                 <ActivityIndicator size="small" color={DARK.warning} />
-                <Text style={styles.osintSearchingText}>Searching profiles automatically...</Text>
+                <Text style={styles.osintSearchingText}>Searching...</Text>
               </View>
             )}
 
-            {/* Re-run OSINT Button */}
+            {/* Run OSINT Button */}
             {parsedData?.subject?.fullName && !isSearchingOSINT && (
               <TouchableOpacity
                 style={styles.osintRunBtn}
@@ -1289,172 +1177,77 @@ ${result.explanation}`,
                   runOSINTSearch(parsedData.subject.fullName);
                 }}
               >
-                <Ionicons name="refresh" size={14} color="#fff" />
-                <Text style={styles.osintRunBtnText}>Re-scan OSINT ({osintResults.filter(r => r.exists === true).length} found)</Text>
+                <Ionicons name="search" size={16} color="#fff" />
+                <Text style={styles.osintRunBtnText}>
+                  {osintResults.filter(r => r.exists).length > 0
+                    ? `Found ${osintResults.filter(r => r.exists).length} profiles`
+                    : 'Run OSINT Search'}
+                </Text>
               </TouchableOpacity>
             )}
 
-            {/* TEST ALL TOOLS Button */}
-            {!isSearchingOSINT && (
-              <TouchableOpacity
-                style={[styles.osintRunBtn, { backgroundColor: DARK.warning, marginTop: 4 }]}
-                onPress={async () => {
-                  const testName = parsedData?.subject?.fullName || caseData?.name || 'Test User';
-                  const testEmail = (parsedData as any)?.emails?.[0] || undefined;
+            {/* Social Media - Simple Links */}
+            <Text style={styles.osintSectionTitle}>Social</Text>
+            <View style={styles.quickLinks}>
+              {socialProfiles.filter(p => ['Facebook', 'Instagram', 'TikTok', 'Twitter/X', 'LinkedIn'].includes(p.platform)).map((profile, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  style={[styles.quickLink, profile.status === 'found' && styles.quickLinkFound]}
+                  onPress={() => openUrl(profile.url)}
+                >
+                  <Ionicons
+                    name={profile.platform === 'Facebook' ? 'logo-facebook' :
+                          profile.platform === 'Instagram' ? 'logo-instagram' :
+                          profile.platform === 'TikTok' ? 'logo-tiktok' :
+                          profile.platform.includes('Twitter') ? 'logo-twitter' : 'logo-linkedin'}
+                    size={18}
+                    color={profile.status === 'found' ? DARK.success : DARK.textSecondary}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
 
-                  setChatMessages(prev => [...prev, {
-                    id: Date.now().toString(),
-                    role: 'system',
-                    content: `🧪 **TEST MODE**: Intelligent Investigation Flow\n\n**Target:** ${testName}\n**Email:** ${testEmail || 'None'}\n\n**Testing:**\n1. Backend health check\n2. Smart person investigation\n3. Username variation search\n\nStarting...`,
-                    timestamp: new Date(),
-                  }]);
-                  scrollToBottom();
-
-                  // Step 1: Check backend health
-                  setChatMessages(prev => [...prev, {
-                    id: Date.now().toString(),
-                    role: 'agent',
-                    content: `⏳ **Step 1/2:** Checking Python OSINT backend...`,
-                    timestamp: new Date(),
-                  }]);
-                  scrollToBottom();
-
-                  const health = await checkBackendHealth();
-                  setPythonBackendAvailable(health?.status === 'healthy');
-
-                  setChatMessages(prev => [...prev, {
-                    id: Date.now().toString(),
-                    role: 'agent',
-                    content: health
-                      ? `✅ **Backend Status:** ${health.status}\n\n**Installed Tools:**\n• Sherlock: ${health.tools.sherlock}\n• Maigret: ${health.tools.maigret}\n• Holehe: ${health.tools.holehe}\n• Socialscan: ${health.tools.socialscan}\n\n**API URL:** https://elite-recovery-osint.onrender.com`
-                      : `❌ **Backend Status:** Not available\n\nWill use JavaScript fallback for OSINT`,
-                    timestamp: new Date(),
-                  }]);
-                  scrollToBottom();
-
-                  // Step 2: Run intelligent investigation
-                  setChatMessages(prev => [...prev, {
-                    id: Date.now().toString(),
-                    role: 'agent',
-                    content: `⏳ **Step 2/2:** Running intelligent investigation flow...\n\nThis will:\n• Generate people search links\n• Search username variations (${generateUsernameVariations(testName).slice(0, 3).join(', ')}...)\n• Find confirmed social profiles`,
-                    timestamp: new Date(),
-                  }]);
-                  scrollToBottom();
-
-                  setOsintSearched(false);
-                  await runOSINTSearch(testName, testEmail);
-
-                  setChatMessages(prev => [...prev, {
-                    id: Date.now().toString(),
-                    role: 'system',
-                    content: `🧪 **TEST COMPLETE**\n\nCheck the results above. If Python backend is working, you should see:\n• Step-by-step investigation flow\n• Username variations searched\n• Confirmed profiles found\n• People search links generated`,
-                    timestamp: new Date(),
-                  }]);
-                  scrollToBottom();
-                }}
-              >
-                <Ionicons name="flask" size={14} color="#000" />
-                <Text style={[styles.osintRunBtnText, { color: '#000' }]}>🧪 TEST ALL TOOLS</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Username Search Tool */}
-            {parsedData?.subject?.fullName && (
-              <TouchableOpacity
-                style={styles.usernameSearchBtn}
-                onPress={() => openUrl(generateUsernameSearchUrl(parsedData.subject.fullName.toLowerCase().replace(/ /g, '')))}
-              >
-                <Ionicons name="search" size={14} color="#fff" />
-                <Text style={styles.usernameSearchText}>WhatsMyName (400+ sites)</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Social Media Section */}
-            <Text style={styles.osintSectionTitle}>📱 SOCIAL MEDIA</Text>
-            {socialProfiles.filter(p => ['Facebook', 'Instagram', 'TikTok', 'Twitter/X', 'LinkedIn', 'Snapchat'].includes(p.platform)).map((profile, idx) => (
-              <View key={idx} style={styles.socialCard}>
-                <View style={styles.socialHeader}>
-                  <View style={[styles.socialIcon, { backgroundColor: getPlatformColor(profile.platform) }]}>
-                    <Ionicons
-                      name={profile.platform === 'Facebook' ? 'logo-facebook' :
-                            profile.platform === 'Instagram' ? 'logo-instagram' :
-                            profile.platform === 'TikTok' ? 'logo-tiktok' :
-                            profile.platform.includes('Twitter') ? 'logo-twitter' :
-                            profile.platform === 'LinkedIn' ? 'logo-linkedin' :
-                            profile.platform === 'Snapchat' ? 'logo-snapchat' : 'globe'}
-                      size={16}
-                      color="#fff"
-                    />
-                  </View>
-                  <Text style={styles.socialPlatform}>{profile.platform}</Text>
-                  <View style={[styles.statusBadge,
-                    profile.status === 'found' ? styles.statusFound :
-                    profile.status === 'not_found' ? styles.statusNotFound : styles.statusSearching
-                  ]}>
-                    <Text style={styles.statusText}>
-                      {profile.status === 'found' ? '✓' : profile.status === 'not_found' ? '✗' : '?'}
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.socialUsername}>@{profile.username}</Text>
-                <View style={styles.socialActions}>
-                  <TouchableOpacity style={styles.socialBtn} onPress={() => openUrl(profile.url)}>
-                    <Text style={styles.socialBtnText}>Search</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.socialBtn, styles.foundBtn]}
-                    onPress={() => updateSocialStatus(profile.platform, 'found')}
-                  >
-                    <Text style={styles.socialBtnText}>✓</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.socialBtn, styles.notFoundBtn]}
-                    onPress={() => updateSocialStatus(profile.platform, 'not_found')}
-                  >
-                    <Text style={styles.socialBtnText}>✗</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
-
-            {/* People Search / Public Records Section */}
-            <Text style={styles.osintSectionTitle}>🔍 PEOPLE SEARCH</Text>
-            {socialProfiles.filter(p => ['TruePeopleSearch', 'FastPeopleSearch', 'Whitepages', 'Spokeo', 'CourtListener'].includes(p.platform)).map((profile, idx) => (
+            {/* People Search - Simple Links */}
+            <Text style={styles.osintSectionTitle}>Records</Text>
+            {socialProfiles.filter(p => ['TruePeopleSearch', 'FastPeopleSearch', 'Whitepages', 'Spokeo'].includes(p.platform)).map((profile, idx) => (
               <TouchableOpacity
                 key={idx}
-                style={styles.peopleSearchRow}
+                style={styles.recordLink}
                 onPress={() => openUrl(profile.url)}
               >
-                <Ionicons name="person-circle-outline" size={16} color={DARK.primary} />
-                <Text style={styles.peopleSearchName}>{profile.platform}</Text>
-                <View style={[styles.statusBadge,
-                  profile.status === 'found' ? styles.statusFound :
-                  profile.status === 'not_found' ? styles.statusNotFound : styles.statusSearching
-                ]}>
-                  <Text style={styles.statusText}>
-                    {profile.status === 'found' ? '✓' : profile.status === 'not_found' ? '✗' : '?'}
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={() => updateSocialStatus(profile.platform, 'found')} style={styles.miniBtn}>
-                  <Text style={[styles.miniBtnText, { color: DARK.success }]}>✓</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => updateSocialStatus(profile.platform, 'not_found')} style={styles.miniBtn}>
-                  <Text style={[styles.miniBtnText, { color: DARK.danger }]}>✗</Text>
-                </TouchableOpacity>
+                <Text style={styles.recordLinkText}>{profile.platform}</Text>
+                <Ionicons name="open-outline" size={14} color={DARK.textMuted} />
               </TouchableOpacity>
             ))}
 
-            {/* Relatives for network */}
+            {/* Reverse Image Search */}
+            {subjectPhoto && (
+              <>
+                <Text style={styles.osintSectionTitle}>Image Search</Text>
+                {generateReverseImageSearchUrls(subjectPhoto).slice(0, 3).map((search, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={styles.recordLink}
+                    onPress={() => openUrl(search.url)}
+                  >
+                    <Text style={styles.recordLinkText}>{search.name}</Text>
+                    <Ionicons name="open-outline" size={14} color={DARK.textMuted} />
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+
+            {/* Network */}
             {relatives.length > 0 && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>👥 NETWORK</Text>
-                {relatives.slice(0, 5).map((r: any, idx: number) => (
+              <>
+                <Text style={styles.osintSectionTitle}>Network</Text>
+                {relatives.slice(0, 3).map((r: any, idx: number) => (
                   <View key={idx} style={styles.relRow}>
                     <Text style={styles.relName}>{r.name}</Text>
                     <Text style={styles.relRel}>{r.relationship}</Text>
                   </View>
                 ))}
-              </View>
+              </>
             )}
           </ScrollView>
         </View>
@@ -1569,4 +1362,11 @@ const styles = StyleSheet.create({
   relRow: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: DARK.border },
   relName: { fontSize: 12, color: DARK.text },
   relRel: { fontSize: 10, color: DARK.textMuted },
+  // Simplified styles
+  faceReadyBadge: { fontSize: 10, color: DARK.success, backgroundColor: DARK.success + '20', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+  quickLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  quickLink: { width: 40, height: 40, borderRadius: 8, backgroundColor: DARK.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: DARK.border },
+  quickLinkFound: { borderColor: DARK.success, backgroundColor: DARK.success + '15' },
+  recordLink: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 10, backgroundColor: DARK.surface, borderRadius: 6, marginBottom: 4, gap: 8 },
+  recordLinkText: { flex: 1, fontSize: 12, color: DARK.text },
 });

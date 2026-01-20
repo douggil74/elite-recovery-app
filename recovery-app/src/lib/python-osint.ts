@@ -133,15 +133,24 @@ export interface BackendHealth {
 // API Functions
 // ============================================================================
 
+// Cache backend status for session (avoid repeated slow checks)
+let cachedBackendHealth: BackendHealth | null = null;
+let lastHealthCheck: number = 0;
+const HEALTH_CACHE_MS = 5 * 60 * 1000; // 5 minutes
+
 /**
- * Check if Python OSINT backend is available
+ * Check if Python OSINT backend is available (cached)
  */
-export async function checkBackendHealth(): Promise<BackendHealth | null> {
+export async function checkBackendHealth(forceRefresh = false): Promise<BackendHealth | null> {
+  // Return cached result if fresh
+  if (!forceRefresh && cachedBackendHealth && Date.now() - lastHealthCheck < HEALTH_CACHE_MS) {
+    return cachedBackendHealth;
+  }
+
   try {
     const baseUrl = await getBackendUrl();
-    // Allow 30 seconds for Render cold start
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
     const response = await fetch(`${baseUrl}/health`, {
       method: 'GET',
@@ -151,10 +160,17 @@ export async function checkBackendHealth(): Promise<BackendHealth | null> {
 
     clearTimeout(timeoutId);
 
-    if (!response.ok) return null;
-    return await response.json();
+    if (!response.ok) {
+      cachedBackendHealth = null;
+      return null;
+    }
+
+    cachedBackendHealth = await response.json();
+    lastHealthCheck = Date.now();
+    return cachedBackendHealth;
   } catch (error) {
     console.log('Python OSINT backend not available:', error);
+    cachedBackendHealth = null;
     return null;
   }
 }
