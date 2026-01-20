@@ -32,13 +32,13 @@ export default function Home() {
           </span>
         </div>
         <a
-          href="mailto:doug@eliterecoveryla.com"
+          href="mailto:douglas@eliterecoveryla.com"
           className="hidden sm:flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-sm"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
           </svg>
-          doug@eliterecoveryla.com
+          douglas@eliterecoveryla.com
         </a>
       </nav>
 
@@ -81,7 +81,7 @@ export default function Home() {
             <span>985-264-9519</span>
           </a>
           <a
-            href="mailto:doug@eliterecoveryla.com"
+            href="mailto:douglas@eliterecoveryla.com"
             className="flex items-center justify-center gap-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-medium px-8 py-4 rounded-lg transition-all"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -158,8 +158,8 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-6 text-zinc-500 text-sm">
             <span>Licensed Bail Enforcement</span>
-            <a href="mailto:doug@eliterecoveryla.com" className="hover:text-white transition-colors">
-              doug@eliterecoveryla.com
+            <a href="mailto:douglas@eliterecoveryla.com" className="hover:text-white transition-colors">
+              douglas@eliterecoveryla.com
             </a>
           </div>
         </div>

@@ -1,6 +1,6 @@
 // App constants
 
-export const APP_NAME = 'Elite Recovery';
+export const APP_NAME = 'Fugitive Recovery';
 export const VERSION = '1.0.0';
 
 // Database

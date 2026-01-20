@@ -48,4 +48,4 @@ Paste this JSON into the Recovery App Settings > Cloud Sync section.
 - **Vercel Project (Main Site):** elite-recovery-la
 - **Vercel Project (Recovery App):** recovery-app
 - **Domain:** eliterecoveryla.com
-- **Email:** doug@eliterecoveryla.com
+- **Email:** douglas@eliterecoveryla.com
