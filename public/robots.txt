@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+
+# Don't index redirect pages
+Disallow: /software
+
+# Don't index internal routes
+Disallow: /_not-found
+Disallow: /_sitemap
+
+Sitemap: https://eliterecoveryla.com/sitemap.xml
