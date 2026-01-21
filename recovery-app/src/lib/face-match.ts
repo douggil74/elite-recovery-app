@@ -2,9 +2,12 @@
  * Advanced Face Matching System
  * Uses GPT-4 Vision to extract detailed facial biometrics and compare faces
  * Better than Yandex - focuses on actual facial structure, not pose/skin
+ * Now uses backend proxy - no local API key needed
  */
 
-import OpenAI from 'openai';
+import learningSystem from './learning-system';
+
+const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
 
 export interface FacialFeatures {
   // Bone structure
@@ -208,18 +211,14 @@ SCORING GUIDE:
 - 0-29: Different person (bone structure clearly different)`;
 
 export class FaceMatchingService {
-  private client: OpenAI;
   private targetFeatures: FacialFeatures | null = null;
 
-  constructor(apiKey: string) {
-    this.client = new OpenAI({
-      apiKey,
-      dangerouslyAllowBrowser: true,
-    });
+  constructor(_apiKey?: string) {
+    // API key no longer needed - using backend proxy
   }
 
   /**
-   * Extract facial features from an image
+   * Extract facial features from an image using backend proxy
    */
   async extractFeatures(imageBase64: string): Promise<{
     success: boolean;
@@ -228,27 +227,28 @@ export class FaceMatchingService {
     error?: string;
   }> {
     try {
-      const imageUrl = imageBase64.startsWith('data:')
-        ? imageBase64
-        : `data:image/jpeg;base64,${imageBase64}`;
+      // Clean base64 data
+      const base64Data = imageBase64.includes('base64,')
+        ? imageBase64.split('base64,')[1]
+        : imageBase64;
 
-      const response = await this.client.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: FACE_EXTRACTION_PROMPT },
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: 'Extract all facial biometrics from this face.' },
-              { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
-            ],
-          },
-        ],
-        max_tokens: 2000,
-        temperature: 0.1,
+      const response = await fetch(`${BACKEND_URL}/api/ai/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_base64: base64Data,
+          prompt: FACE_EXTRACTION_PROMPT + '\n\nExtract all facial biometrics from this face.',
+          model: 'gpt-4o',
+        }),
       });
 
-      const content = response.choices[0]?.message?.content || '{}';
+      if (!response.ok) {
+        const errorText = await response.text();
+        return { success: false, error: `${response.status} ${errorText}` };
+      }
+
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content || '{}';
       const jsonMatch = content.match(/\{[\s\S]*\}/);
 
       if (!jsonMatch) {
@@ -329,29 +329,35 @@ export class FaceMatchingService {
         };
       }
 
-      // Now compare the two feature sets
+      // Now compare the two feature sets using backend proxy
       const prompt = FACE_COMPARISON_PROMPT
         .replace('{face1}', JSON.stringify(features, null, 2))
-        .replace('{face2}', JSON.stringify(unknownResult.features, null, 2));
+        .replace('{face2}', JSON.stringify(unknownResult.features, null, 2))
+        + '\n\nCompare these two facial profiles and determine if they are the same person.';
 
-      const response = await this.client.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: prompt },
-          {
-            role: 'user',
-            content: 'Compare these two facial profiles and determine if they are the same person.',
-          },
-        ],
-        max_tokens: 1500,
-        temperature: 0.1,
-        response_format: { type: 'json_object' },
+      const response = await fetch(`${BACKEND_URL}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: prompt },
+            { role: 'user', content: 'Perform the comparison and output JSON.' },
+          ],
+          model: 'gpt-4o-mini',
+          max_tokens: 1500,
+        }),
       });
 
-      const content = response.choices[0]?.message?.content || '{}';
-      const parsed = JSON.parse(content);
+      if (!response.ok) {
+        throw new Error(`Backend error: ${response.status}`);
+      }
 
-      return {
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content || '{}';
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+
+      const result: FaceMatchResult = {
         matchScore: parsed.matchScore || 0,
         confidence: parsed.confidence || 0,
         matchingFeatures: parsed.matchingFeatures || [],
@@ -360,8 +366,19 @@ export class FaceMatchingService {
         explanation: parsed.explanation || 'Comparison complete',
       };
 
+      // Track learning from this comparison
+      this.trackFaceMatchLearning(result).catch(() => {});
+
+      return result;
+
     } catch (error: any) {
       console.error('Face comparison error:', error);
+      // Track failure
+      learningSystem.logFailure(
+        'face_matching',
+        'Face comparison failed',
+        `Error: ${error?.message || 'Unknown error'}`
+      ).catch(() => {});
       return {
         matchScore: 0,
         confidence: 0,
@@ -374,73 +391,63 @@ export class FaceMatchingService {
   }
 
   /**
-   * Compare two images directly
+   * Track learnings from face match results
+   */
+  private async trackFaceMatchLearning(result: FaceMatchResult): Promise<void> {
+    try {
+      // Track successful high-confidence matches
+      if (result.verdict === 'LIKELY_MATCH' && result.matchScore >= 85) {
+        await learningSystem.logSuccess(
+          'face_matching',
+          `High-confidence match: ${result.matchScore}%`,
+          `Verdict: ${result.verdict}. Matching features: ${result.matchingFeatures.slice(0, 3).join(', ')}`,
+          'HIGH'
+        );
+      } else if (result.verdict === 'POSSIBLE_MATCH') {
+        await learningSystem.logSuccess(
+          'face_matching',
+          `Possible match found: ${result.matchScore}%`,
+          `May need additional verification. Features: ${result.matchingFeatures.slice(0, 3).join(', ')}`,
+          'MEDIUM'
+        );
+      }
+
+      // Track prompt effectiveness
+      const quality = result.matchScore > 50 ? Math.min(100, result.matchScore + result.confidence / 2) : 40;
+      await learningSystem.trackPromptUse(
+        'face_comparison_v2',
+        '2.0',
+        result.verdict !== 'NO_MATCH',
+        quality
+      );
+    } catch (error) {
+      console.error('[FaceMatch] Learning tracking error:', error);
+    }
+  }
+
+  /**
+   * Compare two images directly - extracts features and compares
    */
   async compareImages(
     image1Base64: string,
     image2Base64: string
   ): Promise<FaceMatchResult> {
     try {
-      const url1 = image1Base64.startsWith('data:')
-        ? image1Base64
-        : `data:image/jpeg;base64,${image1Base64}`;
+      // Extract features from first image (target)
+      const features1 = await this.extractFeatures(image1Base64);
+      if (!features1.success || !features1.features) {
+        return {
+          matchScore: 0,
+          confidence: 0,
+          matchingFeatures: [],
+          differingFeatures: [],
+          verdict: 'NO_MATCH',
+          explanation: `Could not extract features from first image: ${features1.error}`,
+        };
+      }
 
-      const url2 = image2Base64.startsWith('data:')
-        ? image2Base64
-        : `data:image/jpeg;base64,${image2Base64}`;
-
-      const response = await this.client.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a forensic facial analyst. Compare these two faces and determine if they are the SAME PERSON.
-
-Focus ONLY on bone structure and permanent features:
-- Skull shape, jaw structure, cheekbones
-- Eye shape, spacing, and socket depth
-- Nose bone structure
-- Ear shape (if visible)
-- Permanent marks (scars, moles)
-
-IGNORE:
-- Age, weight, expression, lighting, pose, makeup, hair
-
-Return JSON:
-{
-  "matchScore": 0-100,
-  "confidence": 0-100,
-  "matchingFeatures": [],
-  "differingFeatures": [],
-  "verdict": "LIKELY_MATCH|POSSIBLE_MATCH|UNLIKELY_MATCH|NO_MATCH",
-  "explanation": "reasoning"
-}`,
-          },
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: 'Compare these two faces. Are they the same person?' },
-              { type: 'image_url', image_url: { url: url1, detail: 'high' } },
-              { type: 'image_url', image_url: { url: url2, detail: 'high' } },
-            ],
-          },
-        ],
-        max_tokens: 1500,
-        temperature: 0.1,
-        response_format: { type: 'json_object' },
-      });
-
-      const content = response.choices[0]?.message?.content || '{}';
-      const parsed = JSON.parse(content);
-
-      return {
-        matchScore: parsed.matchScore || 0,
-        confidence: parsed.confidence || 0,
-        matchingFeatures: parsed.matchingFeatures || [],
-        differingFeatures: parsed.differingFeatures || [],
-        verdict: parsed.verdict || 'NO_MATCH',
-        explanation: parsed.explanation || '',
-      };
+      // Compare second image against first
+      return await this.compareFaces(image2Base64, features1.features);
 
     } catch (error: any) {
       console.error('Image comparison error:', error);

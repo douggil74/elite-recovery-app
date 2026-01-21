@@ -10,17 +10,18 @@ import {
   Linking,
   ActivityIndicator,
   Image,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCase } from '@/hooks/useCase';
 import { deleteCase } from '@/lib/database';
-import { deleteCaseDirectory, getSettings } from '@/lib/storage';
+import { deleteCaseDirectory } from '@/lib/storage';
 import { confirm } from '@/lib/confirm';
 import { syncChat, syncPhoto, fetchSyncedChat, fetchSyncedPhoto, isSyncEnabled, deleteSyncedCase } from '@/lib/sync';
 import {
-  AISquadOrchestrator,
+  // AISquadOrchestrator disabled - using backend proxy
   type AgentMessage,
   type RankedLocation,
 } from '@/lib/ai-squad';
@@ -160,6 +161,9 @@ const generateUsernameSearchUrl = (username: string): string => {
 
 const isWeb = Platform.OS === 'web';
 
+// Generate unique ID to avoid React key collisions
+const uniqueId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
 const compressImage = (dataUrl: string, maxWidth = 400, quality = 0.7): Promise<string> => {
   return new Promise((resolve) => {
     if (!isWeb) { resolve(dataUrl); return; }
@@ -181,6 +185,8 @@ const compressImage = (dataUrl: string, maxWidth = 400, quality = 0.7): Promise<
 export default function CaseDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { width: screenWidth } = useWindowDimensions();
+  const isMobile = screenWidth < 768;
   const { caseData, reports, refresh, analyzeText } = useCase(id!);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatLoaded, setChatLoaded] = useState(false);
@@ -189,7 +195,7 @@ export default function CaseDetailScreen() {
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [subjectPhoto, setSubjectPhoto] = useState<string | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [orchestrator, setOrchestrator] = useState<AISquadOrchestrator | null>(null);
+  // Orchestrator disabled - using backend proxy for chat
   const [squadLocations, setSquadLocations] = useState<RankedLocation[]>([]);
   const [socialProfiles, setSocialProfiles] = useState<SocialProfile[]>([]);
   const [osintResults, setOsintResults] = useState<ProfileCheckResult[]>([]);
@@ -201,9 +207,16 @@ export default function CaseDetailScreen() {
   const [isExtractingFace, setIsExtractingFace] = useState(false);
   const [faceMatchService, setFaceMatchService] = useState<FaceMatchingService | null>(null);
   const [photoIntel, setPhotoIntel] = useState<PhotoIntelligence | null>(null);
+  const [allPhotoIntel, setAllPhotoIntel] = useState<PhotoIntelligence[]>([]);  // Store ALL photo analysis results
   const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
   const [tacticalAdvice, setTacticalAdvice] = useState<string[]>([]);
   const [pythonBackendAvailable, setPythonBackendAvailable] = useState(false);
+  const [imageSearchUrls, setImageSearchUrls] = useState<{
+    google_lens?: string;
+    yandex?: string;
+    tineye?: string;
+    bing?: string;
+  } | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -233,6 +246,14 @@ export default function CaseDetailScreen() {
         if (localSocial) {
           try {
             setSocialProfiles(JSON.parse(localSocial));
+          } catch (e) {}
+        }
+
+        // Load all photo intelligence results
+        const localPhotoIntel = await AsyncStorage.getItem(`case_all_photo_intel_${id}`);
+        if (localPhotoIntel) {
+          try {
+            setAllPhotoIntel(JSON.parse(localPhotoIntel));
           } catch (e) {}
         }
 
@@ -275,17 +296,18 @@ export default function CaseDetailScreen() {
     }
   }, [id, socialProfiles]);
 
+  // Save all photo intel results
+  useEffect(() => {
+    if (id && allPhotoIntel.length > 0) {
+      AsyncStorage.setItem(`case_all_photo_intel_${id}`, JSON.stringify(allPhotoIntel));
+    }
+  }, [id, allPhotoIntel]);
+
   useFocusEffect(useCallback(() => { refresh(); }, [refresh]));
 
-  // Initialize Face Matching Service
+  // Initialize Face Matching Service (no API key needed - uses backend proxy)
   useEffect(() => {
-    const initFaceMatch = async () => {
-      const settings = await getSettings();
-      if (settings.openaiApiKey) {
-        setFaceMatchService(new FaceMatchingService(settings.openaiApiKey));
-      }
-    };
-    initFaceMatch();
+    setFaceMatchService(new FaceMatchingService());
   }, []);
 
   // Check Python OSINT backend availability
@@ -300,6 +322,13 @@ export default function CaseDetailScreen() {
     checkPythonBackend();
   }, []);
 
+  // Upload image for reverse image search when subject photo is set
+  useEffect(() => {
+    if (subjectPhoto) {
+      uploadImageForSearch(subjectPhoto);
+    }
+  }, [subjectPhoto]);
+
   // Extract facial features when photo is set
   useEffect(() => {
     const extractFacialFeatures = async () => {
@@ -307,7 +336,7 @@ export default function CaseDetailScreen() {
         setIsExtractingFace(true);
 
         setChatMessages(prev => [...prev, {
-          id: Date.now().toString(),
+          id: uniqueId(),
           role: 'agent',
           content: '🔬 **FACE ANALYSIS**: Extracting facial biometrics for matching...',
           timestamp: new Date(),
@@ -325,7 +354,7 @@ export default function CaseDetailScreen() {
             }
 
             setChatMessages(prev => [...prev, {
-              id: Date.now().toString(),
+              id: uniqueId(),
               role: 'agent',
               content: `✅ **FACE BIOMETRICS EXTRACTED**
 
@@ -348,7 +377,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
             }]);
           } else {
             setChatMessages(prev => [...prev, {
-              id: Date.now().toString(),
+              id: uniqueId(),
               role: 'agent',
               content: `⚠️ Face extraction: ${result.error || 'Could not detect face'}`,
               timestamp: new Date(),
@@ -380,59 +409,17 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
     });
   }, [subjectPhoto, faceMatchService, id]);
 
-  // Initialize AI Squad
-  useEffect(() => {
-    const initSquad = async () => {
-      if (!id || !caseData) return;
-      const settings = await getSettings();
-      if (!settings.openaiApiKey) return;
+  // AI Squad Orchestrator disabled - using backend proxy for chat instead
+  // This eliminates duplicate "Investigation initialized" messages and removes API key requirement
 
-      const squad = new AISquadOrchestrator(
-        { openaiKey: settings.openaiApiKey },
-        {
-          onAgentActivity: () => {},
-          onMessage: (msg: AgentMessage) => {
-            setChatMessages(prev => [...prev, {
-              id: msg.id,
-              role: 'agent',
-              content: msg.content,
-              timestamp: msg.timestamp,
-            }]);
-            scrollToBottom();
-          },
-          onLocationUpdate: (locations) => {
-            setSquadLocations(locations);
-            const context = squad.getContext();
-            AsyncStorage.setItem(`case_squad_${id}`, JSON.stringify({
-              topLocations: locations,
-              confidence: context.confidence,
-              crossReferences: context.crossReferences,
-            }));
-          },
-          onConfidenceUpdate: () => {},
-          onQuestion: () => {},
-          onError: (agent, error) => {
-            setChatMessages(prev => [...prev, {
-              id: Date.now().toString(),
-              role: 'agent',
-              content: `⚠️ ${agent}: ${error}`,
-              timestamp: new Date(),
-            }]);
-          },
-        }
-      );
-      squad.initCase(id, caseData.name);
-      setOrchestrator(squad);
-    };
-    initSquad();
-  }, [id, caseData?.name]);
-
-  // Auto-run OSINT search when we have a target name
+  // Auto-run OSINT search when we have a valid target name (not "Unknown")
   useEffect(() => {
-    if (parsedData?.subject?.fullName && !osintSearched && !isSearchingOSINT) {
-      runOSINTSearch(parsedData.subject.fullName);
+    const subjectName = parsedData?.subject?.fullName;
+    const validName = subjectName && subjectName !== 'Unknown' && subjectName !== 'unknown' ? subjectName : caseData?.name;
+    if (validName && validName !== 'Unknown' && !osintSearched && !isSearchingOSINT) {
+      runOSINTSearch(validName);
     }
-  }, [parsedData?.subject?.fullName, osintSearched]);
+  }, [parsedData?.subject?.fullName, caseData?.name, osintSearched]);
 
   // Generate username variations from a name
   const generateUsernameVariations = (fullName: string): string[] => {
@@ -512,7 +499,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
         // Single summary message
         const found = investigation.confirmed_profiles.length;
         setChatMessages(prev => [...prev, {
-          id: Date.now().toString(),
+          id: uniqueId(),
           role: 'agent',
           content: found > 0
             ? `✅ Found ${found} profiles for "${fullName}" in ${investigation.execution_time.toFixed(1)}s.\n\n${investigation.confirmed_profiles.slice(0, 5).map(p => `• ${p.platform}: ${p.url}`).join('\n')}${found > 5 ? `\n• +${found - 5} more` : ''}`
@@ -557,14 +544,14 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
       setSocialProfiles(updatedProfiles);
 
       setChatMessages(prev => [...prev, {
-        id: Date.now().toString(),
+        id: uniqueId(),
         role: 'agent',
         content: `✅ Local OSINT complete. Found ${localResults.profiles.filter(p => p.exists === true).length} profiles.`,
         timestamp: new Date(),
       }]);
     } catch (localError: any) {
       setChatMessages(prev => [...prev, {
-        id: Date.now().toString(),
+        id: uniqueId(),
         role: 'agent',
         content: `⚠️ OSINT search error: ${localError?.message || 'Unknown error'}. Try manual search links.`,
         timestamp: new Date(),
@@ -596,18 +583,58 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
     Linking.openURL(url);
   };
 
+  // Upload image to backend for reverse image search
+  const uploadImageForSearch = async (imageBase64: string) => {
+    try {
+      const response = await fetch('https://elite-recovery-osint.onrender.com/api/image/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_base64: imageBase64 }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setImageSearchUrls(data.search_urls);
+      }
+    } catch (error) {
+      console.error('Failed to upload image for search:', error);
+    }
+  };
+
   // Analyze photo for investigative intelligence
-  const analyzePhotoForIntel = async (imageData: string) => {
+  const analyzePhotoForIntel = async (imageData: string, fileName?: string) => {
+    console.log('[PhotoIntel] Starting analysis for:', fileName);
     setIsAnalyzingPhoto(true);
     try {
-      const intel = await photoIntelligence.analyzePhoto(imageData);
+      const intel = await photoIntelligence.analyzePhoto(imageData, fileName);
+      console.log('[PhotoIntel] Analysis result:', intel ? 'Success' : 'No result', 'Addresses:', intel?.addresses?.length);
       if (intel) {
         setPhotoIntel(intel);
-        const advice = photoIntelligence.generateTacticalAdvice(intel);
-        setTacticalAdvice(advice);
+        setAllPhotoIntel(prev => [...prev, intel]);  // Accumulate all photo intel
+        // Don't generate tactical advice automatically - wait for user to request it
 
         // Build detailed message for chat
-        const parts: string[] = ['📷 **PHOTO INTELLIGENCE REPORT**\n'];
+        const parts: string[] = [`📷 **PHOTO INTELLIGENCE REPORT**${intel.sourceFileName ? ` - ${intel.sourceFileName}` : ''}\n`];
+
+        // EXIF METADATA - Display first as it's highest priority
+        if (intel.exifData) {
+          if (intel.exifData.gps) {
+            parts.push(`\n🎯 **CRITICAL: GPS LOCATION FOUND!**`);
+            parts.push(`📍 Coordinates: ${intel.exifData.gps.latitude.toFixed(6)}, ${intel.exifData.gps.longitude.toFixed(6)}`);
+            parts.push(`🗺️ [Open in Google Maps](${intel.exifData.gps.googleMapsUrl})`);
+          }
+          if (intel.exifData.dateTime?.original) {
+            parts.push(`\n📅 **Photo Taken:** ${intel.exifData.dateTime.original}`);
+          }
+          if (intel.exifData.device) {
+            const device = [intel.exifData.device.make, intel.exifData.device.model].filter(Boolean).join(' ');
+            if (device) {
+              parts.push(`📱 **Device:** ${device}`);
+            }
+          }
+          if (intel.exifData.gps || intel.exifData.dateTime?.original) {
+            parts.push(''); // Empty line after EXIF section
+          }
+        }
 
         if (intel.addresses.length > 0) {
           parts.push(`\n🏠 **ADDRESSES DETECTED (${intel.addresses.length}):**`);
@@ -663,34 +690,24 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
         parts.push(`⏰ **TIME:** ${intel.metadata.estimatedTimeOfDay}, ${intel.metadata.estimatedSeason}`);
 
         setChatMessages(prev => [...prev, {
-          id: Date.now().toString(),
+          id: uniqueId(),
           role: 'agent',
           content: parts.join('\n'),
           timestamp: new Date(),
         }]);
 
-        // Add tactical advice
-        if (advice.length > 0) {
-          setChatMessages(prev => [...prev, {
-            id: Date.now().toString(),
-            role: 'agent',
-            content: `💡 **TACTICAL RECOMMENDATIONS:**\n\n${advice.map(a => `• ${a}`).join('\n')}`,
-            timestamp: new Date(),
-          }]);
-        }
-
         scrollToBottom();
       } else {
         setChatMessages(prev => [...prev, {
-          id: Date.now().toString(),
+          id: uniqueId(),
           role: 'agent',
-          content: '⚠️ Could not analyze photo. Make sure OpenAI API key is configured in Settings.',
+          content: '⚠️ Could not analyze photo. Backend may be unavailable - try again in a moment.',
           timestamp: new Date(),
         }]);
       }
     } catch (error: any) {
       setChatMessages(prev => [...prev, {
-        id: Date.now().toString(),
+        id: uniqueId(),
         role: 'agent',
         content: `❌ Photo analysis error: ${error?.message || 'Unknown error'}`,
         timestamp: new Date(),
@@ -727,9 +744,9 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
 
             // If we already have a subject photo and facial features, compare faces
             if (hasExistingSubject && hasFeatures && matchService) {
-              setUploadedFiles(prev => [...prev, { id: Date.now().toString(), name: currentFileName, type: 'image', uploadedAt: new Date() }]);
+              setUploadedFiles(prev => [...prev, { id: uniqueId(), name: currentFileName, type: 'image', uploadedAt: new Date() }]);
               setChatMessages(prev => [...prev, {
-                id: Date.now().toString(),
+                id: uniqueId(),
                 role: 'user',
                 content: `📸 Compare face: ${currentFileName}`,
                 timestamp: new Date(),
@@ -737,7 +754,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
               scrollToBottom();
 
               setChatMessages(prev => [...prev, {
-                id: Date.now().toString(),
+                id: uniqueId(),
                 role: 'agent',
                 content: `🔬 **COMPARING FACES** - Analyzing bone structure...`,
                 timestamp: new Date(),
@@ -751,7 +768,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
                               result.verdict === 'UNLIKELY_MATCH' ? '🟠' : '🔴';
 
                 setChatMessages(prev => [...prev, {
-                  id: Date.now().toString(),
+                  id: uniqueId(),
                   role: 'agent',
                   content: `${emoji} **FACE MATCH RESULT: ${result.verdict}**
 
@@ -770,7 +787,7 @@ ${result.explanation}`,
 
               } catch (err: any) {
                 setChatMessages(prev => [...prev, {
-                  id: Date.now().toString(),
+                  id: uniqueId(),
                   role: 'agent',
                   content: `⚠️ Face comparison failed: ${err?.message || 'Unknown error'}`,
                   timestamp: new Date(),
@@ -782,14 +799,16 @@ ${result.explanation}`,
             }
 
             // Otherwise, save as subject photo
+            console.log('[PhotoUpload] Saving subject photo:', currentFileName);
             setSubjectPhoto(dataUrl);
             try { await AsyncStorage.setItem(`case_photo_${id}`, dataUrl); } catch {}
-            setUploadedFiles(prev => [...prev, { id: Date.now().toString(), name: currentFileName, type: 'image', uploadedAt: new Date() }]);
-            setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'agent', content: `📸 Subject photo set: ${currentFileName}\n\n🔍 Analyzing photo for investigative leads...`, timestamp: new Date() }]);
+            setUploadedFiles(prev => [...prev, { id: uniqueId(), name: currentFileName, type: 'image', uploadedAt: new Date() }]);
+            setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `📸 Subject photo set: ${currentFileName}\n\n🔍 Analyzing photo for investigative leads...`, timestamp: new Date() }]);
             scrollToBottom();
 
-            // Run photo intelligence analysis
-            analyzePhotoForIntel(dataUrl);
+            // Run photo intelligence analysis with filename
+            console.log('[PhotoUpload] Running photo intelligence for:', currentFileName);
+            analyzePhotoForIntel(dataUrl, currentFileName);
           }
         };
         reader.readAsDataURL(file);
@@ -797,24 +816,22 @@ ${result.explanation}`,
       }
 
       const docType: 'pdf' | 'doc' | 'text' = fileName.endsWith('.pdf') ? 'pdf' : fileName.endsWith('.doc') ? 'doc' : 'text';
-      setUploadedFiles(prev => [...prev, { id: Date.now().toString() + i, name: file.name, type: docType, uploadedAt: new Date() }]);
-      setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', content: `📄 ${file.name}`, timestamp: new Date() }]);
+      setUploadedFiles(prev => [...prev, { id: uniqueId() + i, name: file.name, type: docType, uploadedAt: new Date() }]);
+      setChatMessages(prev => [...prev, { id: uniqueId(), role: 'user', content: `📄 ${file.name}`, timestamp: new Date() }]);
       scrollToBottom();
 
       try {
         const extractResult = await processUploadedFile(file);
         if (!extractResult.success || !extractResult.text) {
-          setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'agent', content: extractResult.error || 'Could not read file.', timestamp: new Date() }]);
+          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: extractResult.error || 'Could not read file.', timestamp: new Date() }]);
           continue;
         }
 
-        if (orchestrator) {
-          await orchestrator.processDocument(extractResult.text, file.name);
-        }
+        // Analyze document text directly
         const result = await analyzeText(extractResult.text);
         if (result.success && result.data) {
           setChatMessages(prev => [...prev, {
-            id: Date.now().toString(),
+            id: uniqueId(),
             role: 'agent',
             content: `✅ ${result.data.addresses?.length || 0} addresses, ${result.data.phones?.length || 0} phones. Top: ${result.data.addresses?.[0]?.fullAddress || 'unknown'}`,
             timestamp: new Date(),
@@ -822,7 +839,7 @@ ${result.explanation}`,
           await refresh();
         }
       } catch (err: any) {
-        setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'agent', content: `Error: ${err?.message || 'Unknown'}`, timestamp: new Date() }]);
+        setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `Error: ${err?.message || 'Unknown'}`, timestamp: new Date() }]);
       }
     }
 
@@ -834,7 +851,7 @@ ${result.explanation}`,
     if (!inputText.trim() || isSending) return;
     const userText = inputText.trim();
     const userTextLower = userText.toLowerCase();
-    setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', content: userText, timestamp: new Date() }]);
+    setChatMessages(prev => [...prev, { id: uniqueId(), role: 'user', content: userText, timestamp: new Date() }]);
     setInputText('');
     setIsSending(true);
     scrollToBottom();
@@ -855,7 +872,7 @@ ${result.explanation}`,
       // If it looks like a username, search that directly
       if (looksLikeUsername) {
         setChatMessages(prev => [...prev, {
-          id: Date.now().toString(),
+          id: uniqueId(),
           role: 'agent',
           content: `🔍 Searching username: "${userText}"...`,
           timestamp: new Date(),
@@ -868,7 +885,7 @@ ${result.explanation}`,
             const result = await searchWithSherlock(userText.trim(), 60);
             const foundCount = result.found?.length || 0;
             setChatMessages(prev => [...prev, {
-              id: Date.now().toString(),
+              id: uniqueId(),
               role: 'agent',
               content: foundCount > 0
                 ? `✅ Found ${foundCount} profiles for "${userText}":\n${result.found.slice(0, 10).map(p => `• ${p.platform}: ${p.url}`).join('\n')}${foundCount > 10 ? `\n+${foundCount - 10} more` : ''}`
@@ -877,7 +894,7 @@ ${result.explanation}`,
             }]);
           } else {
             setChatMessages(prev => [...prev, {
-              id: Date.now().toString(),
+              id: uniqueId(),
               role: 'agent',
               content: `Backend offline. Try: https://whatsmyname.app/?q=${encodeURIComponent(userText)}`,
               timestamp: new Date(),
@@ -885,7 +902,7 @@ ${result.explanation}`,
           }
         } catch (err: any) {
           setChatMessages(prev => [...prev, {
-            id: Date.now().toString(),
+            id: uniqueId(),
             role: 'agent',
             content: `Search error: ${err?.message || 'Unknown'}`,
             timestamp: new Date(),
@@ -907,7 +924,7 @@ ${result.explanation}`,
         return;
       } else {
         setChatMessages(prev => [...prev, {
-          id: Date.now().toString(),
+          id: uniqueId(),
           role: 'agent',
           content: '⚠️ No subject name found. Enter a username to search directly.',
           timestamp: new Date(),
@@ -923,7 +940,7 @@ ${result.explanation}`,
         const result = await analyzeText(userText);
         if (result.success && result.data) {
           setChatMessages(prev => [...prev, {
-            id: Date.now().toString(),
+            id: uniqueId(),
             role: 'agent',
             content: `Analyzed. ${result.data.addresses?.length || 0} addresses found.`,
             timestamp: new Date(),
@@ -937,13 +954,76 @@ ${result.explanation}`,
     }
 
     try {
-      if (orchestrator) {
-        await orchestrator.chat(userText);
+      // Build context about the case for AI
+      const contextParts: string[] = [];
+      const subjectName = parsedData?.subject?.fullName || caseData?.name || 'Unknown';
+      contextParts.push(`Case Subject: ${subjectName}`);
+
+      if (subjectPhoto) {
+        contextParts.push(`Subject photo uploaded: YES`);
+      }
+      if (photoIntel) {
+        if (photoIntel.addresses.length > 0) {
+          contextParts.push(`Photo analysis found ${photoIntel.addresses.length} address(es)`);
+        }
+        if (photoIntel.vehicles.length > 0) {
+          contextParts.push(`Photo analysis found ${photoIntel.vehicles.length} vehicle(s)`);
+        }
+        if (photoIntel.exifData?.gps) {
+          contextParts.push(`Photo GPS: ${photoIntel.exifData.gps.latitude}, ${photoIntel.exifData.gps.longitude}`);
+        }
+        contextParts.push(`Photo setting: ${photoIntel.metadata.settingType}`);
+      }
+      if (uploadedFiles.length > 0) {
+        contextParts.push(`Files uploaded: ${uploadedFiles.map(f => f.name).join(', ')}`);
+      }
+      if (displayAddresses.length > 0) {
+        contextParts.push(`Known addresses: ${displayAddresses.slice(0, 3).map(a => a.fullAddress).join('; ')}`);
+      }
+
+      // Use backend proxy for chat
+      const systemPrompt = `You are an AI assistant for a bail recovery (fugitive recovery) investigation system. Help the agent locate the subject.
+
+CURRENT CASE CONTEXT:
+${contextParts.join('\n')}
+
+Recent chat messages the user can see:
+${chatMessages.slice(-5).map(m => `${m.role}: ${m.content.slice(0, 200)}`).join('\n')}
+
+IMPORTANT: The user CAN see photos and analysis results in the chat. If they mention a photo, acknowledge that you can see the analysis results. Be helpful and specific to their case.`;
+
+      const response = await fetch('https://elite-recovery-osint.onrender.com/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userText },
+          ],
+          model: 'gpt-4o-mini',
+          max_tokens: 1000,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const aiResponse = data.choices?.[0]?.message?.content || 'No response';
+        setChatMessages(prev => [...prev, {
+          id: uniqueId(),
+          role: 'agent',
+          content: aiResponse,
+          timestamp: new Date(),
+        }]);
       } else {
-        setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'agent', content: 'API not ready. Check Settings.', timestamp: new Date() }]);
+        setChatMessages(prev => [...prev, {
+          id: uniqueId(),
+          role: 'agent',
+          content: 'Backend unavailable. Try again.',
+          timestamp: new Date(),
+        }]);
       }
     } catch (err: any) {
-      setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'agent', content: `Error: ${err?.message}`, timestamp: new Date() }]);
+      setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `Error: ${err?.message}`, timestamp: new Date() }]);
     }
     setIsSending(false);
     scrollToBottom();
@@ -959,75 +1039,167 @@ ${result.explanation}`,
     setIsGeneratingReport(true);
 
     try {
-      if (orchestrator) {
-        const report = await orchestrator.generateReport();
+      // Open print dialog with report (no orchestrator needed)
+      if (isWeb) {
+        const locationsHtml = displayAddresses.slice(0, 5).map((loc: any, i: number) => `
+          <div class="location">
+            <strong>#${i + 1}</strong> ${loc.address || loc.fullAddress}
+            ${loc.probability ? `<span style="color: #22c55e; float: right;">${loc.probability}%</span>` : ''}
+          </div>
+        `).join('') || '<p>No locations identified yet.</p>';
 
-        // Open print dialog with report
-        if (isWeb) {
-          const printWindow = window.open('', '_blank');
-          if (printWindow) {
-            printWindow.document.write(`
-              <!DOCTYPE html>
-              <html>
-              <head>
-                <title>Investigation Report - ${parsedData?.subject?.fullName || caseData?.name}</title>
-                <style>
-                  body { font-family: -apple-system, Arial, sans-serif; margin: 40px; color: #333; max-width: 800px; }
-                  h1 { color: #dc2626; border-bottom: 3px solid #dc2626; padding-bottom: 10px; }
-                  h2 { color: #374151; margin-top: 30px; }
-                  .meta { color: #6b7280; font-size: 12px; margin-bottom: 20px; }
-                  .section { margin-bottom: 25px; padding: 15px; background: #f9fafb; border-radius: 8px; }
-                  .location { padding: 10px; margin: 5px 0; background: white; border-left: 4px solid #dc2626; }
-                  .social { display: inline-block; padding: 5px 10px; margin: 3px; border-radius: 4px; font-size: 12px; }
-                  .found { background: #dcfce7; color: #166534; }
-                  .not-found { background: #fee2e2; color: #991b1b; }
-                  .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; margin: 15px 0; }
-                  pre { white-space: pre-wrap; font-family: inherit; }
-                  @media print { body { margin: 20px; } }
-                </style>
-              </head>
-              <body>
-                <h1>🎯 INVESTIGATION REPORT</h1>
-                <div class="meta">
-                  Subject: ${parsedData?.subject?.fullName || caseData?.name}<br>
-                  Generated: ${new Date().toLocaleString()}<br>
-                  Files Analyzed: ${uploadedFiles.length}
-                </div>
+        const socialsHtml = socialProfiles.length > 0
+          ? socialProfiles.map(p => `
+              <span class="social ${p.status === 'found' ? 'found' : p.status === 'not_found' ? 'not-found' : 'not-searched'}">
+                ${p.platform}: ${p.status === 'found' ? '✓ Found' : p.status === 'not_found' ? '✗ Not Found' : '○ Not Searched'}
+              </span>
+            `).join('')
+          : `<p style="color: #f59e0b;">⚠️ No OSINT search performed. ${parsedData?.subject?.fullName ? 'Run search from case screen.' : 'Upload a skip trace report or enter subject name to enable OSINT.'}</p>`;
 
-                <h2>📍 Top Locations</h2>
-                <div class="section">
-                  ${(squadLocations.length > 0 ? squadLocations : addresses).slice(0, 5).map((loc: any, i: number) => `
-                    <div class="location">
-                      <strong>#${i + 1}</strong> ${loc.address || loc.fullAddress}
-                      ${loc.probability ? `<span style="color: #22c55e; float: right;">${loc.probability}%</span>` : ''}
+        // Build photo intel HTML - ONLY show photos that have actionable intel
+        const photosWithIntel = allPhotoIntel.filter(intel =>
+          intel.exifData?.gps ||
+          intel.addresses.length > 0 ||
+          intel.vehicles.some(v => v.licensePlate) ||
+          intel.businesses.length > 0
+        );
+
+        // Generate annotation markers for a photo
+        const generateMarkers = (intel: typeof allPhotoIntel[0]) => {
+          const markers: string[] = [];
+          let markerNum = 1;
+
+          intel.addresses.forEach((a, i) => {
+            if (a.boundingBox) {
+              markers.push(`<div class="marker" style="left: ${a.boundingBox.x}%; top: ${a.boundingBox.y}%;" title="${a.text}">${markerNum}</div>`);
+              markerNum++;
+            }
+          });
+
+          intel.vehicles.filter(v => v.licensePlate && v.boundingBox).forEach((v) => {
+            markers.push(`<div class="marker marker-plate" style="left: ${v.boundingBox!.x}%; top: ${v.boundingBox!.y}%;" title="${v.licensePlate}">${markerNum}</div>`);
+            markerNum++;
+          });
+
+          intel.businesses.filter(b => b.boundingBox).forEach((b) => {
+            markers.push(`<div class="marker marker-biz" style="left: ${b.boundingBox!.x}%; top: ${b.boundingBox!.y}%;" title="${b.name}">${markerNum}</div>`);
+            markerNum++;
+          });
+
+          return markers.join('');
+        };
+
+        // Generate legend for markers
+        const generateLegend = (intel: typeof allPhotoIntel[0]) => {
+          const items: string[] = [];
+          let num = 1;
+
+          intel.addresses.forEach((a) => {
+            if (a.boundingBox) {
+              items.push(`<div class="legend-item"><span class="legend-num">${num}</span> 🏠 ${a.text} (${a.confidence})</div>`);
+              num++;
+            }
+          });
+
+          intel.vehicles.filter(v => v.licensePlate && v.boundingBox).forEach((v) => {
+            items.push(`<div class="legend-item"><span class="legend-num legend-plate">${num}</span> 🚗 ${v.licensePlate} - ${v.color} ${v.make || ''}</div>`);
+            num++;
+          });
+
+          intel.businesses.filter(b => b.boundingBox).forEach((b) => {
+            items.push(`<div class="legend-item"><span class="legend-num legend-biz">${num}</span> 🏪 ${b.name}</div>`);
+            num++;
+          });
+
+          return items.join('');
+        };
+
+        const photoIntelHtml = photosWithIntel.length > 0 ? `
+          <h2>📷 Photo Intelligence</h2>
+          <style>
+            .photo-intel-card { margin-bottom: 20px; padding: 15px; background: #f3f4f6; border-radius: 8px; border-left: 4px solid #dc2626; }
+            .photo-container { position: relative; display: inline-block; margin-bottom: 10px; }
+            .photo-container img { max-width: 280px; max-height: 200px; border-radius: 6px; border: 2px solid #374151; }
+            .marker { position: absolute; width: 22px; height: 22px; background: #dc2626; color: white; border-radius: 50%; font-size: 11px; font-weight: bold; display: flex; align-items: center; justify-content: center; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transform: translate(-50%, -50%); }
+            .marker-plate { background: #2563eb; }
+            .marker-biz { background: #16a34a; }
+            .legend-item { font-size: 12px; margin: 4px 0; display: flex; align-items: center; gap: 8px; }
+            .legend-num { width: 18px; height: 18px; background: #dc2626; color: white; border-radius: 50%; font-size: 10px; font-weight: bold; display: inline-flex; align-items: center; justify-content: center; }
+            .legend-plate { background: #2563eb; }
+            .legend-biz { background: #16a34a; }
+            .intel-details { margin-top: 10px; padding-top: 10px; border-top: 1px solid #d1d5db; }
+          </style>
+          <div class="section">
+            ${photosWithIntel.map((intel) => `
+              <div class="photo-intel-card">
+                <p style="font-weight: bold; margin-bottom: 10px; font-size: 14px;">📸 ${intel.sourceFileName || 'Unknown file'}</p>
+                <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                  ${intel.thumbnailBase64 ? `
+                    <div class="photo-container">
+                      <img src="${intel.thumbnailBase64}" alt="${intel.sourceFileName || 'Evidence photo'}" />
+                      ${generateMarkers(intel)}
                     </div>
-                  `).join('')}
+                  ` : ''}
+                  <div style="flex: 1; min-width: 200px;">
+                    ${generateLegend(intel)}
+                    <div class="intel-details">
+                      ${intel.exifData?.gps ? `<p style="font-size: 12px;"><strong>📍 GPS:</strong> <a href="${intel.exifData.gps.googleMapsUrl}">${intel.exifData.gps.latitude.toFixed(6)}, ${intel.exifData.gps.longitude.toFixed(6)}</a></p>` : ''}
+                      ${intel.addresses.filter(a => !a.boundingBox).length > 0 ? `<p style="font-size: 12px;"><strong>🏠 Other addresses:</strong> ${intel.addresses.filter(a => !a.boundingBox).map(a => a.text).join(', ')}</p>` : ''}
+                    </div>
+                  </div>
                 </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : '';
 
-                <h2>📱 Social Media</h2>
-                <div class="section">
-                  ${socialProfiles.map(p => `
-                    <span class="social ${p.status === 'found' ? 'found' : 'not-found'}">
-                      ${p.platform}: ${p.status === 'found' ? '✓ Found' : p.status === 'not_found' ? '✗ Not Found' : '? Unknown'}
-                    </span>
-                  `).join('')}
-                </div>
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <title>Investigation Report - ${parsedData?.subject?.fullName || caseData?.name}</title>
+              <style>
+                body { font-family: -apple-system, Arial, sans-serif; margin: 40px; color: #333; max-width: 800px; }
+                h1 { color: #dc2626; border-bottom: 3px solid #dc2626; padding-bottom: 10px; }
+                h2 { color: #374151; margin-top: 30px; }
+                .meta { color: #6b7280; font-size: 12px; margin-bottom: 20px; }
+                .section { margin-bottom: 25px; padding: 15px; background: #f9fafb; border-radius: 8px; }
+                .location { padding: 10px; margin: 5px 0; background: white; border-left: 4px solid #dc2626; }
+                .social { display: inline-block; padding: 5px 10px; margin: 3px; border-radius: 4px; font-size: 12px; }
+                .found { background: #dcfce7; color: #166534; }
+                .not-found { background: #fee2e2; color: #991b1b; }
+                .not-searched { background: #fef3c7; color: #92400e; }
+                .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; margin: 15px 0; }
+                @media print { body { margin: 20px; } }
+              </style>
+            </head>
+            <body>
+              <h1>🎯 INVESTIGATION REPORT</h1>
+              <div class="meta">
+                Subject: ${parsedData?.subject?.fullName || caseData?.name}<br>
+                Generated: ${new Date().toLocaleString()}<br>
+                Files Analyzed: ${uploadedFiles.length}
+              </div>
 
-                <h2>📋 AI Analysis</h2>
-                <div class="section">
-                  <pre>${report}</pre>
-                </div>
+              <h2>📍 Top Locations</h2>
+              <div class="section">${locationsHtml}</div>
 
-                <div class="warning">
-                  <strong>⚠️ Confidential</strong> - For authorized fugitive recovery use only.
-                </div>
-              </body>
-              </html>
-            `);
-            printWindow.document.close();
-            printWindow.focus();
-            setTimeout(() => printWindow.print(), 300);
-          }
+              <h2>📱 Social Media</h2>
+              <div class="section">${socialsHtml}</div>
+
+              ${photoIntelHtml}
+
+              <div class="warning">
+                <strong>⚠️ Confidential</strong> - For authorized fugitive recovery use only.
+              </div>
+            </body>
+            </html>
+          `);
+          printWindow.document.close();
+          printWindow.focus();
+          setTimeout(() => printWindow.print(), 300);
         }
       }
     } catch (err) {
@@ -1042,7 +1214,7 @@ ${result.explanation}`,
     if (confirmed) {
       await deleteCase(id!);
       await deleteCaseDirectory(id!);
-      await AsyncStorage.multiRemove([`case_chat_${id}`, `case_photo_${id}`, `case_squad_${id}`, `case_social_${id}`]);
+      await AsyncStorage.multiRemove([`case_chat_${id}`, `case_photo_${id}`, `case_squad_${id}`, `case_social_${id}`, `case_all_photo_intel_${id}`, `case_face_${id}`]);
       if (await isSyncEnabled()) await deleteSyncedCase(id!);
       router.back();
     }
@@ -1098,12 +1270,35 @@ ${result.explanation}`,
         </TouchableOpacity>
       </View>
 
-      {/* 3-COLUMN LAYOUT */}
-      <View style={[styles.columns, isWeb && { display: 'flex', flexDirection: 'row' }]}>
+      {/* 3-COLUMN LAYOUT - Equal width on desktop, stacked on mobile */}
+      <View style={[
+        styles.columns,
+        isWeb && !isMobile && { display: 'flex', flexDirection: 'row' },
+        isMobile && { flexDirection: 'column' }
+      ]}>
 
         {/* COLUMN 1: Chat */}
-        <View style={[styles.col, styles.chatCol, isWeb && { width: 320, minWidth: 280 }]}>
-          <Text style={styles.colTitle}>💬 CHAT</Text>
+        <View style={[
+          styles.col,
+          styles.chatCol,
+          isWeb && !isMobile && { flex: 1 },
+          isMobile && { height: 300 }
+        ]}>
+          <View style={styles.colTitleRow}>
+            <Text style={styles.colTitleText}>💬 CHAT</Text>
+            <TouchableOpacity
+              onPress={() => {
+                const text = chatMessages.map(m => `[${m.role}] ${m.content}`).join('\n\n');
+                if (isWeb && navigator.clipboard) {
+                  navigator.clipboard.writeText(text);
+                  alert('Chat copied to clipboard');
+                }
+              }}
+              style={styles.copyBtn}
+            >
+              <Ionicons name="copy-outline" size={14} color={DARK.textMuted} />
+            </TouchableOpacity>
+          </View>
           <ScrollView ref={scrollRef} style={styles.chatScroll} contentContainerStyle={{ padding: 8 }}>
             {chatMessages.map((msg) => (
               <View key={msg.id} style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.agentBubble]}>
@@ -1133,7 +1328,12 @@ ${result.explanation}`,
         </View>
 
         {/* COLUMN 2: Maps/Locations */}
-        <View style={[styles.col, styles.mapCol, isWeb && { flex: 1, minWidth: 300 }]}>
+        <View style={[
+          styles.col,
+          styles.mapCol,
+          isWeb && !isMobile && { flex: 1 },
+          isMobile && { height: 350 }
+        ]}>
           <Text style={styles.colTitle}>📍 LOCATIONS</Text>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8 }}>
             {displayAddresses.length > 0 && (
@@ -1194,7 +1394,12 @@ ${result.explanation}`,
         </View>
 
         {/* COLUMN 3: Quick Links */}
-        <View style={[styles.col, styles.socialCol, isWeb && { width: 280, minWidth: 240 }]}>
+        <View style={[
+          styles.col,
+          styles.socialCol,
+          isWeb && !isMobile && { flex: 1 },
+          isMobile && { flex: 1 }
+        ]}>
           <Text style={styles.colTitle}>🔍 SEARCH</Text>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8 }}>
             {/* Subject Photo */}
@@ -1217,12 +1422,17 @@ ${result.explanation}`,
             )}
 
             {/* Run OSINT Button */}
-            {parsedData?.subject?.fullName && !isSearchingOSINT && (
+            {!isSearchingOSINT && (
               <TouchableOpacity
                 style={styles.osintRunBtn}
                 onPress={() => {
-                  setOsintSearched(false);
-                  runOSINTSearch(parsedData.subject.fullName);
+                  const name = (parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown')
+                    ? parsedData.subject.fullName
+                    : caseData?.name;
+                  if (name) {
+                    setOsintSearched(false);
+                    runOSINTSearch(name);
+                  }
                 }}
               >
                 <Ionicons name="search" size={16} color="#fff" />
@@ -1268,20 +1478,28 @@ ${result.explanation}`,
               </TouchableOpacity>
             ))}
 
-            {/* Reverse Image Search */}
+            {/* Reverse Image Search - Auto-populated with subject photo */}
             {subjectPhoto && (
               <>
                 <Text style={styles.osintSectionTitle}>Image Search</Text>
-                {generateReverseImageSearchUrls(subjectPhoto).slice(0, 3).map((search, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    style={styles.recordLink}
-                    onPress={() => openUrl(search.url)}
-                  >
-                    <Text style={styles.recordLinkText}>{search.name}</Text>
-                    <Ionicons name="open-outline" size={14} color={DARK.textMuted} />
-                  </TouchableOpacity>
-                ))}
+                {imageSearchUrls ? (
+                  <>
+                    <TouchableOpacity style={styles.recordLink} onPress={() => openUrl(imageSearchUrls.google_lens!)}>
+                      <Text style={styles.recordLinkText}>Google Lens</Text>
+                      <Ionicons name="search" size={14} color={DARK.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.recordLink} onPress={() => openUrl(imageSearchUrls.yandex!)}>
+                      <Text style={styles.recordLinkText}>Yandex (Faces)</Text>
+                      <Ionicons name="search" size={14} color={DARK.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.recordLink} onPress={() => openUrl(imageSearchUrls.tineye!)}>
+                      <Text style={styles.recordLinkText}>TinEye</Text>
+                      <Ionicons name="search" size={14} color={DARK.primary} />
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <Text style={{ color: DARK.textMuted, fontSize: 11, padding: 4 }}>Loading search links...</Text>
+                )}
               </>
             )}
 
@@ -1330,6 +1548,9 @@ const styles = StyleSheet.create({
   columns: { flex: 1, flexDirection: 'row' },
   col: { borderRightWidth: 1, borderRightColor: DARK.border },
   colTitle: { fontSize: 10, fontWeight: '700', color: DARK.textMuted, letterSpacing: 1, padding: 8, backgroundColor: DARK.surface, borderBottomWidth: 1, borderBottomColor: DARK.border },
+  colTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: DARK.surface, borderBottomWidth: 1, borderBottomColor: DARK.border, paddingHorizontal: 8, paddingVertical: 6 },
+  colTitleText: { fontSize: 10, fontWeight: '700', color: DARK.textMuted, letterSpacing: 1 },
+  copyBtn: { padding: 6 },
 
   // Chat Column
   chatCol: { backgroundColor: DARK.bg },
