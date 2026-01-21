@@ -83,7 +83,7 @@ export default function SignUpScreen() {
             </TouchableOpacity>
           </Link>
           <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>Join Elite Recovery System</Text>
+          <Text style={styles.subtitle}>Join Elite Recovery Systems</Text>
         </View>
 
         {/* Form */}

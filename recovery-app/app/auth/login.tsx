@@ -62,7 +62,7 @@ export default function LoginScreen() {
           <View style={styles.logo}>
             <Ionicons name="shield-checkmark" size={32} color={COLORS.primary} />
           </View>
-          <Text style={styles.title}>Elite Recovery System</Text>
+          <Text style={styles.title}>Elite Recovery Systems</Text>
         </TouchableOpacity>
 
         {/* Form */}

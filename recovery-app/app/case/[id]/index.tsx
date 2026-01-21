@@ -1041,12 +1041,15 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
     try {
       // Open print dialog with report (no orchestrator needed)
       if (isWeb) {
-        const locationsHtml = displayAddresses.slice(0, 5).map((loc: any, i: number) => `
+        const locationsHtml = displayAddresses.slice(0, 8).map((loc: any, i: number) => `
           <div class="location">
-            <strong>#${i + 1}</strong> ${loc.address || loc.fullAddress}
-            ${loc.probability ? `<span style="color: #22c55e; float: right;">${loc.probability}%</span>` : ''}
+            <div>
+              <strong style="color: #dc2626;">#${i + 1}</strong>
+              <span style="margin-left: 10px;">${loc.address || loc.fullAddress}</span>
+            </div>
+            ${loc.probability ? `<span class="probability">${loc.probability}% confidence</span>` : ''}
           </div>
-        `).join('') || '<p>No locations identified yet.</p>';
+        `).join('') || '<p style="color: #9ca3af; font-style: italic;">No locations identified yet. Upload skip trace documents or photos containing addresses.</p>';
 
         const socialsHtml = socialProfiles.length > 0
           ? socialProfiles.map(p => `
@@ -1153,6 +1156,23 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
           </div>
         ` : '';
 
+        // Calculate statistics
+        const totalPhotos = allPhotoIntel.length;
+        const photosWithData = photosWithIntel.length;
+        const totalAddresses = allPhotoIntel.reduce((sum, i) => sum + i.addresses.length, 0);
+        const totalPlates = allPhotoIntel.reduce((sum, i) => sum + i.vehicles.filter(v => v.licensePlate).length, 0);
+        const gpsPhotos = allPhotoIntel.filter(i => i.exifData?.gps).length;
+        const socialFound = socialProfiles.filter(p => p.status === 'found').length;
+        const socialTotal = socialProfiles.length;
+
+        // Generate executive summary
+        const summaryItems: string[] = [];
+        if (totalAddresses > 0) summaryItems.push(`${totalAddresses} address(es) identified`);
+        if (totalPlates > 0) summaryItems.push(`${totalPlates} license plate(s) captured`);
+        if (gpsPhotos > 0) summaryItems.push(`${gpsPhotos} photo(s) with GPS coordinates`);
+        if (socialFound > 0) summaryItems.push(`${socialFound} social media profile(s) confirmed`);
+        if (displayAddresses.length > 0) summaryItems.push(`${displayAddresses.length} known location(s)`);
+
         const printWindow = window.open('', '_blank');
         if (printWindow) {
           printWindow.document.write(`
@@ -1161,38 +1181,91 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
             <head>
               <title>Investigation Report - ${parsedData?.subject?.fullName || caseData?.name}</title>
               <style>
-                body { font-family: -apple-system, Arial, sans-serif; margin: 40px; color: #333; max-width: 800px; }
-                h1 { color: #dc2626; border-bottom: 3px solid #dc2626; padding-bottom: 10px; }
-                h2 { color: #374151; margin-top: 30px; }
-                .meta { color: #6b7280; font-size: 12px; margin-bottom: 20px; }
-                .section { margin-bottom: 25px; padding: 15px; background: #f9fafb; border-radius: 8px; }
-                .location { padding: 10px; margin: 5px 0; background: white; border-left: 4px solid #dc2626; }
-                .social { display: inline-block; padding: 5px 10px; margin: 3px; border-radius: 4px; font-size: 12px; }
+                body { font-family: -apple-system, Arial, sans-serif; margin: 0; color: #1f2937; font-size: 13px; line-height: 1.5; }
+                .header { background: linear-gradient(135deg, #18181b 0%, #27272a 100%); color: white; padding: 30px 40px; }
+                .header h1 { margin: 0 0 8px 0; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+                .header .subtitle { color: #a1a1aa; font-size: 14px; }
+                .header .case-id { color: #dc2626; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+                .content { padding: 30px 40px; max-width: 900px; }
+                .meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }
+                .meta-card { background: #f9fafb; border-radius: 8px; padding: 15px; text-align: center; border: 1px solid #e5e7eb; }
+                .meta-card .value { font-size: 24px; font-weight: 700; color: #dc2626; }
+                .meta-card .label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+                h2 { color: #18181b; font-size: 16px; font-weight: 600; margin: 25px 0 12px 0; padding-bottom: 8px; border-bottom: 2px solid #dc2626; display: flex; align-items: center; gap: 8px; }
+                .section { margin-bottom: 20px; }
+                .summary-list { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 15px 20px; }
+                .summary-list li { margin: 6px 0; color: #166534; }
+                .location { padding: 12px 15px; margin: 8px 0; background: white; border-left: 4px solid #dc2626; border-radius: 0 6px 6px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }
+                .location .probability { background: #dcfce7; color: #166534; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+                .social { display: inline-block; padding: 6px 12px; margin: 4px; border-radius: 6px; font-size: 11px; font-weight: 500; }
                 .found { background: #dcfce7; color: #166534; }
                 .not-found { background: #fee2e2; color: #991b1b; }
                 .not-searched { background: #fef3c7; color: #92400e; }
-                .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; margin: 15px 0; }
-                @media print { body { margin: 20px; } }
+                .confidential { background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 15px 20px; margin-top: 30px; display: flex; align-items: center; gap: 12px; }
+                .confidential-icon { font-size: 20px; }
+                .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 11px; text-align: center; }
+                @media print {
+                  body { margin: 0; }
+                  .header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                }
               </style>
             </head>
             <body>
-              <h1>🎯 INVESTIGATION REPORT</h1>
-              <div class="meta">
-                Subject: ${parsedData?.subject?.fullName || caseData?.name}<br>
-                Generated: ${new Date().toLocaleString()}<br>
-                Files Analyzed: ${uploadedFiles.length}
+              <div class="header">
+                <div class="case-id">Elite Recovery Systems • Case File</div>
+                <h1>${parsedData?.subject?.fullName || caseData?.name}</h1>
+                <div class="subtitle">Investigation Report • Generated ${new Date().toLocaleString()}</div>
               </div>
 
-              <h2>📍 Top Locations</h2>
-              <div class="section">${locationsHtml}</div>
+              <div class="content">
+                <div class="meta-grid">
+                  <div class="meta-card">
+                    <div class="value">${uploadedFiles.length}</div>
+                    <div class="label">Files Analyzed</div>
+                  </div>
+                  <div class="meta-card">
+                    <div class="value">${photosWithData}/${totalPhotos}</div>
+                    <div class="label">Photos w/ Intel</div>
+                  </div>
+                  <div class="meta-card">
+                    <div class="value">${displayAddresses.length}</div>
+                    <div class="label">Locations</div>
+                  </div>
+                  <div class="meta-card">
+                    <div class="value">${socialFound}/${socialTotal}</div>
+                    <div class="label">Profiles Found</div>
+                  </div>
+                </div>
 
-              <h2>📱 Social Media</h2>
-              <div class="section">${socialsHtml}</div>
+                ${summaryItems.length > 0 ? `
+                  <h2>📊 Executive Summary</h2>
+                  <div class="summary-list">
+                    <ul>
+                      ${summaryItems.map(item => `<li>${item}</li>`).join('')}
+                    </ul>
+                  </div>
+                ` : ''}
 
-              ${photoIntelHtml}
+                <h2>📍 Priority Locations</h2>
+                <div class="section">${locationsHtml}</div>
 
-              <div class="warning">
-                <strong>⚠️ Confidential</strong> - For authorized fugitive recovery use only.
+                <h2>📱 Digital Footprint</h2>
+                <div class="section">${socialsHtml}</div>
+
+                ${photoIntelHtml}
+
+                <div class="confidential">
+                  <span class="confidential-icon">⚠️</span>
+                  <div>
+                    <strong>CONFIDENTIAL</strong><br>
+                    <span style="font-size: 11px; color: #92400e;">For authorized bail enforcement and fugitive recovery personnel only. Unauthorized disclosure prohibited.</span>
+                  </div>
+                </div>
+
+                <div class="footer">
+                  Elite Recovery Systems • Professional Bail Enforcement Intelligence<br>
+                  Report ID: ${caseData?.id?.slice(0, 8).toUpperCase() || 'N/A'} • ${new Date().toISOString()}
+                </div>
               </div>
             </body>
             </html>

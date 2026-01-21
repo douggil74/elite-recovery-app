@@ -243,7 +243,7 @@ export default function AboutScreen() {
           <View style={styles.logoBox}>
             <Ionicons name="locate" size={40} color={COLORS.primary} />
           </View>
-          <Text style={styles.appName}>Elite Recovery System</Text>
+          <Text style={styles.appName}>Elite Recovery Systems</Text>
           <Text style={styles.appVersion}>Version {VERSION}</Text>
           <Text style={styles.appTagline}>
             Advanced Recovery Intelligence Platform
@@ -367,7 +367,7 @@ export default function AboutScreen() {
 
         {/* Footer */}
         <Text style={styles.footer}>
-          Elite Recovery LA - For authorized law enforcement and licensed bail recovery use only.
+          Elite Recovery Systems - For authorized law enforcement and licensed bail recovery use only.
         </Text>
       </ScrollView>
     </View>
