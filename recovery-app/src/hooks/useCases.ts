@@ -113,31 +113,34 @@ export function useCases(): UseCasesReturn {
     async (id: string) => {
       const caseToDelete = cases.find((c) => c.id === id);
 
-      // Delete from database (cascade deletes reports)
-      await dbDeleteCase(id);
+      // OPTIMISTIC UPDATE - Remove from UI immediately
+      setCases(prev => prev.filter(c => c.id !== id));
 
-      // Delete associated files
-      await deleteCaseDirectory(id);
+      // Delete everything in background (don't await)
+      Promise.all([
+        dbDeleteCase(id),
+        deleteCaseDirectory(id),
+        AsyncStorage.multiRemove([
+          `case_chat_${id}`,
+          `case_photo_${id}`,
+          `case_squad_${id}`,
+          `case_social_${id}`,
+          `case_all_photo_intel_${id}`,
+          `case_face_${id}`,
+        ]),
+      ]).catch(err => console.error('Delete cleanup error:', err));
 
-      // Clear chat and photo from AsyncStorage
-      await AsyncStorage.removeItem(`case_chat_${id}`);
-      await AsyncStorage.removeItem(`case_photo_${id}`);
-
-      // Delete from cloud
-      const cloudEnabled = await isSyncEnabled();
-      if (cloudEnabled) {
-        await deleteSyncedCase(id);
-      }
-
-      // Log audit
-      await audit('case_deleted', {
-        caseId: id,
-        caseName: caseToDelete?.name,
+      // Cloud sync and audit in background
+      isSyncEnabled().then(enabled => {
+        if (enabled) deleteSyncedCase(id).catch(() => {});
       });
 
-      await refresh();
+      audit('case_deleted', {
+        caseId: id,
+        caseName: caseToDelete?.name,
+      }).catch(() => {});
     },
-    [cases, refresh]
+    [cases]
   );
 
   return {

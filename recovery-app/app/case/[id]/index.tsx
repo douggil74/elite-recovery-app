@@ -1285,11 +1285,19 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
   const handleDelete = async () => {
     const confirmed = await confirm({ title: 'Delete Case', message: `Delete "${caseData?.name}"?`, confirmText: 'Delete', destructive: true });
     if (confirmed) {
-      await deleteCase(id!);
-      await deleteCaseDirectory(id!);
-      await AsyncStorage.multiRemove([`case_chat_${id}`, `case_photo_${id}`, `case_squad_${id}`, `case_social_${id}`, `case_all_photo_intel_${id}`, `case_face_${id}`]);
-      if (await isSyncEnabled()) await deleteSyncedCase(id!);
-      router.back();
+      // Navigate back IMMEDIATELY
+      router.push('/(tabs)');
+
+      // Cleanup in background (don't block UI)
+      Promise.all([
+        deleteCase(id!),
+        deleteCaseDirectory(id!),
+        AsyncStorage.multiRemove([`case_chat_${id}`, `case_photo_${id}`, `case_squad_${id}`, `case_social_${id}`, `case_all_photo_intel_${id}`, `case_face_${id}`]),
+      ]).catch(err => console.error('Delete error:', err));
+
+      isSyncEnabled().then(enabled => {
+        if (enabled) deleteSyncedCase(id!).catch(() => {});
+      });
     }
   };
 
