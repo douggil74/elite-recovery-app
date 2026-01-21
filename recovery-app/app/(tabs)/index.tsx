@@ -85,7 +85,7 @@ export default function CasesScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>ELITE RECOVERY</Text>
+          <Text style={styles.greeting}>ELITE RECOVERY SYSTEMS</Text>
           <Text style={styles.subtitle}>
             {totalCases === 0
               ? 'Ready to hunt'
