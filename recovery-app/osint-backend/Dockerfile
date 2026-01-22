@@ -29,8 +29,10 @@ RUN pip install --no-cache-dir \
 # Install email tools
 RUN pip install --no-cache-dir \
     holehe \
-    h8mail \
-    theHarvester
+    h8mail
+
+# Install theHarvester from GitHub (PyPI version is abandoned at 0.0.1)
+RUN pip install --no-cache-dir git+https://github.com/laramies/theHarvester.git
 
 # Install Instagram tools
 RUN pip install --no-cache-dir \
