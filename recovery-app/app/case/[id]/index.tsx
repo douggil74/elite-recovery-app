@@ -1408,17 +1408,31 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
           </View>
         </View>
 
-        {/* COLUMN 2: Maps/Locations */}
+        {/* COLUMN 2: Intel/Data Output */}
         <View style={[
           styles.col,
           styles.mapCol,
-          isWeb && !isMobile && { flex: 1 },
-          isMobile && { height: 350 }
+          isWeb && !isMobile && { flex: 1.5 },
+          isMobile && { height: 400 }
         ]}>
-          <Text style={styles.colTitle}>📍 LOCATIONS</Text>
+          <Text style={styles.colTitle}>🎯 INTEL</Text>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8 }}>
+            {/* Subject Info */}
+            {parsedData?.subject && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>👤 SUBJECT</Text>
+                <View style={styles.intelCard}>
+                  <Text style={styles.intelName}>{parsedData.subject.fullName || caseData?.name}</Text>
+                  {parsedData.subject.dateOfBirth && <Text style={styles.intelDetail}>DOB: {parsedData.subject.dateOfBirth}</Text>}
+                  {parsedData.subject.ssn && <Text style={styles.intelDetail}>SSN: ***-**-{parsedData.subject.ssn.slice(-4)}</Text>}
+                </View>
+              </View>
+            )}
+
+            {/* Locations with Map */}
             {displayAddresses.length > 0 && (
-              <>
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>📍 LOCATIONS ({displayAddresses.length})</Text>
                 {/* Main Map */}
                 <TouchableOpacity onPress={() => openMaps(displayAddresses[0].fullAddress)} style={styles.mainMap}>
                   {isWeb ? (
@@ -1432,7 +1446,7 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
                   )}
                 </TouchableOpacity>
                 <Text style={styles.topAddr}>{displayAddresses[0].fullAddress}</Text>
-                {displayAddresses[0].probability && <Text style={styles.topProb}>{displayAddresses[0].probability}% match</Text>}
+                {displayAddresses[0].probability && <Text style={styles.topProb}>{displayAddresses[0].probability}% confidence</Text>}
 
                 {/* Other locations */}
                 {displayAddresses.slice(1, 6).map((addr: any, idx: number) => (
@@ -1442,19 +1456,60 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
                     {addr.probability && <Text style={styles.locProb}>{addr.probability}%</Text>}
                   </TouchableOpacity>
                 ))}
-              </>
+              </View>
             )}
 
             {/* Phones */}
             {phones.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>📱 PHONES</Text>
+                <Text style={styles.sectionTitle}>📱 PHONES ({phones.length})</Text>
                 {phones.slice(0, 5).map((p: any, idx: number) => (
                   <TouchableOpacity key={idx} style={styles.phoneRow} onPress={() => Linking.openURL(`tel:${p.number}`)}>
                     <Ionicons name="call" size={14} color={DARK.success} />
                     <Text style={styles.phoneNum}>{p.number}</Text>
                     <Text style={styles.phoneType}>{p.type || 'unknown'}</Text>
                   </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {/* Emails */}
+            {parsedData?.emails && parsedData.emails.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>📧 EMAILS ({parsedData.emails.length})</Text>
+                {parsedData.emails.slice(0, 5).map((email: string, idx: number) => (
+                  <TouchableOpacity key={idx} style={styles.phoneRow} onPress={() => Linking.openURL(`mailto:${email}`)}>
+                    <Ionicons name="mail" size={14} color={DARK.primary} />
+                    <Text style={styles.phoneNum}>{email}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {/* Vehicles */}
+            {parsedData?.vehicles && parsedData.vehicles.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>🚗 VEHICLES ({parsedData.vehicles.length})</Text>
+                {parsedData.vehicles.map((v: any, idx: number) => (
+                  <View key={idx} style={styles.vehicleRow}>
+                    <Ionicons name="car" size={14} color={DARK.warning} />
+                    <Text style={styles.vehicleText}>{v.year} {v.make} {v.model}</Text>
+                    {v.plate && <Text style={styles.plateText}>{v.plate}</Text>}
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Associates */}
+            {parsedData?.associates && parsedData.associates.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>👥 ASSOCIATES ({parsedData.associates.length})</Text>
+                {parsedData.associates.slice(0, 5).map((a: any, idx: number) => (
+                  <View key={idx} style={styles.associateRow}>
+                    <Ionicons name="person" size={14} color={DARK.textSecondary} />
+                    <Text style={styles.associateName}>{a.name || a}</Text>
+                    {a.relationship && <Text style={styles.associateRel}>{a.relationship}</Text>}
+                  </View>
                 ))}
               </View>
             )}
@@ -1469,6 +1524,14 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
                     <Text style={styles.fileName} numberOfLines={1}>{f.name}</Text>
                   </View>
                 ))}
+              </View>
+            )}
+
+            {/* Empty state */}
+            {displayAddresses.length === 0 && phones.length === 0 && uploadedFiles.length === 0 && (
+              <View style={styles.emptyIntel}>
+                <Ionicons name="document-text-outline" size={32} color={DARK.textMuted} />
+                <Text style={styles.emptyIntelText}>Upload files or paste data to extract intel</Text>
               </View>
             )}
           </ScrollView>
@@ -1518,8 +1581,8 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
               >
                 <Ionicons name="search" size={16} color="#fff" />
                 <Text style={styles.osintRunBtnText}>
-                  {osintResults.filter(r => r.exists).length > 0
-                    ? `Found ${osintResults.filter(r => r.exists).length} profiles`
+                  {osintResults.filter(r => r.exists === true).length > 0
+                    ? `Found ${osintResults.filter(r => r.exists === true).length} profiles`
                     : 'Run OSINT Search'}
                 </Text>
               </TouchableOpacity>
@@ -1663,6 +1726,19 @@ const styles = StyleSheet.create({
   phoneType: { fontSize: 10, color: DARK.textMuted },
   fileRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4 },
   fileName: { fontSize: 11, color: DARK.text, flex: 1 },
+
+  // Intel Card
+  intelCard: { backgroundColor: DARK.surface, borderRadius: 8, padding: 12, borderLeftWidth: 3, borderLeftColor: DARK.primary },
+  intelName: { fontSize: 16, fontWeight: '700', color: DARK.text, marginBottom: 4 },
+  intelDetail: { fontSize: 12, color: DARK.textSecondary },
+  vehicleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, backgroundColor: DARK.surface, borderRadius: 6, paddingHorizontal: 8, marginBottom: 4 },
+  vehicleText: { fontSize: 12, color: DARK.text, flex: 1 },
+  plateText: { fontSize: 11, color: DARK.warning, fontWeight: '600' },
+  associateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
+  associateName: { fontSize: 12, color: DARK.text, flex: 1 },
+  associateRel: { fontSize: 10, color: DARK.textMuted },
+  emptyIntel: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40 },
+  emptyIntelText: { fontSize: 12, color: DARK.textMuted, marginTop: 12, textAlign: 'center' },
 
   // Social Column
   socialCol: { backgroundColor: DARK.bg, borderRightWidth: 0 },
