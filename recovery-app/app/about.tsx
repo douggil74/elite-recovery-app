@@ -68,6 +68,46 @@ const FEATURES: FeatureSection[] = [
     ],
   },
   {
+    title: 'Web & Domain Intelligence',
+    icon: 'globe',
+    items: [
+      { name: 'Web Search', description: 'DuckDuckGo search integration', type: 'api' },
+      { name: 'WHOIS Lookup', description: 'Domain registration and ownership info', type: 'tool' },
+      { name: 'Wayback Machine', description: 'Historical website snapshots', type: 'api' },
+      { name: 'IP Geolocation', description: 'IP address location lookup', type: 'api' },
+    ],
+  },
+  {
+    title: 'Vehicle & Property Search',
+    icon: 'car',
+    items: [
+      { name: 'Plate Lookup', description: 'License plate search links (FAXVIN, VinCheck)', type: 'db' },
+      { name: 'VIN Decoder', description: 'NHTSA VIN decoder and history reports', type: 'api' },
+      { name: 'State DMV Links', description: 'Direct links to state DMV systems', type: 'db' },
+      { name: 'Carfax/AutoCheck', description: 'Vehicle history report links', type: 'db' },
+    ],
+  },
+  {
+    title: 'Risk Scoring & Assessment',
+    icon: 'analytics',
+    items: [
+      { name: 'Bond Risk Score', description: 'Algorithmic risk assessment for bond clients', type: 'ai' },
+      { name: 'FTA Risk Factors', description: 'Prior failures to appear weighted heavily', type: 'tool' },
+      { name: 'Employment Scoring', description: 'Job stability assessment', type: 'tool' },
+      { name: 'Residence Stability', description: 'Housing situation evaluation', type: 'tool' },
+      { name: 'Local Ties Assessment', description: 'Community connection scoring', type: 'tool' },
+    ],
+  },
+  {
+    title: 'Document & Metadata Analysis',
+    icon: 'document-attach',
+    items: [
+      { name: 'EXIF Extraction', description: 'Photo metadata (GPS, camera, date)', type: 'tool' },
+      { name: 'PDF Metadata', description: 'Author, creation date, edit history', type: 'tool' },
+      { name: 'Word Doc Analysis', description: 'DOCX author and revision tracking', type: 'tool' },
+    ],
+  },
+  {
     title: 'Photo Intelligence',
     icon: 'camera',
     items: [
@@ -239,11 +279,25 @@ const PYTHON_TOOLS_LIVE = [
   // Court Records
   { name: 'CourtListener API', description: 'Federal court records search', status: 'live', category: 'court' },
   { name: 'State Courts', description: 'State court record links (LA, TX, FL, CA, etc.)', status: 'live', category: 'court' },
+  // Web/Domain Intel
+  { name: 'Web Search', description: 'DuckDuckGo web search integration', status: 'live', category: 'web' },
+  { name: 'WHOIS Lookup', description: 'Domain registration information', status: 'live', category: 'web' },
+  { name: 'Wayback Machine', description: 'Historical website snapshots', status: 'live', category: 'web' },
+  { name: 'IP Geolocation', description: 'IP address location lookup', status: 'live', category: 'web' },
+  // Vehicle/Background
+  { name: 'Vehicle Search', description: 'License plate & VIN search links', status: 'live', category: 'vehicle' },
+  { name: 'Background Links', description: 'Background check service aggregator', status: 'live', category: 'background' },
+  // Risk Scoring
+  { name: 'Risk Scoring', description: 'Bond client risk assessment algorithm', status: 'live', category: 'risk' },
+  // Document Analysis
+  { name: 'Metadata Extraction', description: 'Extract EXIF, PDF, DOCX metadata', status: 'live', category: 'document' },
+  // Social Scraping
+  { name: 'Social Scraper', description: 'Twitter & Reddit post scraping', status: 'live', category: 'social' },
 ];
 
 const BACKEND_INFO = {
   url: 'https://elite-recovery-osint.onrender.com',
-  version: '2.1.0',
+  version: '3.0.0',
   endpoints: [
     // Username
     '/api/sherlock - Username search (400+ sites)',
@@ -266,6 +320,18 @@ const BACKEND_INFO = {
     // Court Records
     '/api/court-records - Federal court search',
     '/api/state-courts - State court links',
+    // Web/Domain
+    '/api/web-search - DuckDuckGo search',
+    '/api/whois - Domain WHOIS lookup',
+    '/api/wayback - Historical snapshots',
+    '/api/ip-lookup - IP geolocation',
+    // Vehicle/Background
+    '/api/vehicle-search - Plate/VIN links',
+    '/api/background-links - Background check links',
+    // Risk & Analysis
+    '/api/risk-score - Bond client scoring',
+    '/api/extract-metadata - Document metadata',
+    '/api/social-scrape - Social media scraping',
     // Combined
     '/api/investigate - Intelligent investigation',
     '/api/sweep - Full OSINT sweep',
@@ -325,15 +391,15 @@ export default function AboutScreen() {
         {/* Stats */}
         <View style={styles.statsRow}>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>15+</Text>
+            <Text style={styles.statNumber}>25+</Text>
             <Text style={styles.statLabel}>OSINT Tools</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>1400+</Text>
+            <Text style={styles.statNumber}>1500+</Text>
             <Text style={styles.statLabel}>Sites Searched</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>25+</Text>
+            <Text style={styles.statNumber}>35+</Text>
             <Text style={styles.statLabel}>API Endpoints</Text>
           </View>
           <View style={styles.statBox}>

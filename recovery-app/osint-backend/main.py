@@ -2236,6 +2236,707 @@ async def investigate_person(request: InvestigatePersonRequest):
 
 
 # ============================================================================
+# WEB SEARCH - DuckDuckGo & Google
+# ============================================================================
+
+class WebSearchRequest(BaseModel):
+    query: str
+    max_results: int = 20
+    region: str = "us-en"
+
+
+@app.post("/api/web-search")
+async def web_search(request: WebSearchRequest):
+    """Search the web using DuckDuckGo"""
+    start_time = datetime.now()
+    results = []
+    errors = []
+
+    try:
+        from duckduckgo_search import DDGS
+
+        with DDGS() as ddgs:
+            for r in ddgs.text(request.query, region=request.region, max_results=request.max_results):
+                results.append({
+                    'title': r.get('title', ''),
+                    'url': r.get('href', ''),
+                    'snippet': r.get('body', '')
+                })
+    except Exception as e:
+        errors.append(f"DuckDuckGo error: {str(e)}")
+
+        # Fallback to googlesearch
+        try:
+            from googlesearch import search
+            for url in search(request.query, num_results=request.max_results):
+                results.append({
+                    'title': '',
+                    'url': url,
+                    'snippet': ''
+                })
+        except Exception as e2:
+            errors.append(f"Google fallback error: {str(e2)}")
+
+    return {
+        'query': request.query,
+        'searched_at': datetime.now().isoformat(),
+        'results': results,
+        'total_found': len(results),
+        'errors': errors,
+        'execution_time': (datetime.now() - start_time).total_seconds()
+    }
+
+
+# ============================================================================
+# WHOIS LOOKUP
+# ============================================================================
+
+class WhoisRequest(BaseModel):
+    domain: str
+
+
+@app.post("/api/whois")
+async def whois_lookup(request: WhoisRequest):
+    """WHOIS domain lookup"""
+    start_time = datetime.now()
+    whois_data = {}
+    errors = []
+
+    try:
+        import whois
+        w = whois.whois(request.domain)
+
+        whois_data = {
+            'domain_name': w.domain_name,
+            'registrar': w.registrar,
+            'creation_date': str(w.creation_date) if w.creation_date else None,
+            'expiration_date': str(w.expiration_date) if w.expiration_date else None,
+            'updated_date': str(w.updated_date) if w.updated_date else None,
+            'name_servers': w.name_servers,
+            'status': w.status,
+            'emails': w.emails,
+            'registrant': w.get('registrant_name') or w.get('name'),
+            'org': w.org,
+            'address': w.address,
+            'city': w.city,
+            'state': w.state,
+            'country': w.country,
+            'zipcode': w.zipcode,
+        }
+    except Exception as e:
+        errors.append(f"WHOIS error: {str(e)}")
+
+    return {
+        'domain': request.domain,
+        'searched_at': datetime.now().isoformat(),
+        'whois_data': whois_data,
+        'errors': errors,
+        'execution_time': (datetime.now() - start_time).total_seconds()
+    }
+
+
+# ============================================================================
+# WAYBACK MACHINE - Historical Website Data
+# ============================================================================
+
+class WaybackRequest(BaseModel):
+    url: str
+    limit: int = 10
+
+
+@app.post("/api/wayback")
+async def wayback_search(request: WaybackRequest):
+    """Search Wayback Machine for historical snapshots"""
+    start_time = datetime.now()
+    snapshots = []
+    errors = []
+
+    try:
+        import waybackpy
+        url = waybackpy.Url(request.url)
+
+        # Get available snapshots
+        try:
+            oldest = url.oldest()
+            snapshots.append({
+                'type': 'oldest',
+                'timestamp': oldest.timestamp.isoformat() if oldest.timestamp else None,
+                'archive_url': oldest.archive_url
+            })
+        except Exception:
+            pass
+
+        try:
+            newest = url.newest()
+            snapshots.append({
+                'type': 'newest',
+                'timestamp': newest.timestamp.isoformat() if newest.timestamp else None,
+                'archive_url': newest.archive_url
+            })
+        except Exception:
+            pass
+
+        # Get CDX snapshots
+        try:
+            cdx = url.cdx_api()
+            for snapshot in list(cdx)[:request.limit]:
+                snapshots.append({
+                    'type': 'snapshot',
+                    'timestamp': snapshot.timestamp,
+                    'archive_url': snapshot.archive_url,
+                    'status_code': snapshot.statuscode,
+                    'mime_type': snapshot.mimetype
+                })
+        except Exception:
+            pass
+
+    except Exception as e:
+        errors.append(f"Wayback error: {str(e)}")
+
+    return {
+        'url': request.url,
+        'searched_at': datetime.now().isoformat(),
+        'snapshots': snapshots,
+        'total_found': len(snapshots),
+        'errors': errors,
+        'execution_time': (datetime.now() - start_time).total_seconds()
+    }
+
+
+# ============================================================================
+# VEHICLE & LICENSE PLATE SEARCH LINKS
+# ============================================================================
+
+class VehicleSearchRequest(BaseModel):
+    plate: Optional[str] = None
+    vin: Optional[str] = None
+    state: str = "LA"
+    make: Optional[str] = None
+    model: Optional[str] = None
+    year: Optional[str] = None
+
+
+@app.post("/api/vehicle-search")
+async def vehicle_search_links(request: VehicleSearchRequest):
+    """Generate vehicle/plate search links"""
+    links = []
+
+    if request.plate:
+        plate = request.plate.replace(" ", "").upper()
+        state = request.state.upper()
+
+        links.extend([
+            {'name': 'FAXVIN Plate Lookup', 'url': f'https://www.faxvin.com/license-plate-lookup', 'type': 'free'},
+            {'name': 'VinCheck.info', 'url': f'https://vincheck.info/check/license-plate.php?plate={plate}&state={state}', 'type': 'free'},
+            {'name': 'SearchQuarry Plate', 'url': f'https://www.searchquarry.com/license-plate-lookup/', 'type': 'paid'},
+            {'name': 'AutoCheck', 'url': f'https://www.autocheck.com/members/login.do', 'type': 'paid'},
+            {'name': 'Carfax', 'url': f'https://www.carfax.com/vehicle-history-reports/', 'type': 'paid'},
+        ])
+
+    if request.vin:
+        vin = request.vin.upper()
+        links.extend([
+            {'name': 'NHTSA VIN Decoder', 'url': f'https://vpic.nhtsa.dot.gov/decoder/Decoder?VIN={vin}', 'type': 'free'},
+            {'name': 'VinCheck.info', 'url': f'https://vincheck.info/check/vin-check.php?vin={vin}', 'type': 'free'},
+            {'name': 'VehicleHistory', 'url': f'https://www.vehiclehistory.com/vin-report/{vin}', 'type': 'free'},
+            {'name': 'NICB VINCheck', 'url': f'https://www.nicb.org/vincheck', 'type': 'free'},
+            {'name': 'Carfax VIN', 'url': f'https://www.carfax.com/VehicleHistory/p/Report.cfx?vin={vin}', 'type': 'paid'},
+            {'name': 'AutoCheck VIN', 'url': f'https://www.autocheck.com/vehiclehistory/autocheck/en/search-by-vin?vin={vin}', 'type': 'paid'},
+        ])
+
+    # State DMV links
+    state_dmv = {
+        'LA': 'https://expresslane.org/vehicles',
+        'TX': 'https://www.txdmv.gov/',
+        'FL': 'https://www.flhsmv.gov/dmv/',
+        'CA': 'https://www.dmv.ca.gov/',
+        'GA': 'https://dor.georgia.gov/motor-vehicles',
+        'NY': 'https://dmv.ny.gov/',
+        'AL': 'https://revenue.alabama.gov/motor-vehicle/',
+        'MS': 'https://www.dor.ms.gov/motor-vehicle',
+    }
+
+    if request.state.upper() in state_dmv:
+        links.append({
+            'name': f'{request.state.upper()} DMV',
+            'url': state_dmv[request.state.upper()],
+            'type': 'official'
+        })
+
+    return {
+        'plate': request.plate,
+        'vin': request.vin,
+        'state': request.state,
+        'searched_at': datetime.now().isoformat(),
+        'search_links': links
+    }
+
+
+# ============================================================================
+# BACKGROUND CHECK LINK GENERATOR
+# ============================================================================
+
+class BackgroundCheckRequest(BaseModel):
+    name: str
+    state: Optional[str] = None
+    city: Optional[str] = None
+    dob: Optional[str] = None  # YYYY-MM-DD
+
+
+@app.post("/api/background-links")
+async def background_check_links(request: BackgroundCheckRequest):
+    """Generate links to background check services"""
+    name = request.name
+    encoded_name = name.replace(' ', '+')
+    name_dash = name.replace(' ', '-').lower()
+
+    links = {
+        'free_services': [
+            {'name': 'TruePeopleSearch', 'url': f'https://www.truepeoplesearch.com/results?name={encoded_name}'},
+            {'name': 'FastPeopleSearch', 'url': f'https://www.fastpeoplesearch.com/name/{name_dash}'},
+            {'name': "That's Them", 'url': f'https://thatsthem.com/name/{name_dash}'},
+            {'name': 'ZabaSearch', 'url': f'https://www.zabasearch.com/people/{name_dash}/'},
+            {'name': 'Whitepages', 'url': f'https://www.whitepages.com/name/{name_dash}'},
+            {'name': 'Nuwber', 'url': f'https://nuwber.com/search?name={encoded_name}'},
+            {'name': 'CyberBackgroundChecks', 'url': f'https://www.cyberbackgroundchecks.com/people/{name_dash}'},
+        ],
+        'paid_services': [
+            {'name': 'BeenVerified', 'url': f'https://www.beenverified.com/people/{name_dash}/'},
+            {'name': 'Intelius', 'url': f'https://www.intelius.com/people-search/{name_dash}/'},
+            {'name': 'Spokeo', 'url': f'https://www.spokeo.com/{name_dash}'},
+            {'name': 'PeopleFinder', 'url': f'https://www.peoplefinder.com/people/{name_dash}/'},
+            {'name': 'USSearch', 'url': f'https://www.ussearch.com/search/results/people?firstName={name.split()[0]}&lastName={name.split()[-1]}'},
+            {'name': 'Instant Checkmate', 'url': f'https://www.instantcheckmate.com/people/{name_dash}/'},
+            {'name': 'TruthFinder', 'url': f'https://www.truthfinder.com/people-search/'},
+        ],
+        'criminal_records': [
+            {'name': 'CourtListener', 'url': f'https://www.courtlistener.com/?q={encoded_name}'},
+            {'name': 'JailBase', 'url': f'https://www.jailbase.com/en/search/?q={encoded_name}'},
+            {'name': 'VINELink', 'url': 'https://www.vinelink.com/#/search'},
+            {'name': 'NSOPW (Sex Offenders)', 'url': f'https://www.nsopw.gov/search-public-sex-offender-registries'},
+            {'name': 'BOP Inmate Locator', 'url': f'https://www.bop.gov/inmateloc/'},
+        ],
+        'social_media': [
+            {'name': 'Facebook', 'url': f'https://www.facebook.com/search/people/?q={encoded_name}'},
+            {'name': 'LinkedIn', 'url': f'https://www.linkedin.com/search/results/people/?keywords={encoded_name}'},
+            {'name': 'Twitter/X', 'url': f'https://twitter.com/search?q={encoded_name}&f=user'},
+            {'name': 'Instagram', 'url': f'https://www.instagram.com/{name.replace(" ", "").lower()}/'},
+        ]
+    }
+
+    if request.state:
+        state = request.state.upper()
+        links['state_specific'] = []
+
+        # Add state-specific offender searches
+        if state == 'LA':
+            links['state_specific'].append({'name': 'LA DOC', 'url': f'https://www.doc.la.gov/offender-search?name={encoded_name}'})
+        elif state == 'TX':
+            links['state_specific'].append({'name': 'TX DOC', 'url': f'https://offender.tdcj.texas.gov/OffenderSearch/'})
+        elif state == 'FL':
+            links['state_specific'].append({'name': 'FL DOC', 'url': f'https://www.dc.state.fl.us/offenderSearch/'})
+
+    return {
+        'name': request.name,
+        'searched_at': datetime.now().isoformat(),
+        'links': links
+    }
+
+
+# ============================================================================
+# BOND CLIENT RISK SCORING
+# ============================================================================
+
+class RiskScoreRequest(BaseModel):
+    name: str
+    age: Optional[int] = None
+    charges: Optional[List[str]] = None
+    prior_ftas: int = 0  # Failure to appear count
+    prior_convictions: int = 0
+    employment_status: Optional[str] = None  # employed, unemployed, self-employed
+    residence_type: Optional[str] = None  # own, rent, homeless, with_family
+    residence_duration_months: Optional[int] = None
+    local_ties: Optional[int] = None  # 0-10 scale
+    has_vehicle: bool = False
+    phone_verified: bool = False
+    references_verified: int = 0
+    bond_amount: Optional[float] = None
+    income_monthly: Optional[float] = None
+
+
+@app.post("/api/risk-score")
+async def calculate_risk_score(request: RiskScoreRequest):
+    """
+    Calculate bond client risk score (0-100)
+    Lower = higher risk, Higher = lower risk (better client)
+    """
+    score = 50  # Start at neutral
+    risk_factors = []
+    positive_factors = []
+
+    # Age factor
+    if request.age:
+        if request.age < 21:
+            score -= 10
+            risk_factors.append("Under 21 years old (-10)")
+        elif request.age > 50:
+            score += 5
+            positive_factors.append("Over 50 years old (+5)")
+
+    # Prior FTAs (major risk factor)
+    if request.prior_ftas > 0:
+        fta_penalty = min(request.prior_ftas * 15, 45)
+        score -= fta_penalty
+        risk_factors.append(f"{request.prior_ftas} prior FTA(s) (-{fta_penalty})")
+
+    # Prior convictions
+    if request.prior_convictions > 0:
+        conv_penalty = min(request.prior_convictions * 5, 20)
+        score -= conv_penalty
+        risk_factors.append(f"{request.prior_convictions} prior conviction(s) (-{conv_penalty})")
+
+    # Employment
+    if request.employment_status == 'employed':
+        score += 15
+        positive_factors.append("Employed (+15)")
+    elif request.employment_status == 'self-employed':
+        score += 8
+        positive_factors.append("Self-employed (+8)")
+    elif request.employment_status == 'unemployed':
+        score -= 10
+        risk_factors.append("Unemployed (-10)")
+
+    # Residence
+    if request.residence_type == 'own':
+        score += 15
+        positive_factors.append("Homeowner (+15)")
+    elif request.residence_type == 'rent':
+        score += 5
+        positive_factors.append("Renter (+5)")
+    elif request.residence_type == 'with_family':
+        score += 8
+        positive_factors.append("Lives with family (+8)")
+    elif request.residence_type == 'homeless':
+        score -= 20
+        risk_factors.append("No stable residence (-20)")
+
+    # Residence duration
+    if request.residence_duration_months:
+        if request.residence_duration_months >= 24:
+            score += 10
+            positive_factors.append("2+ years at residence (+10)")
+        elif request.residence_duration_months >= 12:
+            score += 5
+            positive_factors.append("1+ year at residence (+5)")
+        elif request.residence_duration_months < 3:
+            score -= 5
+            risk_factors.append("Less than 3 months at residence (-5)")
+
+    # Local ties
+    if request.local_ties is not None:
+        if request.local_ties >= 7:
+            score += 10
+            positive_factors.append(f"Strong local ties ({request.local_ties}/10) (+10)")
+        elif request.local_ties <= 3:
+            score -= 10
+            risk_factors.append(f"Weak local ties ({request.local_ties}/10) (-10)")
+
+    # Vehicle
+    if request.has_vehicle:
+        score += 5
+        positive_factors.append("Has vehicle (+5)")
+
+    # Phone verified
+    if request.phone_verified:
+        score += 5
+        positive_factors.append("Phone verified (+5)")
+    else:
+        score -= 5
+        risk_factors.append("Phone not verified (-5)")
+
+    # References
+    if request.references_verified >= 3:
+        score += 10
+        positive_factors.append(f"{request.references_verified} verified references (+10)")
+    elif request.references_verified >= 1:
+        score += 5
+        positive_factors.append(f"{request.references_verified} verified reference(s) (+5)")
+    else:
+        score -= 5
+        risk_factors.append("No verified references (-5)")
+
+    # Bond to income ratio
+    if request.bond_amount and request.income_monthly and request.income_monthly > 0:
+        ratio = request.bond_amount / (request.income_monthly * 12)
+        if ratio > 2:
+            score -= 15
+            risk_factors.append(f"Bond is {ratio:.1f}x annual income (-15)")
+        elif ratio < 0.5:
+            score += 10
+            positive_factors.append(f"Bond is only {ratio:.1f}x annual income (+10)")
+
+    # Charge severity (simplified)
+    if request.charges:
+        severe_charges = ['murder', 'assault', 'robbery', 'kidnapping', 'weapon', 'drug trafficking']
+        for charge in request.charges:
+            charge_lower = charge.lower()
+            if any(s in charge_lower for s in severe_charges):
+                score -= 10
+                risk_factors.append(f"Severe charge: {charge} (-10)")
+                break
+
+    # Clamp score
+    score = max(0, min(100, score))
+
+    # Determine risk level
+    if score >= 70:
+        risk_level = 'LOW RISK'
+        recommendation = 'Good candidate for bond'
+    elif score >= 50:
+        risk_level = 'MODERATE RISK'
+        recommendation = 'Proceed with caution, consider additional collateral'
+    elif score >= 30:
+        risk_level = 'HIGH RISK'
+        recommendation = 'Requires substantial collateral or co-signer'
+    else:
+        risk_level = 'VERY HIGH RISK'
+        recommendation = 'Consider declining or requiring full collateral'
+
+    return {
+        'name': request.name,
+        'calculated_at': datetime.now().isoformat(),
+        'score': score,
+        'risk_level': risk_level,
+        'recommendation': recommendation,
+        'risk_factors': risk_factors,
+        'positive_factors': positive_factors,
+        'score_breakdown': {
+            'base_score': 50,
+            'final_score': score,
+            'adjustments': len(risk_factors) + len(positive_factors)
+        }
+    }
+
+
+# ============================================================================
+# SOCIAL MEDIA SCRAPING (snscrape)
+# ============================================================================
+
+class SocialScrapeRequest(BaseModel):
+    username: str
+    platform: str  # twitter, instagram, reddit, youtube
+    max_posts: int = 20
+
+
+@app.post("/api/social-scrape")
+async def social_scrape(request: SocialScrapeRequest):
+    """Scrape social media posts (limited functionality)"""
+    start_time = datetime.now()
+    posts = []
+    profile_info = {}
+    errors = []
+
+    try:
+        import snscrape.modules.twitter as sntwitter
+        import snscrape.modules.reddit as snreddit
+
+        if request.platform.lower() == 'twitter':
+            try:
+                for i, tweet in enumerate(sntwitter.TwitterUserScraper(request.username).get_items()):
+                    if i >= request.max_posts:
+                        break
+                    posts.append({
+                        'date': tweet.date.isoformat() if tweet.date else None,
+                        'content': tweet.rawContent,
+                        'likes': tweet.likeCount,
+                        'retweets': tweet.retweetCount,
+                        'url': tweet.url
+                    })
+            except Exception as e:
+                errors.append(f"Twitter scrape error: {str(e)}")
+
+        elif request.platform.lower() == 'reddit':
+            try:
+                for i, post in enumerate(snreddit.RedditUserScraper(request.username).get_items()):
+                    if i >= request.max_posts:
+                        break
+                    posts.append({
+                        'date': post.created.isoformat() if hasattr(post, 'created') else None,
+                        'title': getattr(post, 'title', ''),
+                        'content': getattr(post, 'body', ''),
+                        'subreddit': getattr(post, 'subreddit', ''),
+                        'url': post.url if hasattr(post, 'url') else None
+                    })
+            except Exception as e:
+                errors.append(f"Reddit scrape error: {str(e)}")
+
+        else:
+            errors.append(f"Platform {request.platform} not supported for scraping")
+
+    except ImportError:
+        errors.append("snscrape not installed")
+    except Exception as e:
+        errors.append(f"Scrape error: {str(e)}")
+
+    return {
+        'username': request.username,
+        'platform': request.platform,
+        'searched_at': datetime.now().isoformat(),
+        'posts': posts,
+        'profile_info': profile_info,
+        'total_found': len(posts),
+        'errors': errors,
+        'execution_time': (datetime.now() - start_time).total_seconds()
+    }
+
+
+# ============================================================================
+# DOCUMENT METADATA EXTRACTION
+# ============================================================================
+
+class MetadataRequest(BaseModel):
+    file_base64: str
+    filename: str
+
+
+@app.post("/api/extract-metadata")
+async def extract_metadata(request: MetadataRequest):
+    """Extract metadata from documents and images"""
+    start_time = datetime.now()
+    metadata = {}
+    errors = []
+
+    try:
+        import base64
+
+        # Decode file
+        file_data = base64.b64decode(request.file_base64)
+        filename_lower = request.filename.lower()
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(request.filename)[1]) as tmp:
+            tmp.write(file_data)
+            tmp_path = tmp.name
+
+        try:
+            # Image files
+            if filename_lower.endswith(('.jpg', '.jpeg', '.png', '.gif', '.tiff', '.bmp')):
+                try:
+                    import exifread
+                    with open(tmp_path, 'rb') as f:
+                        tags = exifread.process_file(f)
+                        for tag in tags.keys():
+                            if tag not in ('JPEGThumbnail', 'TIFFThumbnail', 'Filename', 'EXIF MakerNote'):
+                                metadata[str(tag)] = str(tags[tag])
+
+                    # Check for GPS
+                    if 'GPS GPSLatitude' in metadata and 'GPS GPSLongitude' in metadata:
+                        metadata['_gps_found'] = True
+                except Exception as e:
+                    errors.append(f"EXIF extraction error: {str(e)}")
+
+            # PDF files
+            elif filename_lower.endswith('.pdf'):
+                try:
+                    from PyPDF2 import PdfReader
+                    reader = PdfReader(tmp_path)
+                    if reader.metadata:
+                        for key, value in reader.metadata.items():
+                            metadata[key.replace('/', '')] = str(value) if value else None
+                    metadata['_page_count'] = len(reader.pages)
+                except Exception as e:
+                    errors.append(f"PDF extraction error: {str(e)}")
+
+            # Word documents
+            elif filename_lower.endswith(('.docx', '.doc')):
+                try:
+                    from docx import Document
+                    doc = Document(tmp_path)
+                    props = doc.core_properties
+                    metadata['author'] = props.author
+                    metadata['created'] = str(props.created) if props.created else None
+                    metadata['modified'] = str(props.modified) if props.modified else None
+                    metadata['last_modified_by'] = props.last_modified_by
+                    metadata['title'] = props.title
+                    metadata['subject'] = props.subject
+                    metadata['keywords'] = props.keywords
+                    metadata['comments'] = props.comments
+                except Exception as e:
+                    errors.append(f"DOCX extraction error: {str(e)}")
+
+        finally:
+            os.unlink(tmp_path)
+
+    except Exception as e:
+        errors.append(f"Metadata extraction error: {str(e)}")
+
+    return {
+        'filename': request.filename,
+        'extracted_at': datetime.now().isoformat(),
+        'metadata': metadata,
+        'errors': errors,
+        'execution_time': (datetime.now() - start_time).total_seconds()
+    }
+
+
+# ============================================================================
+# IP GEOLOCATION
+# ============================================================================
+
+class IPLookupRequest(BaseModel):
+    ip_address: str
+
+
+@app.post("/api/ip-lookup")
+async def ip_lookup(request: IPLookupRequest):
+    """Geolocate IP address"""
+    start_time = datetime.now()
+    location = {}
+    errors = []
+
+    try:
+        from ip2geotools.databases.noncommercial import DbIpCity
+
+        response = DbIpCity.get(request.ip_address, api_key='free')
+        location = {
+            'ip': request.ip_address,
+            'city': response.city,
+            'region': response.region,
+            'country': response.country,
+            'latitude': response.latitude,
+            'longitude': response.longitude,
+        }
+    except Exception as e:
+        errors.append(f"IP lookup error: {str(e)}")
+
+        # Fallback to simple API
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"http://ip-api.com/json/{request.ip_address}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    location = {
+                        'ip': request.ip_address,
+                        'city': data.get('city'),
+                        'region': data.get('regionName'),
+                        'country': data.get('country'),
+                        'latitude': data.get('lat'),
+                        'longitude': data.get('lon'),
+                        'isp': data.get('isp'),
+                        'org': data.get('org'),
+                    }
+        except Exception as e2:
+            errors.append(f"Fallback IP lookup error: {str(e2)}")
+
+    return {
+        'ip_address': request.ip_address,
+        'searched_at': datetime.now().isoformat(),
+        'location': location,
+        'errors': errors,
+        'execution_time': (datetime.now() - start_time).total_seconds()
+    }
+
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
@@ -2285,7 +2986,7 @@ async def health_check():
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
         'tools': tools,
-        'version': '2.1.0'
+        'version': '3.0.0'
     }
 
 
@@ -2294,7 +2995,7 @@ async def root():
     """Root endpoint with API info"""
     return {
         'name': 'Elite Recovery OSINT API',
-        'version': '2.1.0',
+        'version': '3.0.0',
         'endpoints': {
             # Username searches
             '/api/sherlock': 'Username search (400+ sites)',
@@ -2319,6 +3020,20 @@ async def root():
             # Court records
             '/api/court-records': 'Federal court records (CourtListener)',
             '/api/state-courts': 'State court record links',
+            # Vehicle/property
+            '/api/vehicle-search': 'Vehicle/plate search links',
+            '/api/background-links': 'Background check service links',
+            # Web/domain intel
+            '/api/web-search': 'Web search (DuckDuckGo)',
+            '/api/whois': 'Domain WHOIS lookup',
+            '/api/wayback': 'Wayback Machine historical search',
+            '/api/ip-lookup': 'IP address geolocation',
+            # Risk scoring
+            '/api/risk-score': 'Bond client risk scoring algorithm',
+            # Social scraping
+            '/api/social-scrape': 'Social media post scraping',
+            # Document analysis
+            '/api/extract-metadata': 'Document/image metadata extraction',
             # Combined searches
             '/api/investigate': 'INTELLIGENT person investigation (smart flow)',
             '/api/sweep': 'Full OSINT sweep',
@@ -2330,7 +3045,8 @@ async def root():
             # Utility
             '/api/image/upload': 'Temp image hosting for reverse image search',
             '/health': 'Health check'
-        }
+        },
+        'total_endpoints': 35
     }
 
 

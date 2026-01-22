@@ -26,19 +26,48 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Install OSINT tools
 RUN pip install --no-cache-dir \
+    # Username search
     sherlock-project \
     maigret \
-    holehe \
     socialscan \
-    h8mail \
-    theHarvester \
     social-analyzer \
-    ignorant \
+    blackbird \
+    # Email tools
+    holehe \
+    h8mail \
     ghunt \
-    photon-xss \
+    theHarvester \
+    # Instagram
     instaloader \
     toutatis \
-    blackbird
+    # Phone
+    ignorant \
+    # Web/domain tools
+    photon-xss \
+    waybackpy \
+    dnspython \
+    python-whois \
+    # Document/metadata
+    ExifRead \
+    PyPDF2 \
+    python-docx \
+    # Data enrichment
+    clearbit \
+    # Geolocation
+    geopy \
+    ip2geotools \
+    # Scraping/automation
+    beautifulsoup4 \
+    selenium \
+    playwright \
+    # Additional OSINT
+    twint || true \
+    snscrape \
+    googlesearch-python \
+    duckduckgo-search
+
+# Install Playwright browsers
+RUN playwright install chromium
 
 # Install PhoneInfoga (Go-based)
 RUN go install github.com/sundowndev/phoneinfoga/v2/cmd/phoneinfoga@latest

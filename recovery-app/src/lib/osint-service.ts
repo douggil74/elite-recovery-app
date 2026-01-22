@@ -885,3 +885,299 @@ export async function performMegaSweep(
   if (!response.ok) throw new Error(`Mega sweep error: ${response.statusText}`);
   return response.json();
 }
+
+
+// ============================================================================
+// WEB SEARCH & DOMAIN TOOLS
+// ============================================================================
+
+/**
+ * Web search using DuckDuckGo
+ */
+export interface WebSearchResult {
+  query: string;
+  searched_at: string;
+  results: Array<{ title: string; url: string; snippet: string }>;
+  total_found: number;
+  errors: string[];
+  execution_time: number;
+}
+
+export async function webSearch(query: string, maxResults: number = 20): Promise<WebSearchResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/web-search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, max_results: maxResults }),
+  });
+  if (!response.ok) throw new Error(`Web search error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * WHOIS domain lookup
+ */
+export interface WhoisResult {
+  domain: string;
+  searched_at: string;
+  whois_data: {
+    domain_name?: string;
+    registrar?: string;
+    creation_date?: string;
+    expiration_date?: string;
+    name_servers?: string[];
+    emails?: string[];
+    registrant?: string;
+    org?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+  };
+  errors: string[];
+  execution_time: number;
+}
+
+export async function whoisLookup(domain: string): Promise<WhoisResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/whois`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain }),
+  });
+  if (!response.ok) throw new Error(`WHOIS error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Wayback Machine historical search
+ */
+export interface WaybackResult {
+  url: string;
+  searched_at: string;
+  snapshots: Array<{
+    type: string;
+    timestamp?: string;
+    archive_url: string;
+    status_code?: number;
+    mime_type?: string;
+  }>;
+  total_found: number;
+  errors: string[];
+  execution_time: number;
+}
+
+export async function waybackSearch(url: string, limit: number = 10): Promise<WaybackResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/wayback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, limit }),
+  });
+  if (!response.ok) throw new Error(`Wayback error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * IP address geolocation
+ */
+export interface IPLookupResult {
+  ip_address: string;
+  searched_at: string;
+  location: {
+    ip?: string;
+    city?: string;
+    region?: string;
+    country?: string;
+    latitude?: number;
+    longitude?: number;
+    isp?: string;
+    org?: string;
+  };
+  errors: string[];
+  execution_time: number;
+}
+
+export async function ipLookup(ipAddress: string): Promise<IPLookupResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/ip-lookup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ip_address: ipAddress }),
+  });
+  if (!response.ok) throw new Error(`IP lookup error: ${response.statusText}`);
+  return response.json();
+}
+
+
+// ============================================================================
+// VEHICLE & BACKGROUND CHECK LINKS
+// ============================================================================
+
+/**
+ * Vehicle/plate search links
+ */
+export interface VehicleSearchLinks {
+  plate?: string;
+  vin?: string;
+  state: string;
+  searched_at: string;
+  search_links: Array<{ name: string; url: string; type: string }>;
+}
+
+export async function getVehicleSearchLinks(
+  options: { plate?: string; vin?: string; state?: string }
+): Promise<VehicleSearchLinks> {
+  const response = await fetch(`${OSINT_API_BASE}/api/vehicle-search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(options),
+  });
+  if (!response.ok) throw new Error(`Vehicle search error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Background check links
+ */
+export interface BackgroundCheckLinks {
+  name: string;
+  searched_at: string;
+  links: {
+    free_services: Array<{ name: string; url: string }>;
+    paid_services: Array<{ name: string; url: string }>;
+    criminal_records: Array<{ name: string; url: string }>;
+    social_media: Array<{ name: string; url: string }>;
+    state_specific?: Array<{ name: string; url: string }>;
+  };
+}
+
+export async function getBackgroundCheckLinks(
+  name: string,
+  options?: { state?: string; city?: string; dob?: string }
+): Promise<BackgroundCheckLinks> {
+  const response = await fetch(`${OSINT_API_BASE}/api/background-links`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, ...options }),
+  });
+  if (!response.ok) throw new Error(`Background links error: ${response.statusText}`);
+  return response.json();
+}
+
+
+// ============================================================================
+// RISK SCORING
+// ============================================================================
+
+/**
+ * Bond client risk score
+ */
+export interface RiskScoreResult {
+  name: string;
+  calculated_at: string;
+  score: number;
+  risk_level: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK';
+  recommendation: string;
+  risk_factors: string[];
+  positive_factors: string[];
+  score_breakdown: {
+    base_score: number;
+    final_score: number;
+    adjustments: number;
+  };
+}
+
+export interface RiskScoreInput {
+  name: string;
+  age?: number;
+  charges?: string[];
+  prior_ftas?: number;
+  prior_convictions?: number;
+  employment_status?: 'employed' | 'unemployed' | 'self-employed';
+  residence_type?: 'own' | 'rent' | 'homeless' | 'with_family';
+  residence_duration_months?: number;
+  local_ties?: number;
+  has_vehicle?: boolean;
+  phone_verified?: boolean;
+  references_verified?: number;
+  bond_amount?: number;
+  income_monthly?: number;
+}
+
+export async function calculateRiskScore(input: RiskScoreInput): Promise<RiskScoreResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/risk-score`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`Risk score error: ${response.statusText}`);
+  return response.json();
+}
+
+
+// ============================================================================
+// DOCUMENT & METADATA
+// ============================================================================
+
+/**
+ * Extract metadata from documents/images
+ */
+export interface MetadataResult {
+  filename: string;
+  extracted_at: string;
+  metadata: Record<string, string | number | boolean | null>;
+  errors: string[];
+  execution_time: number;
+}
+
+export async function extractMetadata(fileBase64: string, filename: string): Promise<MetadataResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/extract-metadata`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_base64: fileBase64, filename }),
+  });
+  if (!response.ok) throw new Error(`Metadata extraction error: ${response.statusText}`);
+  return response.json();
+}
+
+
+// ============================================================================
+// SOCIAL SCRAPING
+// ============================================================================
+
+/**
+ * Scrape social media posts
+ */
+export interface SocialScrapeResult {
+  username: string;
+  platform: string;
+  searched_at: string;
+  posts: Array<{
+    date?: string;
+    content?: string;
+    title?: string;
+    likes?: number;
+    retweets?: number;
+    url?: string;
+    subreddit?: string;
+  }>;
+  profile_info: Record<string, unknown>;
+  total_found: number;
+  errors: string[];
+  execution_time: number;
+}
+
+export async function scrapeSocial(
+  username: string,
+  platform: 'twitter' | 'reddit',
+  maxPosts: number = 20
+): Promise<SocialScrapeResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/social-scrape`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, platform, max_posts: maxPosts }),
+  });
+  if (!response.ok) throw new Error(`Social scrape error: ${response.statusText}`);
+  return response.json();
+}
