@@ -351,3 +351,356 @@ export function getReverseImageSearchUrls(): { name: string; url: string; note: 
 export function getMultiPlatformUsernameSearchUrl(username: string): string {
   return `https://whatsmyname.app/?q=${encodeURIComponent(username)}`;
 }
+
+
+// ============================================================================
+// BACKEND OSINT INTEGRATIONS
+// ============================================================================
+
+const OSINT_API_BASE = 'https://elite-recovery-osint.onrender.com';
+
+/**
+ * PhoneInfoga - Advanced phone number OSINT
+ */
+export interface PhoneInfogaResult {
+  phone: string;
+  searched_at: string;
+  raw_local: string | null;
+  international: string | null;
+  country: string | null;
+  carrier: string | null;
+  line_type: string | null;
+  valid: boolean;
+  possible_owner: string | null;
+  social_results: Array<{ title: string; url: string; snippet: string }>;
+  dork_results: string[];
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchPhoneInfoga(phone: string): Promise<PhoneInfogaResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/phoneinfoga`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone }),
+  });
+  if (!response.ok) throw new Error(`PhoneInfoga error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * H8Mail - Email breach/leak checking
+ */
+export interface H8mailResult {
+  email: string;
+  searched_at: string;
+  breaches_found: Array<{ source: string; breach_name?: string; data?: string; date?: string }>;
+  leaked_passwords: string[];
+  related_emails: string[];
+  total_breaches: number;
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchH8mail(email: string, chase: boolean = true): Promise<H8mailResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/h8mail`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, chase_breaches: chase }),
+  });
+  if (!response.ok) throw new Error(`H8mail error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * theHarvester - Domain/email reconnaissance
+ */
+export interface HarvesterResult {
+  domain: string;
+  searched_at: string;
+  emails_found: string[];
+  hosts_found: string[];
+  ips_found: string[];
+  urls_found: string[];
+  people_found: string[];
+  total_results: number;
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchHarvester(
+  domain: string,
+  sources: string[] = ['google', 'bing', 'linkedin']
+): Promise<HarvesterResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/harvester`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain, sources }),
+  });
+  if (!response.ok) throw new Error(`theHarvester error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Social-Analyzer - Enhanced username search (1000+ sites)
+ */
+export interface SocialAnalyzerResult {
+  username: string;
+  searched_at: string;
+  profiles_found: Array<{
+    platform: string;
+    url: string;
+    status: string;
+    extracted_info?: Record<string, unknown>;
+  }>;
+  total_found: number;
+  metadata_extracted: Record<string, unknown>;
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchSocialAnalyzer(
+  username: string,
+  metadata: boolean = true
+): Promise<SocialAnalyzerResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/social-analyzer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, metadata, timeout: 120 }),
+  });
+  if (!response.ok) throw new Error(`Social-Analyzer error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * CourtListener - Federal court records search
+ */
+export interface CourtRecordResult {
+  query: string;
+  searched_at: string;
+  cases_found: Array<{
+    case_name: string;
+    court: string;
+    date_filed: string;
+    docket_number: string;
+    status: string;
+    url: string;
+    snippet: string;
+  }>;
+  people_found: Array<{
+    name: string;
+    born: string;
+    positions: string[];
+    url: string;
+  }>;
+  total_results: number;
+  courtlistener_urls: string[];
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchCourtRecords(
+  name: string,
+  options?: { case_name?: string; court?: string; filed_after?: string; filed_before?: string }
+): Promise<CourtRecordResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/court-records`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, ...options }),
+  });
+  if (!response.ok) throw new Error(`Court records error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * State court links generator
+ */
+export interface StateCourtLinks {
+  name: string;
+  state: string;
+  searched_at: string;
+  court_links: Record<string, string>;
+  federal_links: { pacer: string; courtlistener: string };
+}
+
+export async function getStateCourtLinks(name: string, state: string): Promise<StateCourtLinks> {
+  const response = await fetch(`${OSINT_API_BASE}/api/state-courts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, state }),
+  });
+  if (!response.ok) throw new Error(`State courts error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Sherlock - Username search (400+ sites) via backend
+ */
+export interface SherlockResult {
+  username: string;
+  searched_at: string;
+  tool: string;
+  total_sites: number;
+  found: Array<{ platform: string; url: string; response_time?: number }>;
+  not_found: string[];
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchSherlock(username: string, timeout: number = 60): Promise<SherlockResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/sherlock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, timeout }),
+  });
+  if (!response.ok) throw new Error(`Sherlock error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Maigret - Comprehensive username search via backend
+ */
+export async function searchMaigret(username: string, timeout: number = 120): Promise<SherlockResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/maigret`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, timeout }),
+  });
+  if (!response.ok) throw new Error(`Maigret error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Holehe - Email account discovery via backend
+ */
+export interface HoleheResult {
+  email: string;
+  searched_at: string;
+  tool: string;
+  registered_on: Array<{ service: string; status: string; details?: string }>;
+  not_registered: string[];
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchHolehe(email: string, timeout: number = 60): Promise<HoleheResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/holehe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, timeout }),
+  });
+  if (!response.ok) throw new Error(`Holehe error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Full username search - Combined Sherlock + Maigret
+ */
+export interface FullUsernameResult {
+  username: string;
+  searched_at: string;
+  sherlock: SherlockResult;
+  maigret: SherlockResult;
+  combined: {
+    total_unique_profiles: number;
+    profiles: Array<{ platform: string; url: string }>;
+  };
+}
+
+export async function searchFullUsername(username: string, timeout: number = 60): Promise<FullUsernameResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/username/full`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, timeout }),
+  });
+  if (!response.ok) throw new Error(`Full username search error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Intelligent investigation - Smart multi-tool flow
+ */
+export interface InvestigateResult {
+  name: string;
+  searched_at: string;
+  flow_steps: Array<{ step: number; action: string; status: string; result?: string }>;
+  discovered_emails: string[];
+  discovered_usernames: string[];
+  confirmed_profiles: Array<{
+    platform: string;
+    url: string;
+    username?: string;
+    source: string;
+  }>;
+  people_search_links: Array<{ name: string; url: string; type: string }>;
+  summary: string;
+  execution_time: number;
+}
+
+export async function investigatePerson(
+  name: string,
+  options?: { email?: string; phone?: string; location?: string }
+): Promise<InvestigateResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/investigate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, ...options }),
+  });
+  if (!response.ok) throw new Error(`Investigation error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Full OSINT Sweep - All tools combined
+ */
+export interface FullSweepResult {
+  target: { name: string; email?: string; phone?: string; username?: string; state?: string };
+  searched_at: string;
+  username_results: SherlockResult | null;
+  email_results: HoleheResult | null;
+  phone_results: PhoneInfogaResult | null;
+  summary: string;
+  total_profiles_found: number;
+  execution_time: number;
+}
+
+export async function performFullSweep(
+  name: string,
+  options?: { email?: string; phone?: string; username?: string; state?: string }
+): Promise<FullSweepResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/sweep`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, ...options }),
+  });
+  if (!response.ok) throw new Error(`Full sweep error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Check backend health and available tools
+ */
+export interface HealthCheckResult {
+  status: string;
+  timestamp: string;
+  tools: Record<string, string>;
+  version: string;
+}
+
+export async function checkOSINTHealth(): Promise<HealthCheckResult> {
+  const response = await fetch(`${OSINT_API_BASE}/health`);
+  if (!response.ok) throw new Error(`Health check error: ${response.statusText}`);
+  return response.json();
+}
