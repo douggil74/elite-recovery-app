@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import {
   View,
+  Text,
   StyleSheet,
   ScrollView,
   Alert,
+  TouchableOpacity,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { Button, Input, WarningBanner } from '@/components';
 import { useCases } from '@/hooks/useCases';
 import { COLORS } from '@/constants';
@@ -15,10 +18,12 @@ export default function NewCaseScreen() {
   const { createCase } = useCases();
 
   const [name, setName] = useState('');
-  const [internalCaseId, setInternalCaseId] = useState('');
-  const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Action options
+  const [runFTAScore, setRunFTAScore] = useState(false);
+  const [runOSINT, setRunOSINT] = useState(true); // Default to run OSINT
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -39,12 +44,23 @@ export default function NewCaseScreen() {
     try {
       const newCase = await createCase(
         name.trim(),
-        'fta_recovery', // Always FTA recovery
-        internalCaseId.trim() || undefined,
-        notes.trim() || undefined
+        'fta_recovery'
       );
 
-      router.replace(`/case/${newCase.id}`);
+      // Navigate to case with action flags
+      if (runFTAScore) {
+        // Go to FTA Risk tab with pre-filled name
+        router.replace({
+          pathname: '/(tabs)/risk',
+          params: { prefillName: name.trim(), caseId: newCase.id }
+        });
+      } else {
+        // Go to case detail (OSINT will auto-run if enabled)
+        router.replace({
+          pathname: `/case/${newCase.id}`,
+          params: { autoRunOSINT: runOSINT ? 'true' : 'false' }
+        });
+      }
     } catch (error) {
       Alert.alert('Error', 'Failed to create case. Please try again.');
     } finally {
@@ -52,11 +68,48 @@ export default function NewCaseScreen() {
     }
   };
 
+  const OptionToggle = ({
+    label,
+    description,
+    icon,
+    value,
+    onToggle
+  }: {
+    label: string;
+    description: string;
+    icon: string;
+    value: boolean;
+    onToggle: () => void
+  }) => (
+    <TouchableOpacity
+      style={[styles.optionCard, value && styles.optionCardActive]}
+      onPress={onToggle}
+      activeOpacity={0.7}
+    >
+      <View style={styles.optionLeft}>
+        <Ionicons
+          name={icon as any}
+          size={24}
+          color={value ? COLORS.primary : COLORS.textMuted}
+        />
+        <View style={styles.optionText}>
+          <Text style={[styles.optionLabel, value && styles.optionLabelActive]}>{label}</Text>
+          <Text style={styles.optionDescription}>{description}</Text>
+        </View>
+      </View>
+      <Ionicons
+        name={value ? 'checkbox' : 'square-outline'}
+        size={24}
+        color={value ? COLORS.primary : COLORS.textMuted}
+      />
+    </TouchableOpacity>
+  );
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <WarningBanner
         title="Lawful Use Required"
-        message="Only create cases for authorized fugitive recovery purposes. All activity is logged."
+        message="Only create cases for authorized fugitive recovery purposes."
         severity="info"
       />
 
@@ -72,25 +125,26 @@ export default function NewCaseScreen() {
         autoCapitalize="words"
       />
 
-      <Input
-        label="Internal Case ID (optional)"
-        placeholder="Your internal reference number"
-        value={internalCaseId}
-        onChangeText={setInternalCaseId}
-        autoCapitalize="characters"
+      <Text style={styles.sectionTitle}>ACTIONS AFTER CREATION</Text>
+
+      <OptionToggle
+        label="Run OSINT Search"
+        description="Search social media, public records, court records"
+        icon="search-outline"
+        value={runOSINT}
+        onToggle={() => setRunOSINT(!runOSINT)}
       />
 
-      <Input
-        label="Notes (optional)"
-        placeholder="Add any relevant notes about this case"
-        value={notes}
-        onChangeText={setNotes}
-        multiline
-        numberOfLines={4}
+      <OptionToggle
+        label="Calculate FTA Risk Score"
+        description="Assess failure-to-appear risk for bond decision"
+        icon="analytics-outline"
+        value={runFTAScore}
+        onToggle={() => setRunFTAScore(!runFTAScore)}
       />
 
       <Button
-        title="Create Recovery Case"
+        title="Create Case"
         onPress={handleSubmit}
         loading={isSubmitting}
         disabled={!name.trim()}
@@ -110,7 +164,52 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 40,
   },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textMuted,
+    letterSpacing: 1,
+    marginTop: 24,
+    marginBottom: 12,
+  },
+  optionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  optionCardActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primaryMuted,
+  },
+  optionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  optionText: {
+    flex: 1,
+  },
+  optionLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.text,
+    marginBottom: 2,
+  },
+  optionLabelActive: {
+    color: COLORS.primary,
+  },
+  optionDescription: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+  },
   submitButton: {
-    marginTop: 8,
+    marginTop: 24,
   },
 });
