@@ -22,13 +22,49 @@ const FEATURES: FeatureSection[] = [
     ],
   },
   {
-    title: 'OSINT Tools (NOT AI - Automated Scrapers)',
-    icon: 'logo-python',
+    title: 'OSINT Username Tools',
+    icon: 'at',
     items: [
-      { name: 'Sherlock', description: 'Scrapes 400+ websites checking if username exists - no intelligence, just lookups', type: 'tool' },
-      { name: 'Maigret', description: 'Same as Sherlock - automated username checking across sites', type: 'tool' },
-      { name: 'Holehe', description: 'Checks if email is registered on services (Google, Amazon, etc) - API checks only', type: 'tool' },
-      { name: 'Socialscan', description: 'Checks username availability - simple web requests, no AI', type: 'tool' },
+      { name: 'Sherlock', description: 'Scrapes 400+ websites for username existence', type: 'tool' },
+      { name: 'Maigret', description: 'Comprehensive username search with metadata extraction', type: 'tool' },
+      { name: 'Blackbird', description: 'Alternative username search engine', type: 'tool' },
+      { name: 'Social-Analyzer', description: 'Enhanced search across 1000+ sites with profile analysis', type: 'tool' },
+      { name: 'Socialscan', description: 'Quick username availability checker', type: 'tool' },
+    ],
+  },
+  {
+    title: 'OSINT Email Tools',
+    icon: 'mail',
+    items: [
+      { name: 'Holehe', description: 'Checks if email is registered on 120+ services', type: 'tool' },
+      { name: 'h8mail', description: 'Searches data breaches and leaks for email exposure', type: 'tool' },
+      { name: 'GHunt', description: 'Investigates Google accounts (name, photos, reviews)', type: 'tool' },
+      { name: 'theHarvester', description: 'Domain reconnaissance - finds emails, hosts, people', type: 'tool' },
+    ],
+  },
+  {
+    title: 'OSINT Phone Tools',
+    icon: 'call',
+    items: [
+      { name: 'PhoneInfoga', description: 'Advanced phone OSINT - carrier, location, Google dorks', type: 'tool' },
+      { name: 'Ignorant', description: 'Checks phone number for social media accounts', type: 'tool' },
+    ],
+  },
+  {
+    title: 'OSINT Instagram Tools',
+    icon: 'logo-instagram',
+    items: [
+      { name: 'Instaloader', description: 'Gets Instagram profile data - followers, bio, posts', type: 'tool' },
+      { name: 'Toutatis', description: 'Extracts phone/email from Instagram profiles', type: 'tool' },
+    ],
+  },
+  {
+    title: 'Court Record Search',
+    icon: 'briefcase',
+    items: [
+      { name: 'CourtListener API', description: 'Federal court records, opinions, dockets', type: 'api' },
+      { name: 'State Court Links', description: 'Direct links to LA, TX, FL, CA, GA, NY, AL, MS courts', type: 'db' },
+      { name: 'Offender Search', description: 'State DOC inmate/offender databases', type: 'db' },
     ],
   },
   {
@@ -179,28 +215,64 @@ const FEATURES: FeatureSection[] = [
 ];
 
 const PYTHON_TOOLS_LIVE = [
-  { name: 'Sherlock', description: 'Web scraper - checks 400+ sites for username (NOT AI)', status: 'live' },
-  { name: 'Maigret', description: 'Web scraper - similar to Sherlock (NOT AI)', status: 'live' },
-  { name: 'Holehe', description: 'API checker - sees if email registered on services (NOT AI)', status: 'live' },
-  { name: 'Socialscan', description: 'Availability checker - is username taken? (NOT AI)', status: 'live' },
-  { name: 'GPT-4o-mini Chat', description: 'ACTUAL AI - understands language, gives advice', status: 'live' },
-  { name: 'GPT-4o-mini Analysis', description: 'ACTUAL AI - reads documents, extracts data', status: 'live' },
-  { name: 'GPT-4o-mini Brief', description: 'ACTUAL AI - writes tactical recovery plans', status: 'live' },
+  // AI Tools
+  { name: 'GPT-4o Chat', description: 'ACTUAL AI - understands language, gives investigation advice', status: 'live', category: 'ai' },
+  { name: 'GPT-4o Vision', description: 'ACTUAL AI - analyzes photos, reads documents', status: 'live', category: 'ai' },
+  { name: 'GPT-4o Brief', description: 'ACTUAL AI - writes tactical recovery plans', status: 'live', category: 'ai' },
+  // Username Search
+  { name: 'Sherlock', description: 'Username search across 400+ sites', status: 'live', category: 'username' },
+  { name: 'Maigret', description: 'Comprehensive username intelligence', status: 'live', category: 'username' },
+  { name: 'Blackbird', description: 'Alternative username search engine', status: 'live', category: 'username' },
+  { name: 'Social-Analyzer', description: 'Enhanced search across 1000+ sites', status: 'live', category: 'username' },
+  { name: 'Socialscan', description: 'Quick username availability check', status: 'live', category: 'username' },
+  // Email Tools
+  { name: 'Holehe', description: 'Check email registration on services', status: 'live', category: 'email' },
+  { name: 'h8mail', description: 'Email breach/leak database search', status: 'live', category: 'email' },
+  { name: 'GHunt', description: 'Google account investigation', status: 'live', category: 'email' },
+  { name: 'theHarvester', description: 'Domain/email reconnaissance', status: 'live', category: 'email' },
+  // Phone Tools
+  { name: 'PhoneInfoga', description: 'Advanced phone number OSINT', status: 'live', category: 'phone' },
+  { name: 'Ignorant', description: 'Phone social account discovery', status: 'live', category: 'phone' },
+  // Instagram
+  { name: 'Instaloader', description: 'Instagram profile intelligence', status: 'live', category: 'instagram' },
+  { name: 'Toutatis', description: 'Instagram deep intel (phone/email)', status: 'live', category: 'instagram' },
+  // Court Records
+  { name: 'CourtListener API', description: 'Federal court records search', status: 'live', category: 'court' },
+  { name: 'State Courts', description: 'State court record links (LA, TX, FL, CA, etc.)', status: 'live', category: 'court' },
 ];
 
 const BACKEND_INFO = {
   url: 'https://elite-recovery-osint.onrender.com',
-  version: '1.1.0',
+  version: '2.1.0',
   endpoints: [
+    // Username
     '/api/sherlock - Username search (400+ sites)',
     '/api/maigret - Comprehensive username search',
-    '/api/holehe - Email account discovery',
+    '/api/blackbird - Alternative username search',
+    '/api/social-analyzer - Enhanced search (1000+ sites)',
     '/api/socialscan - Quick availability check',
-    '/api/investigate - Intelligent person investigation',
-    '/api/multi-username - Multi-username variation search',
+    '/api/multi-username - Username variation search',
+    // Email
+    '/api/holehe - Email account discovery',
+    '/api/h8mail - Email breach/leak checking',
+    '/api/ghunt - Google account investigation',
+    '/api/harvester - Domain reconnaissance',
+    // Phone
+    '/api/phoneinfoga - Advanced phone OSINT',
+    '/api/ignorant - Phone social discovery',
+    // Instagram
+    '/api/instagram - Instagram profile intel',
+    '/api/toutatis - Instagram deep intel',
+    // Court Records
+    '/api/court-records - Federal court search',
+    '/api/state-courts - State court links',
+    // Combined
+    '/api/investigate - Intelligent investigation',
     '/api/sweep - Full OSINT sweep',
+    '/api/mega-sweep - ALL tools combined',
+    // AI
     '/api/ai/chat - AI chat (OpenAI proxy)',
-    '/api/ai/analyze - Image analysis',
+    '/api/ai/analyze - Image/document analysis',
     '/api/ai/brief - Recovery brief generation',
   ]
 };
@@ -253,20 +325,20 @@ export default function AboutScreen() {
         {/* Stats */}
         <View style={styles.statsRow}>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>1</Text>
-            <Text style={styles.statLabel}>AI (GPT-4o)</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statNumber}>4</Text>
+            <Text style={styles.statNumber}>15+</Text>
             <Text style={styles.statLabel}>OSINT Tools</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>400+</Text>
-            <Text style={styles.statLabel}>Sites Scraped</Text>
+            <Text style={styles.statNumber}>1400+</Text>
+            <Text style={styles.statLabel}>Sites Searched</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={styles.statNumber}>25+</Text>
+            <Text style={styles.statLabel}>API Endpoints</Text>
           </View>
           <View style={styles.statBox}>
             <Text style={styles.statNumber}>0</Text>
-            <Text style={styles.statLabel}>API Keys Needed</Text>
+            <Text style={styles.statLabel}>Keys Needed</Text>
           </View>
         </View>
 
