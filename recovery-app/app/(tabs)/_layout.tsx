@@ -50,9 +50,18 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="risk"
+        options={{
+          title: 'FTA Risk',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="analytics-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="audit"
         options={{
-          title: 'Audit Log',
+          title: 'Audit',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="shield-checkmark-outline" size={size} color={color} />
           ),

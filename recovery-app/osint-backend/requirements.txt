@@ -10,10 +10,43 @@ aiohttp>=3.9.0
 httpx>=0.26.0
 requests>=2.31.0
 
-# OSINT Tools - installed via Dockerfile for better control
-# sherlock-project, maigret, holehe, socialscan, h8mail, theHarvester
-# social-analyzer, instaloader, toutatis, etc.
-# See Dockerfile for full list
+# OSINT Tools - Core
+sherlock-project
+maigret
+holehe
+socialscan
+social-analyzer
+
+# Email OSINT
+h8mail
+
+# theHarvester - install from GitHub (PyPI version is abandoned)
+git+https://github.com/laramies/theHarvester.git
+
+# Instagram Tools
+instaloader
+toutatis
+
+# Phone Tools
+ignorant
+
+# Web/Domain Tools
+waybackpy
+dnspython
+python-whois
+
+# Document/Metadata Tools
+ExifRead
+PyPDF2
+python-docx
+
+# Geolocation Tools
+geopy
+ip2geotools
+
+# Search Tools
+duckduckgo-search
+googlesearch-python
 
 # Data Processing
 beautifulsoup4>=4.12.2
