@@ -1299,6 +1299,576 @@ async def state_court_links(request: StateCourtRequest):
 
 
 # ============================================================================
+# IGNORANT - Phone Number Social Account Check
+# ============================================================================
+
+class IgnorantRequest(BaseModel):
+    phone: str
+    country_code: str = "US"
+
+
+def run_ignorant(phone: str, country_code: str = "US") -> Dict[str, Any]:
+    """Run Ignorant to check phone number for social accounts"""
+    start_time = datetime.now()
+    accounts_found = []
+    errors = []
+
+    try:
+        cmd = ["ignorant", phone, "-c", country_code]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        # Parse output
+        for line in result.stdout.split('\n'):
+            if '[+]' in line:
+                # Found account
+                parts = line.replace('[+]', '').strip()
+                accounts_found.append({
+                    'platform': parts.split(':')[0].strip() if ':' in parts else parts,
+                    'status': 'registered'
+                })
+            elif '[-]' in line:
+                pass  # Not registered, skip
+
+    except subprocess.TimeoutExpired:
+        errors.append("Ignorant search timed out")
+    except FileNotFoundError:
+        errors.append("Ignorant not installed. Run: pip install ignorant")
+    except Exception as e:
+        errors.append(f"Ignorant error: {str(e)}")
+
+    return {
+        'phone': phone,
+        'country_code': country_code,
+        'searched_at': datetime.now().isoformat(),
+        'accounts_found': accounts_found,
+        'total_found': len(accounts_found),
+        'errors': errors,
+        'execution_time': (datetime.now() - start_time).total_seconds()
+    }
+
+
+@app.post("/api/ignorant")
+async def ignorant_search(request: IgnorantRequest):
+    """Check phone number for social media accounts using Ignorant"""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        executor,
+        run_ignorant,
+        request.phone,
+        request.country_code
+    )
+    return result
+
+
+# ============================================================================
+# BLACKBIRD - Username Search (Comprehensive)
+# ============================================================================
+
+class BlackbirdRequest(BaseModel):
+    username: str
+    timeout: int = 90
+
+
+def run_blackbird(username: str, timeout: int = 90) -> Dict[str, Any]:
+    """Run Blackbird for comprehensive username search"""
+    start_time = datetime.now()
+    found = []
+    errors = []
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cmd = [
+                "blackbird", "--username", username,
+                "--json", "--no-nsfw"
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=tmpdir
+            )
+
+            # Parse JSON output from stdout
+            if result.stdout:
+                try:
+                    # Find JSON array in output
+                    output = result.stdout
+                    json_start = output.find('[')
+                    json_end = output.rfind(']') + 1
+                    if json_start >= 0 and json_end > json_start:
+                        data = json.loads(output[json_start:json_end])
+                        for item in data:
+                            if item.get('status') == 'FOUND':
+                                found.append({
+                                    'platform': item.get('site', 'Unknown'),
+                                    'url': item.get('url', ''),
+                                    'http_status': item.get('http_status', '')
+                                })
+                except json.JSONDecodeError:
+                    # Fallback: parse line by line
+                    for line in result.stdout.split('\n'):
+                        if 'FOUND' in line and 'http' in line:
+                            found.append({
+                                'platform': 'Unknown',
+                                'url': line.strip(),
+                                'http_status': 200
+                            })
+
+    except subprocess.TimeoutExpired:
+        errors.append("Blackbird search timed out")
+    except FileNotFoundError:
+        errors.append("Blackbird not installed. Run: pip install blackbird")
+    except Exception as e:
+        errors.append(f"Blackbird error: {str(e)}")
+
+    return {
+        'username': username,
+        'searched_at': datetime.now().isoformat(),
+        'tool': 'blackbird',
+        'found': found,
+        'total_found': len(found),
+        'errors': errors,
+        'execution_time': (datetime.now() - start_time).total_seconds()
+    }
+
+
+@app.post("/api/blackbird")
+async def blackbird_search(request: BlackbirdRequest):
+    """Comprehensive username search using Blackbird"""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        executor,
+        run_blackbird,
+        request.username,
+        request.timeout
+    )
+    return result
+
+
+# ============================================================================
+# INSTALOADER - Instagram Profile Intel
+# ============================================================================
+
+class InstaloaderRequest(BaseModel):
+    username: str
+
+
+def run_instaloader(username: str) -> Dict[str, Any]:
+    """Get Instagram profile information using Instaloader"""
+    start_time = datetime.now()
+    profile_data = {}
+    errors = []
+
+    try:
+        # Use instaloader to get profile info (no login required for public profiles)
+        cmd = [
+            "instaloader",
+            "--no-pictures",
+            "--no-videos",
+            "--no-video-thumbnails",
+            "--no-captions",
+            "--no-metadata-json",
+            "--no-compress-json",
+            f"--login", "",  # Anonymous
+            "--",
+            f"profile {username}"
+        ]
+
+        # Alternative: use Python API directly
+        import importlib.util
+        if importlib.util.find_spec("instaloader"):
+            import instaloader
+            L = instaloader.Instaloader()
+            try:
+                profile = instaloader.Profile.from_username(L.context, username)
+                profile_data = {
+                    'username': profile.username,
+                    'full_name': profile.full_name,
+                    'biography': profile.biography,
+                    'followers': profile.followers,
+                    'following': profile.followees,
+                    'posts': profile.mediacount,
+                    'is_private': profile.is_private,
+                    'is_verified': profile.is_verified,
+                    'external_url': profile.external_url,
+                    'profile_pic_url': profile.profile_pic_url,
+                    'business_category': profile.business_category_name if hasattr(profile, 'business_category_name') else None
+                }
+            except Exception as e:
+                errors.append(f"Profile lookup failed: {str(e)}")
+        else:
+            errors.append("Instaloader module not available")
+
+    except Exception as e:
+        errors.append(f"Instaloader error: {str(e)}")
+
+    return {
+        'username': username,
+        'searched_at': datetime.now().isoformat(),
+        'profile': profile_data,
+        'errors': errors,
+        'execution_time': (datetime.now() - start_time).total_seconds()
+    }
+
+
+@app.post("/api/instagram")
+async def instagram_lookup(request: InstaloaderRequest):
+    """Get Instagram profile information"""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        executor,
+        run_instaloader,
+        request.username
+    )
+    return result
+
+
+# ============================================================================
+# TOUTATIS - Instagram Deep Intel (Phone/Email from ID)
+# ============================================================================
+
+class ToutatisRequest(BaseModel):
+    username: str
+    session_id: Optional[str] = None  # Instagram session ID for deeper intel
+
+
+def run_toutatis(username: str, session_id: str = None) -> Dict[str, Any]:
+    """Run Toutatis for Instagram deep intel"""
+    start_time = datetime.now()
+    intel = {}
+    errors = []
+
+    try:
+        cmd = ["toutatis", "-u", username]
+        if session_id:
+            cmd.extend(["-s", session_id])
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        # Parse output
+        for line in result.stdout.split('\n'):
+            if ':' in line:
+                key, value = line.split(':', 1)
+                key = key.strip().lower().replace(' ', '_')
+                value = value.strip()
+                if value and value != 'None':
+                    intel[key] = value
+
+    except subprocess.TimeoutExpired:
+        errors.append("Toutatis search timed out")
+    except FileNotFoundError:
+        errors.append("Toutatis not installed. Run: pip install toutatis")
+    except Exception as e:
+        errors.append(f"Toutatis error: {str(e)}")
+
+    return {
+        'username': username,
+        'searched_at': datetime.now().isoformat(),
+        'intel': intel,
+        'errors': errors,
+        'execution_time': (datetime.now() - start_time).total_seconds()
+    }
+
+
+@app.post("/api/toutatis")
+async def toutatis_search(request: ToutatisRequest):
+    """Get Instagram deep intel (phone/email if available)"""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        executor,
+        run_toutatis,
+        request.username,
+        request.session_id
+    )
+    return result
+
+
+# ============================================================================
+# GHUNT - Google Account Investigation
+# ============================================================================
+
+class GhuntRequest(BaseModel):
+    email: EmailStr
+
+
+def run_ghunt(email: str) -> Dict[str, Any]:
+    """Run GHunt to investigate Google account"""
+    start_time = datetime.now()
+    intel = {
+        'google_id': None,
+        'name': None,
+        'profile_photos': [],
+        'google_maps_reviews': [],
+        'youtube_channel': None,
+        'google_calendar': None,
+        'last_profile_edit': None
+    }
+    errors = []
+
+    try:
+        cmd = ["ghunt", "email", email, "--json"]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        # Parse JSON output
+        if result.stdout:
+            try:
+                data = json.loads(result.stdout)
+                intel.update({
+                    'google_id': data.get('personId'),
+                    'name': data.get('names', [{}])[0].get('displayName'),
+                    'profile_photos': data.get('photos', []),
+                    'last_profile_edit': data.get('profileMetadata', {}).get('lastUpdateTime')
+                })
+            except json.JSONDecodeError:
+                # Parse text output
+                for line in result.stdout.split('\n'):
+                    if 'Name:' in line:
+                        intel['name'] = line.split('Name:')[1].strip()
+                    elif 'Gaia ID:' in line or 'Google ID:' in line:
+                        intel['google_id'] = line.split(':')[1].strip()
+
+    except subprocess.TimeoutExpired:
+        errors.append("GHunt search timed out")
+    except FileNotFoundError:
+        errors.append("GHunt not installed. Run: pip install ghunt")
+    except Exception as e:
+        errors.append(f"GHunt error: {str(e)}")
+
+    return {
+        'email': email,
+        'searched_at': datetime.now().isoformat(),
+        'intel': intel,
+        'errors': errors,
+        'execution_time': (datetime.now() - start_time).total_seconds()
+    }
+
+
+@app.post("/api/ghunt")
+async def ghunt_search(request: GhuntRequest):
+    """Investigate Google account using GHunt"""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        executor,
+        run_ghunt,
+        request.email
+    )
+    return result
+
+
+# ============================================================================
+# MEGA OSINT SWEEP - All Tools Combined
+# ============================================================================
+
+class MegaSweepRequest(BaseModel):
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    username: Optional[str] = None
+    instagram: Optional[str] = None
+    state: Optional[str] = None
+
+
+@app.post("/api/mega-sweep")
+async def mega_osint_sweep(request: MegaSweepRequest):
+    """
+    Comprehensive OSINT sweep using ALL available tools:
+    - Sherlock + Maigret + Blackbird + Social-Analyzer (usernames)
+    - Holehe + h8mail + GHunt (email)
+    - PhoneInfoga + Ignorant (phone)
+    - Instaloader + Toutatis (Instagram)
+    - CourtListener (court records)
+    - theHarvester (domain if email has domain)
+    """
+    start_time = datetime.now()
+    results = {
+        'username_searches': [],
+        'email_searches': [],
+        'phone_searches': [],
+        'instagram_searches': [],
+        'court_records': None,
+        'domain_intel': None
+    }
+    errors = []
+
+    loop = asyncio.get_event_loop()
+
+    # Generate username if not provided
+    username = request.username
+    if not username and request.name:
+        username = request.name.lower().replace(" ", "")
+
+    tasks = []
+
+    # Username searches (parallel)
+    if username:
+        async def run_all_username_tools():
+            tools_results = []
+            try:
+                sherlock_result = await loop.run_in_executor(executor, run_sherlock, username, 45)
+                tools_results.append({'tool': 'sherlock', 'result': sherlock_result})
+            except Exception as e:
+                errors.append(f"Sherlock: {e}")
+
+            try:
+                maigret_result = await loop.run_in_executor(executor, run_maigret, username, 60)
+                tools_results.append({'tool': 'maigret', 'result': maigret_result})
+            except Exception as e:
+                errors.append(f"Maigret: {e}")
+
+            try:
+                blackbird_result = await loop.run_in_executor(executor, run_blackbird, username, 60)
+                tools_results.append({'tool': 'blackbird', 'result': blackbird_result})
+            except Exception as e:
+                errors.append(f"Blackbird: {e}")
+
+            results['username_searches'] = tools_results
+
+        tasks.append(run_all_username_tools())
+
+    # Email searches
+    if request.email:
+        async def run_all_email_tools():
+            tools_results = []
+            try:
+                holehe_result = await loop.run_in_executor(executor, run_holehe, request.email, 45)
+                tools_results.append({'tool': 'holehe', 'result': holehe_result})
+            except Exception as e:
+                errors.append(f"Holehe: {e}")
+
+            try:
+                h8mail_result = await loop.run_in_executor(executor, run_h8mail, request.email, True)
+                tools_results.append({'tool': 'h8mail', 'result': h8mail_result})
+            except Exception as e:
+                errors.append(f"h8mail: {e}")
+
+            try:
+                ghunt_result = await loop.run_in_executor(executor, run_ghunt, request.email)
+                tools_results.append({'tool': 'ghunt', 'result': ghunt_result})
+            except Exception as e:
+                errors.append(f"GHunt: {e}")
+
+            results['email_searches'] = tools_results
+
+            # Domain intel from email
+            domain = request.email.split('@')[1]
+            try:
+                harvester_result = await loop.run_in_executor(
+                    executor, run_theharvester, domain, ['google', 'bing'], 50
+                )
+                results['domain_intel'] = harvester_result
+            except Exception as e:
+                errors.append(f"theHarvester: {e}")
+
+        tasks.append(run_all_email_tools())
+
+    # Phone searches
+    if request.phone:
+        async def run_all_phone_tools():
+            tools_results = []
+            try:
+                phoneinfoga_result = await loop.run_in_executor(
+                    executor, run_phoneinfoga, request.phone, None
+                )
+                tools_results.append({'tool': 'phoneinfoga', 'result': phoneinfoga_result})
+            except Exception as e:
+                errors.append(f"PhoneInfoga: {e}")
+
+            try:
+                ignorant_result = await loop.run_in_executor(
+                    executor, run_ignorant, request.phone, "US"
+                )
+                tools_results.append({'tool': 'ignorant', 'result': ignorant_result})
+            except Exception as e:
+                errors.append(f"Ignorant: {e}")
+
+            results['phone_searches'] = tools_results
+
+        tasks.append(run_all_phone_tools())
+
+    # Instagram searches
+    instagram_user = request.instagram or username
+    if instagram_user:
+        async def run_all_instagram_tools():
+            tools_results = []
+            try:
+                insta_result = await loop.run_in_executor(executor, run_instaloader, instagram_user)
+                tools_results.append({'tool': 'instaloader', 'result': insta_result})
+            except Exception as e:
+                errors.append(f"Instaloader: {e}")
+
+            try:
+                toutatis_result = await loop.run_in_executor(executor, run_toutatis, instagram_user, None)
+                tools_results.append({'tool': 'toutatis', 'result': toutatis_result})
+            except Exception as e:
+                errors.append(f"Toutatis: {e}")
+
+            results['instagram_searches'] = tools_results
+
+        tasks.append(run_all_instagram_tools())
+
+    # Court records
+    async def run_court_search():
+        try:
+            court_result = await search_courtlistener(request.name)
+            results['court_records'] = court_result
+        except Exception as e:
+            errors.append(f"CourtListener: {e}")
+
+    tasks.append(run_court_search())
+
+    # Run all tasks
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Compile summary
+    total_profiles = 0
+    for search in results['username_searches']:
+        found = search.get('result', {}).get('found', [])
+        total_profiles += len(found) if isinstance(found, list) else 0
+
+    for search in results['email_searches']:
+        registered = search.get('result', {}).get('registered_on', [])
+        total_profiles += len(registered) if isinstance(registered, list) else 0
+
+    execution_time = (datetime.now() - start_time).total_seconds()
+
+    return {
+        'target': {
+            'name': request.name,
+            'email': request.email,
+            'phone': request.phone,
+            'username': username,
+            'instagram': instagram_user,
+            'state': request.state
+        },
+        'searched_at': datetime.now().isoformat(),
+        'results': results,
+        'total_profiles_found': total_profiles,
+        'court_cases_found': len(results.get('court_records', {}).get('cases_found', [])) if results.get('court_records') else 0,
+        'errors': errors,
+        'execution_time': execution_time
+    }
+
+
+# ============================================================================
 # MULTI-USERNAME SEARCH (searches variations)
 # ============================================================================
 
@@ -1676,7 +2246,11 @@ async def health_check():
     tools = {}
 
     # Python-based tools
-    python_tools = ['sherlock', 'maigret', 'holehe', 'socialscan', 'h8mail', 'theHarvester', 'social-analyzer']
+    python_tools = [
+        'sherlock', 'maigret', 'holehe', 'socialscan',
+        'h8mail', 'theHarvester', 'social-analyzer',
+        'ignorant', 'blackbird', 'instaloader', 'toutatis', 'ghunt'
+    ]
     for tool in python_tools:
         try:
             result = subprocess.run(
@@ -1704,14 +2278,14 @@ async def health_check():
         tools['phoneinfoga'] = f'error: {str(e)}'
 
     # API-based services
-    tools['courtlistener_api'] = 'configured' if COURTLISTENER_API_KEY else 'no api key (limited)'
+    tools['courtlistener_api'] = 'configured' if COURTLISTENER_API_KEY else 'available (no key = limited)'
     tools['openai_api'] = 'configured' if OPENAI_API_KEY else 'not configured'
 
     return {
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
         'tools': tools,
-        'version': '2.0.0'
+        'version': '2.1.0'
     }
 
 
@@ -1720,28 +2294,35 @@ async def root():
     """Root endpoint with API info"""
     return {
         'name': 'Elite Recovery OSINT API',
-        'version': '2.0.0',
+        'version': '2.1.0',
         'endpoints': {
             # Username searches
             '/api/sherlock': 'Username search (400+ sites)',
             '/api/maigret': 'Comprehensive username search',
             '/api/social-analyzer': 'Enhanced username search (1000+ sites)',
+            '/api/blackbird': 'Comprehensive username search (alternative)',
             '/api/socialscan': 'Quick username/email check',
             '/api/username/full': 'Combined username search (Sherlock + Maigret)',
             '/api/multi-username': 'Search multiple username variations',
             # Email searches
             '/api/holehe': 'Email account discovery',
             '/api/h8mail': 'Email breach/leak checking',
+            '/api/ghunt': 'Google account investigation',
             '/api/harvester': 'Domain reconnaissance (emails, hosts, people)',
             # Phone searches
             '/api/phone': 'Basic phone intelligence',
             '/api/phoneinfoga': 'Advanced phone OSINT',
+            '/api/ignorant': 'Phone number social account check',
+            # Instagram
+            '/api/instagram': 'Instagram profile intel',
+            '/api/toutatis': 'Instagram deep intel (phone/email)',
             # Court records
             '/api/court-records': 'Federal court records (CourtListener)',
             '/api/state-courts': 'State court record links',
             # Combined searches
             '/api/investigate': 'INTELLIGENT person investigation (smart flow)',
             '/api/sweep': 'Full OSINT sweep',
+            '/api/mega-sweep': 'MEGA sweep using ALL tools',
             # AI services
             '/api/ai/chat': 'AI chat completion (OpenAI proxy)',
             '/api/ai/analyze': 'AI image/document analysis',

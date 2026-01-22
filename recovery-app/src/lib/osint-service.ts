@@ -704,3 +704,184 @@ export async function checkOSINTHealth(): Promise<HealthCheckResult> {
   if (!response.ok) throw new Error(`Health check error: ${response.statusText}`);
   return response.json();
 }
+
+
+/**
+ * Ignorant - Phone number social account check
+ */
+export interface IgnorantResult {
+  phone: string;
+  country_code: string;
+  searched_at: string;
+  accounts_found: Array<{ platform: string; status: string }>;
+  total_found: number;
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchIgnorant(phone: string, countryCode: string = 'US'): Promise<IgnorantResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/ignorant`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, country_code: countryCode }),
+  });
+  if (!response.ok) throw new Error(`Ignorant error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Blackbird - Comprehensive username search
+ */
+export interface BlackbirdResult {
+  username: string;
+  searched_at: string;
+  tool: string;
+  found: Array<{ platform: string; url: string; http_status: number }>;
+  total_found: number;
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchBlackbird(username: string, timeout: number = 90): Promise<BlackbirdResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/blackbird`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, timeout }),
+  });
+  if (!response.ok) throw new Error(`Blackbird error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Instaloader - Instagram profile intel
+ */
+export interface InstagramProfileResult {
+  username: string;
+  searched_at: string;
+  profile: {
+    username?: string;
+    full_name?: string;
+    biography?: string;
+    followers?: number;
+    following?: number;
+    posts?: number;
+    is_private?: boolean;
+    is_verified?: boolean;
+    external_url?: string;
+    profile_pic_url?: string;
+    business_category?: string;
+  };
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchInstagram(username: string): Promise<InstagramProfileResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/instagram`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username }),
+  });
+  if (!response.ok) throw new Error(`Instagram error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Toutatis - Instagram deep intel (phone/email)
+ */
+export interface ToutatisResult {
+  username: string;
+  searched_at: string;
+  intel: Record<string, string>;
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchToutatis(username: string, sessionId?: string): Promise<ToutatisResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/toutatis`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, session_id: sessionId }),
+  });
+  if (!response.ok) throw new Error(`Toutatis error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * GHunt - Google account investigation
+ */
+export interface GhuntResult {
+  email: string;
+  searched_at: string;
+  intel: {
+    google_id?: string;
+    name?: string;
+    profile_photos?: string[];
+    google_maps_reviews?: unknown[];
+    youtube_channel?: string;
+    google_calendar?: string;
+    last_profile_edit?: string;
+  };
+  errors: string[];
+  execution_time: number;
+}
+
+export async function searchGhunt(email: string): Promise<GhuntResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/ghunt`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  if (!response.ok) throw new Error(`GHunt error: ${response.statusText}`);
+  return response.json();
+}
+
+
+/**
+ * Mega Sweep - ALL tools combined
+ */
+export interface MegaSweepResult {
+  target: {
+    name: string;
+    email?: string;
+    phone?: string;
+    username?: string;
+    instagram?: string;
+    state?: string;
+  };
+  searched_at: string;
+  results: {
+    username_searches: Array<{ tool: string; result: unknown }>;
+    email_searches: Array<{ tool: string; result: unknown }>;
+    phone_searches: Array<{ tool: string; result: unknown }>;
+    instagram_searches: Array<{ tool: string; result: unknown }>;
+    court_records: CourtRecordResult | null;
+    domain_intel: HarvesterResult | null;
+  };
+  total_profiles_found: number;
+  court_cases_found: number;
+  errors: string[];
+  execution_time: number;
+}
+
+export async function performMegaSweep(
+  name: string,
+  options?: {
+    email?: string;
+    phone?: string;
+    username?: string;
+    instagram?: string;
+    state?: string;
+  }
+): Promise<MegaSweepResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/mega-sweep`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, ...options }),
+  });
+  if (!response.ok) throw new Error(`Mega sweep error: ${response.statusText}`);
+  return response.json();
+}

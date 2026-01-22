@@ -32,7 +32,13 @@ RUN pip install --no-cache-dir \
     socialscan \
     h8mail \
     theHarvester \
-    social-analyzer
+    social-analyzer \
+    ignorant \
+    ghunt \
+    photon-xss \
+    instaloader \
+    toutatis \
+    blackbird
 
 # Install PhoneInfoga (Go-based)
 RUN go install github.com/sundowndev/phoneinfoga/v2/cmd/phoneinfoga@latest
