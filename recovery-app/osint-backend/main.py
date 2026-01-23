@@ -3610,6 +3610,338 @@ async def bulk_jail_roster_scrape(request: BulkJailRosterRequest):
 
 
 # ============================================================================
+# LOUISIANA COURT RECORDS SEARCH (Tyler Technologies)
+# ============================================================================
+
+class CourtSearchRequest(BaseModel):
+    """Request for court records search"""
+    name: str  # Defendant name to search
+    dob: Optional[str] = None  # Date of birth for matching (YYYY-MM-DD or MM/DD/YYYY)
+    parish: Optional[str] = None  # Optional parish filter
+
+
+class CourtCase(BaseModel):
+    """Court case record"""
+    case_number: str
+    case_type: Optional[str] = None
+    filing_date: Optional[str] = None
+    status: Optional[str] = None
+    charges: Optional[List[str]] = None
+    court: Optional[str] = None
+    judge: Optional[str] = None
+    next_hearing: Optional[str] = None
+    disposition: Optional[str] = None
+    has_fta: bool = False  # Flagged if FTA/warrant found
+    has_warrant: bool = False
+    defendant_dob: Optional[str] = None
+    dob_match: bool = False  # True if DOB matches search criteria
+
+
+class CourtSearchResult(BaseModel):
+    """Court records search result"""
+    name: str
+    dob_searched: Optional[str] = None
+    cases: List[CourtCase]
+    total_cases: int
+    fta_cases: int  # Cases with FTA/bench warrant
+    warrant_cases: int
+    active_cases: int
+    dob_matched_cases: int
+    alerts: List[str]  # Important flags like "ACTIVE WARRANT", "PRIOR FTA"
+    errors: List[str]
+    execution_time: float
+
+
+async def search_la_court_records(name: str, parish: str = None, dob: str = None) -> Dict[str, Any]:
+    """
+    Search Louisiana court records via Tyler Technologies portal.
+    Credentials stored in environment variables for security.
+    Uses ScrapingBee for JavaScript rendering when available.
+    """
+    import os
+    import re
+    from datetime import datetime
+    from urllib.parse import quote
+
+    start_time = datetime.now()
+    cases = []
+    errors = []
+    fta_count = 0
+    active_count = 0
+    warrant_count = 0
+
+    # Get credentials from environment
+    court_user = os.environ.get('LA_COURT_USERNAME')
+    court_pass = os.environ.get('LA_COURT_PASSWORD')
+    scrapingbee_key = os.environ.get('SCRAPINGBEE_API_KEY')
+
+    if not court_user or not court_pass:
+        errors.append("Court records credentials not configured (LA_COURT_USERNAME, LA_COURT_PASSWORD)")
+        return {
+            'name': name,
+            'cases': [],
+            'total_cases': 0,
+            'fta_cases': 0,
+            'active_cases': 0,
+            'errors': errors,
+            'execution_time': (datetime.now() - start_time).total_seconds()
+        }
+
+    # Parse name into first/last
+    name_parts = name.strip().split()
+    if len(name_parts) >= 2:
+        first_name = name_parts[0]
+        last_name = name_parts[-1]
+    else:
+        first_name = ""
+        last_name = name
+
+    # FTA/warrant keywords to look for
+    fta_keywords = ['failure to appear', 'fta', 'bench warrant', 'capias', 'fugitive', 'absconding']
+    warrant_keywords = ['warrant', 'capias', 'fugitive']
+    active_keywords = ['active', 'open', 'pending', 'arraignment', 'trial']
+
+    try:
+        # Try ScrapingBee first (has JavaScript rendering for Angular sites)
+        if scrapingbee_key:
+            try:
+                # ScrapingBee can render JavaScript and handle sessions
+                search_url = f"https://researchla.tylerhost.net/CourtRecordsSearch/#!/search?firstName={quote(first_name)}&lastName={quote(last_name)}"
+
+                async with httpx.AsyncClient(timeout=90.0) as client:
+                    scrapingbee_url = f"https://app.scrapingbee.com/api/v1/"
+
+                    response = await client.get(
+                        scrapingbee_url,
+                        params={
+                            'api_key': scrapingbee_key,
+                            'url': search_url,
+                            'render_js': 'true',
+                            'wait': 5000,  # Wait 5 seconds for Angular to load
+                            'premium_proxy': 'true',
+                        },
+                        timeout=90.0
+                    )
+
+                    if response.status_code == 200:
+                        html = response.text
+
+                        # Parse the rendered HTML for case results
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(html, 'html.parser')
+
+                        # Look for case rows (Tyler uses various table/grid formats)
+                        case_rows = soup.select('.case-row, .search-result, tr[data-case], .case-item, tbody tr')
+
+                        for row in case_rows:
+                            case_text = row.get_text(' ', strip=True).lower()
+
+                            # Extract case info
+                            case_data = {
+                                'case_number': '',
+                                'case_type': '',
+                                'filing_date': '',
+                                'status': '',
+                                'charges': [],
+                                'court': '',
+                                'has_fta': False,
+                                'has_warrant': False
+                            }
+
+                            # Try to find case number
+                            case_num_elem = row.select_one('.case-number, [data-case-number], td:first-child a')
+                            if case_num_elem:
+                                case_data['case_number'] = case_num_elem.get_text(strip=True)
+
+                            # Check for FTA/warrant indicators
+                            for keyword in fta_keywords:
+                                if keyword in case_text:
+                                    case_data['has_fta'] = True
+                                    fta_count += 1
+                                    break
+
+                            for keyword in warrant_keywords:
+                                if keyword in case_text:
+                                    case_data['has_warrant'] = True
+                                    warrant_count += 1
+                                    break
+
+                            for keyword in active_keywords:
+                                if keyword in case_text:
+                                    active_count += 1
+                                    break
+
+                            if case_data['case_number']:
+                                cases.append(case_data)
+
+                        if not cases and 'No results' not in html and 'no records' not in html.lower():
+                            errors.append("Could not parse results from ScrapingBee response")
+
+                    else:
+                        errors.append(f"ScrapingBee returned {response.status_code}")
+
+            except Exception as e:
+                errors.append(f"ScrapingBee error: {str(e)[:50]}")
+
+        # Fallback to direct API approach
+        if not cases and not errors:
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                # Step 1: Get login page to establish session
+                login_url = "https://researchla.tylerhost.net/CourtRecordsSearch/Account/Login"
+
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Origin': 'https://researchla.tylerhost.net',
+                    'Referer': 'https://researchla.tylerhost.net/CourtRecordsSearch/',
+                }
+
+                # Try to authenticate
+                auth_data = {
+                    'Email': court_user,
+                    'Password': court_pass,
+                    'RememberMe': False
+                }
+
+                login_response = await client.post(
+                    login_url,
+                    json=auth_data,
+                    headers=headers
+                )
+
+                if login_response.status_code != 200:
+                    errors.append(f"Login failed: {login_response.status_code}")
+                else:
+                    # Step 2: Search for defendant
+                    search_url = "https://researchla.tylerhost.net/CourtRecordsSearch/api/Search"
+
+                    search_data = {
+                        'SearchType': 'Party',
+                        'LastName': last_name,
+                        'FirstName': first_name,
+                        'MiddleName': '',
+                        'DateOfBirth': dob or '',
+                        'CaseNumber': '',
+                        'PageNumber': 1,
+                        'PageSize': 50
+                    }
+
+                    if parish:
+                        search_data['Court'] = parish
+
+                    search_response = await client.post(
+                        search_url,
+                        json=search_data,
+                        headers=headers
+                    )
+
+                if search_response.status_code == 200:
+                    try:
+                        results = search_response.json()
+
+                        # Parse results (structure depends on Tyler's API)
+                        if isinstance(results, dict) and 'Cases' in results:
+                            for case_data in results.get('Cases', []):
+                                case = {
+                                    'case_number': case_data.get('CaseNumber', ''),
+                                    'case_type': case_data.get('CaseType', ''),
+                                    'filing_date': case_data.get('FilingDate', ''),
+                                    'status': case_data.get('Status', ''),
+                                    'charges': case_data.get('Charges', []),
+                                    'court': case_data.get('Court', ''),
+                                    'judge': case_data.get('Judge', ''),
+                                    'next_hearing': case_data.get('NextHearing', ''),
+                                    'disposition': case_data.get('Disposition', '')
+                                }
+                                cases.append(case)
+
+                                # Count FTAs and active cases
+                                status_lower = (case.get('status') or '').lower()
+                                if 'fta' in status_lower or 'failure to appear' in status_lower or 'bench warrant' in status_lower:
+                                    fta_count += 1
+                                if 'active' in status_lower or 'open' in status_lower or 'pending' in status_lower:
+                                    active_count += 1
+
+                        elif isinstance(results, list):
+                            for case_data in results:
+                                case = {
+                                    'case_number': str(case_data.get('CaseNumber', case_data.get('caseNumber', ''))),
+                                    'case_type': case_data.get('CaseType', case_data.get('caseType', '')),
+                                    'filing_date': case_data.get('FilingDate', case_data.get('filingDate', '')),
+                                    'status': case_data.get('Status', case_data.get('status', '')),
+                                    'court': case_data.get('Court', case_data.get('court', '')),
+                                }
+                                cases.append(case)
+
+                    except Exception as e:
+                        errors.append(f"Failed to parse results: {str(e)[:50]}")
+                else:
+                    errors.append(f"Search failed: {search_response.status_code}")
+
+    except Exception as e:
+        errors.append(f"Court search error: {str(e)[:100]}")
+
+    execution_time = (datetime.now() - start_time).total_seconds()
+
+    return {
+        'name': name,
+        'cases': cases,
+        'total_cases': len(cases),
+        'fta_cases': fta_count,
+        'active_cases': active_count,
+        'errors': errors,
+        'execution_time': execution_time
+    }
+
+
+@app.post("/api/la-court-records")
+async def search_la_court_records_endpoint(request: CourtSearchRequest):
+    """
+    Search Louisiana court records for a defendant.
+
+    Uses Tyler Technologies portal (researchla.tylerhost.net).
+    Credentials must be configured as environment variables:
+    - LA_COURT_USERNAME
+    - LA_COURT_PASSWORD
+
+    Returns case history including FTAs, active cases, and dispositions.
+    """
+    result = await search_la_court_records(request.name, request.parish)
+
+    # Build alerts based on findings
+    alerts = []
+    if result.get('fta_cases', 0) > 0:
+        alerts.append(f"⚠️ PRIOR FTA: {result['fta_cases']} failure(s) to appear on record")
+    if result.get('active_cases', 0) > 0:
+        alerts.append(f"📋 ACTIVE CASES: {result['active_cases']} pending case(s)")
+
+    # Check for warrants in case details
+    warrant_count = 0
+    for case in result.get('cases', []):
+        status_lower = (case.get('status') or '').lower()
+        if 'warrant' in status_lower:
+            warrant_count += 1
+
+    if warrant_count > 0:
+        alerts.append(f"🚨 ACTIVE WARRANT: {warrant_count} warrant(s) found")
+
+    return {
+        'name': result.get('name', request.name),
+        'dob_searched': request.dob,
+        'cases': result.get('cases', []),
+        'total_cases': result.get('total_cases', 0),
+        'fta_cases': result.get('fta_cases', 0),
+        'warrant_cases': warrant_count,
+        'active_cases': result.get('active_cases', 0),
+        'dob_matched_cases': 0,  # Will be updated when DOB matching is implemented
+        'alerts': alerts,
+        'errors': result.get('errors', []),
+        'execution_time': result.get('execution_time', 0)
+    }
+
+
+# ============================================================================
 # FTA RISK SCORING
 # ============================================================================
 
