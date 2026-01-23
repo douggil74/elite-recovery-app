@@ -4430,20 +4430,54 @@ async def calculate_fta_risk(request: FTAScoreRequest):
         "st. tammany"  # Default to St. Tammany for now
     )
 
-    # Search for prior bookings (run in parallel with court search)
+    # Search for prior bookings (run in parallel with court searches)
     prior_bookings_task = search_prior_bookings(
         request.name,
         request.jail_base_url or "https://inmates.stpso.revize.com",
         request.booking_number
     )
 
-    court_records_task = search_court_records(request.name)
+    # Federal court records (CourtListener)
+    federal_court_task = search_court_records(request.name)
 
-    # Run both searches in parallel
-    prior_bookings, court_records = await asyncio.gather(
+    # Louisiana state court records (Tyler Technologies)
+    la_court_task = search_la_court_records(request.name)
+
+    # Run all searches in parallel
+    prior_bookings, federal_records, la_records = await asyncio.gather(
         prior_bookings_task,
-        court_records_task
+        federal_court_task,
+        la_court_task,
+        return_exceptions=True
     )
+
+    # Handle any exceptions gracefully
+    if isinstance(prior_bookings, Exception):
+        prior_bookings = []
+    if isinstance(federal_records, Exception):
+        federal_records = []
+    if isinstance(la_records, Exception):
+        la_records = {"cases": [], "fta_cases": 0}
+
+    # Combine court records
+    court_records = federal_records if isinstance(federal_records, list) else []
+
+    # Add LA court records and boost score for any FTAs found
+    if isinstance(la_records, dict):
+        for case in la_records.get("cases", []):
+            court_records.append({
+                "case_number": case.get("case_number"),
+                "court": case.get("court", "Louisiana State Court"),
+                "status": case.get("status"),
+                "has_fta": case.get("has_fta", False),
+                "has_warrant": case.get("has_warrant", False),
+                "source": "Louisiana Courts (Tyler)"
+            })
+
+        # Add LA FTA findings to charge analysis
+        if la_records.get("fta_cases", 0) > 0:
+            charge_analysis["has_prior_fta"] = True
+            charge_analysis["la_fta_count"] = la_records.get("fta_cases", 0)
 
     # Calculate score
     score, risk_level, factors = calculate_fta_score(
