@@ -98,11 +98,22 @@ async function ocrWithOpenAI(imageBase64: string, pageNum: number): Promise<stri
     throw new Error('OpenAI API key not configured. Go to Settings to add it.');
   }
 
+  // Clean the API key - remove any whitespace or non-ASCII characters
+  const cleanKey = apiKey.trim().replace(/[^\x20-\x7E]/g, '');
+
+  // Ensure image data is proper base64 data URL
+  let imageUrl = imageBase64;
+  if (!imageBase64.startsWith('data:')) {
+    // Clean base64 string - remove any whitespace
+    const cleanBase64 = imageBase64.replace(/\s/g, '');
+    imageUrl = `data:image/png;base64,${cleanBase64}`;
+  }
+
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      'Authorization': `Bearer ${cleanKey}`,
     },
     body: JSON.stringify({
       model: 'gpt-4o-mini',
@@ -117,7 +128,7 @@ async function ocrWithOpenAI(imageBase64: string, pageNum: number): Promise<stri
             {
               type: 'image_url',
               image_url: {
-                url: imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`,
+                url: imageUrl,
               },
             },
           ],
