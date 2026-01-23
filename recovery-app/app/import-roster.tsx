@@ -670,6 +670,35 @@ export default function ImportRosterScreen() {
                       </View>
                     </View>
 
+                    {/* Score Legend */}
+                    <View style={styles.scoreLegend}>
+                      <Text style={styles.scoreLegendTitle}>SCORE LEGEND</Text>
+                      <View style={styles.scoreLegendBar}>
+                        <View style={[styles.scoreLegendSegment, { backgroundColor: THEME.success, flex: 40 }]} />
+                        <View style={[styles.scoreLegendSegment, { backgroundColor: THEME.warning, flex: 30 }]} />
+                        <View style={[styles.scoreLegendSegment, { backgroundColor: '#f97316', flex: 15 }]} />
+                        <View style={[styles.scoreLegendSegment, { backgroundColor: THEME.danger, flex: 15 }]} />
+                      </View>
+                      <View style={styles.scoreLegendLabels}>
+                        <View style={styles.scoreLegendItem}>
+                          <Text style={[styles.scoreLegendNum, { color: THEME.success }]}>0-39</Text>
+                          <Text style={styles.scoreLegendText}>LOW</Text>
+                        </View>
+                        <View style={styles.scoreLegendItem}>
+                          <Text style={[styles.scoreLegendNum, { color: THEME.warning }]}>40-69</Text>
+                          <Text style={styles.scoreLegendText}>MODERATE</Text>
+                        </View>
+                        <View style={styles.scoreLegendItem}>
+                          <Text style={[styles.scoreLegendNum, { color: '#f97316' }]}>70-84</Text>
+                          <Text style={styles.scoreLegendText}>HIGH</Text>
+                        </View>
+                        <View style={styles.scoreLegendItem}>
+                          <Text style={[styles.scoreLegendNum, { color: THEME.danger }]}>85-100</Text>
+                          <Text style={styles.scoreLegendText}>VERY HIGH</Text>
+                        </View>
+                      </View>
+                    </View>
+
                     {/* Risk Factors */}
                     {singleFtaScore.factors.length > 0 && (
                       <View style={styles.ftaFactorsList}>
@@ -1579,6 +1608,48 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
+  },
+  scoreLegend: {
+    backgroundColor: THEME.surfaceLight,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  scoreLegendTitle: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.textMuted,
+    letterSpacing: 1,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  scoreLegendBar: {
+    flexDirection: 'row',
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  scoreLegendSegment: {
+    height: '100%',
+  },
+  scoreLegendLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  scoreLegendItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  scoreLegendNum: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  scoreLegendText: {
+    fontSize: 8,
+    color: THEME.textMuted,
+    letterSpacing: 0.5,
+    marginTop: 1,
   },
   ftaScoreBadgeLarge: {
     width: 56,
