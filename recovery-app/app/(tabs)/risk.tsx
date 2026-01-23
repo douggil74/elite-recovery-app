@@ -383,13 +383,12 @@ export default function RiskScreen() {
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.headerIcon}>
-            <Ionicons name="shield-checkmark" size={32} color={THEME.primary} />
+          <View>
+            <Text style={styles.headerTitle}>FTA RISK SCORE</Text>
+            <Text style={styles.headerSubtitle}>
+              Assess failure-to-appear risk before posting bond
+            </Text>
           </View>
-          <Text style={styles.headerTitle}>FTA RISK SCORE</Text>
-          <Text style={styles.headerSubtitle}>
-            Assess failure-to-appear risk before posting bond
-          </Text>
         </View>
 
         {/* Score Legend */}
@@ -701,30 +700,20 @@ const styles = StyleSheet.create({
     maxWidth: 600,
   },
   header: {
-    alignItems: 'center',
-    paddingVertical: 24,
+    paddingVertical: 16,
     paddingHorizontal: 20,
   },
-  headerIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: THEME.primaryMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '800',
     color: THEME.text,
+    letterSpacing: 1,
     letterSpacing: 2,
   },
   headerSubtitle: {
     fontSize: 14,
     color: THEME.textSecondary,
-    marginTop: 4,
-    textAlign: 'center',
+    marginTop: 2,
   },
   legendContainer: {
     marginHorizontal: 16,

@@ -212,6 +212,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 12,
+    width: '100%',
+    maxWidth: 600,
   },
   greeting: {
     fontSize: 22,
@@ -242,6 +244,8 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.surface,
     borderRadius: 12,
     borderWidth: 1,
+    width: '100%',
+    maxWidth: 560,
     borderColor: THEME.border,
   },
   statItem: {

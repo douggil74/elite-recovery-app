@@ -71,6 +71,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="case" options={{ headerShown: false }} />
         <Stack.Screen name="about" options={{ headerShown: false }} />
+        <Stack.Screen name="import-roster" options={{ headerShown: false }} />
       </Stack>
     </AuthProvider>
   );
