@@ -27,6 +27,49 @@ export interface Case {
   createdAt: string;
   updatedAt: string;
   autoDeleteAt?: string;
+  // Jail roster data
+  mugshotUrl?: string;
+  bookingNumber?: string;
+  jailSource?: string;
+  charges?: string[];
+  bondAmount?: number;
+  rosterData?: {
+    inmate: Record<string, any>;
+    charges: Record<string, any>[];
+    bonds: Record<string, any>[];
+  };
+}
+
+// Photo intel types
+export interface CasePhoto {
+  id: string;
+  caseId: string;
+  url: string;
+  source: 'mugshot' | 'social' | 'manual';
+  platform?: string; // instagram, facebook, etc.
+  analysis?: PhotoAnalysis;
+  metadata?: PhotoMetadata;
+  createdAt: string;
+}
+
+export interface PhotoAnalysis {
+  hasPeople: boolean;
+  hasVehicle: boolean;
+  hasBuilding: boolean;
+  hasStreet: boolean;
+  description: string;
+  locationClues: string[];
+  identifiedObjects: string[];
+  suggestedLocation?: string;
+  confidence: number;
+}
+
+export interface PhotoMetadata {
+  exifData?: Record<string, any>;
+  gpsCoordinates?: { lat: number; lng: number };
+  dateTaken?: string;
+  cameraModel?: string;
+  locationFromExif?: string;
 }
 
 export interface AuditLogEntry {

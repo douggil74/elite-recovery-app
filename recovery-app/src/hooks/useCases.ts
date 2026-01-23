@@ -6,6 +6,7 @@ import {
   deleteCase as dbDeleteCase,
   cleanupExpiredCases,
   getReportsForCase,
+  CreateCaseOptions,
 } from '@/lib/database';
 import { audit } from '@/lib/audit';
 import { deleteCaseDirectory } from '@/lib/storage';
@@ -30,7 +31,8 @@ export interface UseCasesReturn {
     internalCaseId?: string,
     notes?: string,
     ftaScore?: number,
-    ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK'
+    ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK',
+    options?: Partial<CreateCaseOptions>
   ) => Promise<Case>;
   deleteCase: (id: string) => Promise<void>;
 }
@@ -91,9 +93,10 @@ export function useCases(): UseCasesReturn {
       internalCaseId?: string,
       notes?: string,
       ftaScore?: number,
-      ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK'
+      ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK',
+      options?: Partial<CreateCaseOptions>
     ): Promise<Case> => {
-      const newCase = await dbCreateCase(name, purpose, internalCaseId, notes, ftaScore, ftaRiskLevel);
+      const newCase = await dbCreateCase(name, purpose, internalCaseId, notes, ftaScore, ftaRiskLevel, options);
 
       await audit('case_created', {
         caseId: newCase.id,

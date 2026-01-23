@@ -118,13 +118,33 @@ async function initializeDatabase(database: any): Promise<void> {
 }
 
 // Cases CRUD
+export interface CreateCaseOptions {
+  name: string;
+  purpose: CasePurpose;
+  internalCaseId?: string;
+  notes?: string;
+  ftaScore?: number;
+  ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK';
+  mugshotUrl?: string;
+  bookingNumber?: string;
+  jailSource?: string;
+  charges?: string[];
+  bondAmount?: number;
+  rosterData?: {
+    inmate: Record<string, any>;
+    charges: Record<string, any>[];
+    bonds: Record<string, any>[];
+  };
+}
+
 export async function createCase(
   name: string,
   purpose: CasePurpose,
   internalCaseId?: string,
   notes?: string,
   ftaScore?: number,
-  ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK'
+  ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK',
+  options?: Partial<CreateCaseOptions>
 ): Promise<Case> {
   const id = uuid.v4() as string;
   const now = new Date().toISOString();
@@ -140,6 +160,13 @@ export async function createCase(
     attestationAccepted: false,
     createdAt: now,
     updatedAt: now,
+    // Roster data
+    mugshotUrl: options?.mugshotUrl,
+    bookingNumber: options?.bookingNumber,
+    jailSource: options?.jailSource,
+    charges: options?.charges,
+    bondAmount: options?.bondAmount,
+    rosterData: options?.rosterData,
   };
 
   if (isWeb) {

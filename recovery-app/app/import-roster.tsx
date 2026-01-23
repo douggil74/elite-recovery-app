@@ -1,7 +1,7 @@
 /**
- * Jail Roster Import - Single and Bulk scraping
+ * Jail Roster Import - Single booking scraper with history
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,12 +15,13 @@ import {
   KeyboardAvoidingView,
   Platform,
   Linking,
-  FlatList,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCases } from '@/hooks/useCases';
 
+const IMPORT_HISTORY_KEY = 'jail_import_history';
 const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
 
 // Dark Red Theme
@@ -41,14 +42,6 @@ const THEME = {
   textSecondary: '#a1a1aa',
   textMuted: '#71717a',
 };
-
-// Time period options for bulk import
-const TIME_PERIODS = [
-  { label: '24 Hours', value: 24, count: 15 },
-  { label: '48 Hours', value: 48, count: 30 },
-  { label: '72 Hours', value: 72, count: 45 },
-  { label: '1 Week', value: 168, count: 50 },
-];
 
 interface InmateData {
   name: string;
@@ -76,16 +69,6 @@ interface BondData {
   charge?: string;
 }
 
-interface BulkInmate {
-  booking_number: number;
-  url: string;
-  inmate: InmateData;
-  charges: ChargeData[];
-  bonds: BondData[];
-  photo_url: string | null;
-  fta_score?: FTAScore;
-}
-
 interface FTAScore {
   score: number;
   risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH' | 'UNKNOWN';
@@ -99,9 +82,6 @@ export default function ImportRosterScreen() {
   const router = useRouter();
   const { createCase } = useCases();
 
-  // Mode: 'single' or 'bulk'
-  const [mode, setMode] = useState<'single' | 'bulk'>('single');
-
   // Single scrape state
   const [url, setUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -114,16 +94,73 @@ export default function ImportRosterScreen() {
   } | null>(null);
   const [singleFtaScore, setSingleFtaScore] = useState<FTAScore | null>(null);
   const [singleFtaLoading, setSingleFtaLoading] = useState(false);
-
-  // Bulk scrape state
-  const [baseUrl, setBaseUrl] = useState('https://inmates.stpso.revize.com');
-  const [selectedPeriod, setSelectedPeriod] = useState(TIME_PERIODS[0]);
-  const [bulkResults, setBulkResults] = useState<BulkInmate[]>([]);
-  const [bulkLoading, setBulkLoading] = useState(false);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const [ftaLoading, setFtaLoading] = useState(false);
-
   const [isCreatingCase, setIsCreatingCase] = useState(false);
+
+  // Import history
+  interface ImportHistoryItem {
+    id: string;
+    inmate: InmateData;
+    charges: ChargeData[];
+    bonds: BondData[];
+    photo_url: string | null;
+    fta_score?: FTAScore;
+    source_url: string;
+    imported_at: string;
+  }
+  const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Load import history on mount
+  useEffect(() => {
+    loadImportHistory();
+  }, []);
+
+  const loadImportHistory = async () => {
+    try {
+      const historyJson = await AsyncStorage.getItem(IMPORT_HISTORY_KEY);
+      if (historyJson) {
+        setImportHistory(JSON.parse(historyJson));
+      }
+    } catch (err) {
+      console.log('Failed to load import history:', err);
+    }
+  };
+
+  const saveToHistory = async (data: {
+    inmate: InmateData;
+    charges: ChargeData[];
+    bonds: BondData[];
+    photo_url: string | null;
+    fta_score?: FTAScore;
+  }) => {
+    try {
+      const newItem: ImportHistoryItem = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        ...data,
+        source_url: url,
+        imported_at: new Date().toISOString(),
+      };
+      const updated = [newItem, ...importHistory].slice(0, 50); // Keep last 50
+      setImportHistory(updated);
+      await AsyncStorage.setItem(IMPORT_HISTORY_KEY, JSON.stringify(updated));
+    } catch (err) {
+      console.log('Failed to save to history:', err);
+    }
+  };
+
+  const clearHistory = async () => {
+    Alert.alert('Clear History', 'Delete all import history?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Clear',
+        style: 'destructive',
+        onPress: async () => {
+          setImportHistory([]);
+          await AsyncStorage.removeItem(IMPORT_HISTORY_KEY);
+        },
+      },
+    ]);
+  };
 
   // Calculate FTA score for single inmate
   const calculateSingleFTAScore = async (inmateData: {
@@ -216,6 +253,8 @@ export default function ImportRosterScreen() {
         setScrapeError(null);
         // Auto-calculate FTA score
         calculateSingleFTAScore(extracted);
+        // Save to history
+        saveToHistory(extracted);
       } else if (data.errors?.length > 0) {
         setScrapeError(data.errors.join(' | '));
       } else {
@@ -227,105 +266,6 @@ export default function ImportRosterScreen() {
       setIsLoading(false);
     }
   };
-
-  // Calculate FTA scores for inmates
-  const calculateFTAScores = async (inmates: BulkInmate[]) => {
-    setFtaLoading(true);
-    try {
-      // Prepare batch request
-      const scoreRequests = inmates.map((inmate) => ({
-        name: inmate.inmate.name,
-        age: inmate.inmate.age,
-        address: inmate.inmate.address,
-        charges: inmate.charges,
-        bond_amount: getBondAmountNumber(inmate),
-        booking_number: inmate.booking_number,
-        jail_base_url: baseUrl.trim(),
-      }));
-
-      const res = await fetch(`${BACKEND_URL}/api/fta-score/batch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(scoreRequests),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        // Merge FTA scores into inmates
-        const updatedInmates = inmates.map((inmate, idx) => ({
-          ...inmate,
-          fta_score: data.results[idx] as FTAScore,
-        }));
-        setBulkResults(updatedInmates);
-      }
-    } catch (err) {
-      console.log('FTA scoring error:', err);
-    } finally {
-      setFtaLoading(false);
-    }
-  };
-
-  // Helper to extract bond amount as number
-  const getBondAmountNumber = (inmate: BulkInmate): number => {
-    if (inmate.bonds?.length > 0) {
-      const total = inmate.bonds.reduce((sum, b) => {
-        const amt = b.amount?.replace(/[$,]/g, '');
-        return sum + (parseFloat(amt || '0') || 0);
-      }, 0);
-      if (total > 0) return total;
-    }
-    for (const charge of inmate.charges || []) {
-      if (charge.bond_amount) {
-        const amt = charge.bond_amount.replace(/[$,]/g, '');
-        const num = parseFloat(amt);
-        if (num > 0) return num;
-      }
-    }
-    return 0;
-  };
-
-  // Bulk scrape
-  const bulkScrape = async () => {
-    if (!baseUrl.trim()) {
-      setBulkError('Please enter a jail roster URL');
-      return;
-    }
-
-    setBulkLoading(true);
-    setBulkError(null);
-    setBulkResults([]);
-
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/jail-roster/bulk`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          base_url: baseUrl.trim(),
-          count: selectedPeriod.count,
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error(`Request failed: ${res.status}`);
-      }
-
-      const data = await res.json();
-
-      if (data.inmates && data.inmates.length > 0) {
-        setBulkResults(data.inmates);
-        setBulkError(null);
-        // Auto-calculate FTA scores
-        calculateFTAScores(data.inmates);
-      } else {
-        setBulkError(`No inmates found. Found ${data.count_found} of ${data.count_requested} requested.`);
-      }
-    } catch (err: any) {
-      setBulkError(err.message || 'Failed to fetch bulk data');
-    } finally {
-      setBulkLoading(false);
-    }
-  };
-
   const openUrlInBrowser = () => {
     if (Platform.OS === 'web') {
       window.open(url, '_blank');
@@ -342,13 +282,57 @@ export default function ImportRosterScreen() {
 
     setIsCreatingCase(true);
     try {
-      const newCase = await createCase(extractedData.inmate.name, 'fta_recovery');
+      // Calculate bond amount
+      let bondAmount = 0;
+      if (extractedData.bonds?.length > 0) {
+        bondAmount = extractedData.bonds.reduce((sum, b) => {
+          const amt = b.amount?.replace(/[$,]/g, '');
+          return sum + (parseFloat(amt || '0') || 0);
+        }, 0);
+      }
+
+      // Extract charges as strings
+      const chargeStrings = extractedData.charges?.map(c => c.charge || c.description || '').filter(Boolean) || [];
+
+      // Get FTA risk level
+      let ftaRiskLevel: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK' | undefined;
+      if (singleFtaScore) {
+        switch (singleFtaScore.risk_level) {
+          case 'LOW': ftaRiskLevel = 'LOW RISK'; break;
+          case 'MEDIUM': ftaRiskLevel = 'MODERATE RISK'; break;
+          case 'HIGH': ftaRiskLevel = 'HIGH RISK'; break;
+          case 'VERY_HIGH': ftaRiskLevel = 'VERY HIGH RISK'; break;
+        }
+      }
+
+      const newCase = await createCase(
+        extractedData.inmate.name,
+        'fta_recovery',
+        extractedData.inmate.booking_number, // internal case ID
+        undefined, // notes
+        singleFtaScore?.score, // FTA score
+        ftaRiskLevel,
+        {
+          mugshotUrl: extractedData.photo_url || undefined,
+          bookingNumber: extractedData.inmate.booking_number,
+          jailSource: url,
+          charges: chargeStrings,
+          bondAmount: bondAmount > 0 ? bondAmount : undefined,
+          rosterData: {
+            inmate: extractedData.inmate,
+            charges: extractedData.charges,
+            bonds: extractedData.bonds,
+          },
+        }
+      );
+
       router.push({
         pathname: `/case/${newCase.id}`,
         params: {
           rosterData: JSON.stringify({
             ...extractedData,
             source_url: url,
+            fta_score: singleFtaScore,
           }),
         },
       });
@@ -356,28 +340,6 @@ export default function ImportRosterScreen() {
       Alert.alert('Error', 'Failed to create case');
     } finally {
       setIsCreatingCase(false);
-    }
-  };
-
-  const createCaseFromBulkInmate = async (inmate: BulkInmate) => {
-    if (!inmate.inmate?.name) return;
-
-    try {
-      const newCase = await createCase(inmate.inmate.name, 'fta_recovery');
-      router.push({
-        pathname: `/case/${newCase.id}`,
-        params: {
-          rosterData: JSON.stringify({
-            inmate: inmate.inmate,
-            charges: inmate.charges,
-            bonds: inmate.bonds,
-            photo_url: inmate.photo_url,
-            source_url: inmate.url,
-          }),
-        },
-      });
-    } catch (err) {
-      Alert.alert('Error', 'Failed to create case');
     }
   };
 
@@ -405,38 +367,10 @@ export default function ImportRosterScreen() {
     router.push(`/(tabs)/risk?${params.toString()}`);
   };
 
-  const goToFTARiskFromBulk = (inmate: BulkInmate) => {
-    const params = new URLSearchParams();
-    if (inmate.inmate.name) params.append('prefillName', inmate.inmate.name);
-    if (inmate.inmate.age) params.append('prefillAge', inmate.inmate.age);
-    if (inmate.bonds?.length > 0) {
-      const total = inmate.bonds.reduce((sum, b) => {
-        const amt = b.amount?.replace(/[$,]/g, '');
-        return sum + (parseFloat(amt || '0') || 0);
-      }, 0);
-      if (total > 0) params.append('prefillBond', total.toString());
-    }
-    if (inmate.charges?.length > 0) {
-      const chargeTexts = inmate.charges
-        .map(c => c.charge || c.description || '')
-        .filter(Boolean)
-        .join(', ');
-      if (chargeTexts) {
-        params.append('prefillCharges', chargeTexts);
-      }
-    }
-    router.push(`/(tabs)/risk?${params.toString()}`);
-  };
-
   const clearData = () => {
     setExtractedData(null);
     setScrapeError(null);
     setSingleFtaScore(null);
-  };
-
-  const clearBulkData = () => {
-    setBulkResults([]);
-    setBulkError(null);
   };
 
   const getTotalBond = () => {
@@ -446,33 +380,6 @@ export default function ImportRosterScreen() {
       return sum + (parseFloat(amt || '0') || 0);
     }, 0);
     return total > 0 ? `$${total.toLocaleString()}` : null;
-  };
-
-  const getBondForInmate = (inmate: BulkInmate) => {
-    if (!inmate.bonds?.length && !inmate.charges?.length) return null;
-
-    // Check bonds array first
-    if (inmate.bonds?.length > 0) {
-      const total = inmate.bonds.reduce((sum, b) => {
-        const amt = b.amount?.replace(/[$,]/g, '');
-        return sum + (parseFloat(amt || '0') || 0);
-      }, 0);
-      if (total > 0) return `$${total.toLocaleString()}`;
-    }
-
-    // Check charges for bond_amount
-    for (const charge of inmate.charges || []) {
-      if (charge.bond_amount) {
-        const amt = charge.bond_amount.replace(/[$,]/g, '');
-        const num = parseFloat(amt);
-        if (num > 0) return `$${num.toLocaleString()}`;
-      }
-      if (charge.bond_type) {
-        return charge.bond_type;
-      }
-    }
-
-    return null;
   };
 
   // Get FTA score color based on risk level
@@ -486,94 +393,6 @@ export default function ImportRosterScreen() {
     }
   };
 
-  const renderBulkInmateCard = ({ item }: { item: BulkInmate }) => (
-    <View style={styles.bulkCard}>
-      <View style={styles.bulkCardHeader}>
-        {item.photo_url ? (
-          <Image source={{ uri: item.photo_url }} style={styles.bulkMugshot} />
-        ) : (
-          <View style={[styles.bulkMugshot, styles.mugshotPlaceholder]}>
-            <Ionicons name="person" size={24} color={THEME.textMuted} />
-          </View>
-        )}
-        <View style={styles.bulkCardInfo}>
-          <View style={styles.nameRow}>
-            <Text style={styles.bulkName}>{item.inmate.name}</Text>
-            {/* FTA Score Badge */}
-            {item.fta_score ? (
-              <View style={[styles.ftaScoreBadge, { backgroundColor: getFTAScoreColor(item.fta_score.risk_level) }]}>
-                <Text style={styles.ftaScoreText}>{item.fta_score.score}</Text>
-              </View>
-            ) : ftaLoading ? (
-              <ActivityIndicator size="small" color={THEME.primary} />
-            ) : null}
-          </View>
-          <View style={styles.bulkDetails}>
-            {item.inmate.age && <Text style={styles.bulkDetail}>{item.inmate.age} yrs</Text>}
-            {item.inmate.sex && <Text style={styles.bulkDetail}>{item.inmate.sex}</Text>}
-            {item.inmate.race && <Text style={styles.bulkDetail}>{item.inmate.race}</Text>}
-          </View>
-          <Text style={styles.bulkBookingNum}>#{item.booking_number}</Text>
-        </View>
-      </View>
-
-      {/* FTA Risk Factors */}
-      {item.fta_score && item.fta_score.factors.length > 0 && (
-        <View style={styles.ftaFactorsRow}>
-          <Text style={[styles.ftaRiskLabel, { color: getFTAScoreColor(item.fta_score.risk_level) }]}>
-            {item.fta_score.risk_level.replace('_', ' ')} RISK
-          </Text>
-          {item.fta_score.prior_bookings.length > 0 && (
-            <View style={styles.ftaWarning}>
-              <Ionicons name="alert-circle" size={12} color={THEME.danger} />
-              <Text style={styles.ftaWarningText}>{item.fta_score.prior_bookings.length} prior</Text>
-            </View>
-          )}
-        </View>
-      )}
-
-      {/* Charges */}
-      {item.charges?.length > 0 && (
-        <View style={styles.bulkCharges}>
-          {item.charges.slice(0, 2).map((charge, idx) => (
-            <Text key={idx} style={styles.bulkChargeText} numberOfLines={1}>
-              {charge.charge || charge.description}
-            </Text>
-          ))}
-          {item.charges.length > 2 && (
-            <Text style={styles.bulkMoreCharges}>+{item.charges.length - 2} more</Text>
-          )}
-        </View>
-      )}
-
-      {/* Bond */}
-      {getBondForInmate(item) && (
-        <View style={styles.bulkBondRow}>
-          <Ionicons name="cash" size={14} color={THEME.warning} />
-          <Text style={styles.bulkBondText}>{getBondForInmate(item)}</Text>
-        </View>
-      )}
-
-      {/* Actions */}
-      <View style={styles.bulkActions}>
-        <TouchableOpacity
-          style={[styles.bulkActionBtn, { backgroundColor: THEME.warning }]}
-          onPress={() => goToFTARiskFromBulk(item)}
-        >
-          <Ionicons name="analytics" size={14} color="#fff" />
-          <Text style={styles.bulkActionText}>FTA Risk</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.bulkActionBtn, { backgroundColor: THEME.primary }]}
-          onPress={() => createCaseFromBulkInmate(item)}
-        >
-          <Ionicons name="briefcase" size={14} color="#fff" />
-          <Text style={styles.bulkActionText}>Create Case</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -584,34 +403,73 @@ export default function ImportRosterScreen() {
           <Ionicons name="chevron-back" size={24} color={THEME.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Import Jail Roster</Text>
+        <View style={styles.headerRight}>
+          {importHistory.length > 0 && (
+            <TouchableOpacity
+              style={[styles.historyBtn, showHistory && styles.historyBtnActive]}
+              onPress={() => setShowHistory(!showHistory)}
+            >
+              <Ionicons name="time" size={20} color={showHistory ? '#fff' : THEME.textMuted} />
+              <Text style={[styles.historyBtnText, showHistory && styles.historyBtnTextActive]}>
+                {importHistory.length}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
-      {/* Mode Toggle */}
-      <View style={styles.modeToggle}>
-        <TouchableOpacity
-          style={[styles.modeBtn, mode === 'single' && styles.modeBtnActive]}
-          onPress={() => setMode('single')}
-        >
-          <Ionicons name="person" size={18} color={mode === 'single' ? '#fff' : THEME.textMuted} />
-          <Text style={[styles.modeBtnText, mode === 'single' && styles.modeBtnTextActive]}>
-            Single Booking
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.modeBtn, mode === 'bulk' && styles.modeBtnActive]}
-          onPress={() => setMode('bulk')}
-        >
-          <Ionicons name="people" size={18} color={mode === 'bulk' ? '#fff' : THEME.textMuted} />
-          <Text style={[styles.modeBtnText, mode === 'bulk' && styles.modeBtnTextActive]}>
-            Bulk Import
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {/* Import History Panel */}
+      {showHistory && importHistory.length > 0 && (
+        <View style={styles.historyPanel}>
+          <View style={styles.historyHeader}>
+            <Text style={styles.historyTitle}>Import History ({importHistory.length})</Text>
+            <TouchableOpacity onPress={clearHistory}>
+              <Text style={styles.clearHistoryText}>Clear All</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.historyList} horizontal={false}>
+            {importHistory.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.historyItem}
+                onPress={() => {
+                  setExtractedData({
+                    inmate: item.inmate,
+                    charges: item.charges,
+                    bonds: item.bonds,
+                    photo_url: item.photo_url,
+                  });
+                  setSingleFtaScore(item.fta_score || null);
+                  setUrl(item.source_url);
+                  setShowHistory(false);
+                }}
+              >
+                {item.photo_url ? (
+                  <Image source={{ uri: item.photo_url }} style={styles.historyThumb} />
+                ) : (
+                  <View style={[styles.historyThumb, styles.historyThumbPlaceholder]}>
+                    <Ionicons name="person" size={16} color={THEME.textMuted} />
+                  </View>
+                )}
+                <View style={styles.historyInfo}>
+                  <Text style={styles.historyName} numberOfLines={1}>{item.inmate.name}</Text>
+                  <Text style={styles.historyMeta}>
+                    {new Date(item.imported_at).toLocaleDateString()} • {item.charges?.length || 0} charges
+                  </Text>
+                </View>
+                {item.fta_score && (
+                  <View style={[styles.historyScore, { backgroundColor: getFTAScoreColor(item.fta_score.risk_level) }]}>
+                    <Text style={styles.historyScoreText}>{item.fta_score.score}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {mode === 'single' ? (
-          <>
-            {/* Single URL Input Section */}
+        {/* Single URL Input Section */}
             <View style={styles.section}>
               <Text style={styles.sectionDesc}>
                 Paste a jail booking URL to automatically extract inmate data, charges, bonds, and mugshot.
@@ -847,115 +705,6 @@ export default function ImportRosterScreen() {
                 </View>
               </View>
             )}
-          </>
-        ) : (
-          <>
-            {/* Bulk Import Section */}
-            <View style={styles.section}>
-              <Text style={styles.sectionDesc}>
-                Fetch recent bookings automatically. Select a jail site and time period.
-              </Text>
-
-              {/* Base URL */}
-              <Text style={styles.inputLabel}>JAIL ROSTER URL</Text>
-              <View style={styles.inputContainer}>
-                <Ionicons name="globe" size={20} color={THEME.textMuted} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.input}
-                  value={baseUrl}
-                  onChangeText={setBaseUrl}
-                  placeholder="https://inmates.stpso.revize.com"
-                  placeholderTextColor={THEME.textMuted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="url"
-                />
-              </View>
-
-              {/* Time Period Selection */}
-              <Text style={styles.inputLabel}>TIME PERIOD</Text>
-              <View style={styles.periodGrid}>
-                {TIME_PERIODS.map((period) => (
-                  <TouchableOpacity
-                    key={period.value}
-                    style={[
-                      styles.periodBtn,
-                      selectedPeriod.value === period.value && styles.periodBtnActive,
-                    ]}
-                    onPress={() => setSelectedPeriod(period)}
-                  >
-                    <Text
-                      style={[
-                        styles.periodBtnText,
-                        selectedPeriod.value === period.value && styles.periodBtnTextActive,
-                      ]}
-                    >
-                      {period.label}
-                    </Text>
-                    <Text style={styles.periodCount}>~{period.count} bookings</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Fetch Button */}
-              <TouchableOpacity
-                style={[styles.primaryBtn, bulkLoading && styles.btnDisabled]}
-                onPress={bulkScrape}
-                disabled={bulkLoading}
-              >
-                {bulkLoading ? (
-                  <>
-                    <ActivityIndicator color="#fff" />
-                    <Text style={styles.primaryBtnText}>FETCHING INMATES...</Text>
-                  </>
-                ) : (
-                  <>
-                    <Ionicons name="download" size={20} color="#fff" />
-                    <Text style={styles.primaryBtnText}>FETCH RECENT BOOKINGS</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-
-              {bulkLoading && (
-                <Text style={styles.loadingHint}>
-                  Finding latest bookings and scraping up to {selectedPeriod.count} records...
-                </Text>
-              )}
-
-              {bulkError && (
-                <View style={styles.errorBox}>
-                  <Ionicons name="warning" size={20} color={THEME.danger} />
-                  <Text style={styles.errorText}>{bulkError}</Text>
-                </View>
-              )}
-            </View>
-
-            {/* Bulk Results */}
-            {bulkResults.length > 0 && (
-              <View style={styles.bulkResultsSection}>
-                <View style={styles.bulkResultsHeader}>
-                  <View>
-                    <Text style={styles.bulkResultsTitle}>
-                      {bulkResults.length} Inmates Found
-                    </Text>
-                    <Text style={styles.bulkResultsSubtitle}>
-                      {ftaLoading ? 'Calculating FTA risk scores...' : 'FTA scores shown (0-100, higher = more risk)'}
-                    </Text>
-                  </View>
-                  <TouchableOpacity onPress={clearBulkData}>
-                    <Ionicons name="close-circle" size={24} color={THEME.textMuted} />
-                  </TouchableOpacity>
-                </View>
-
-                {bulkResults.map((item, index) => (
-                  <View key={item.booking_number || index}>
-                    {renderBulkInmateCard({ item })}
-                  </View>
-                ))}
-              </View>
-            )}
-          </>
-        )}
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -984,6 +733,103 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: THEME.text,
+    flex: 1,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  historyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: THEME.surfaceLight,
+  },
+  historyBtnActive: {
+    backgroundColor: THEME.primary,
+  },
+  historyBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: THEME.textMuted,
+  },
+  historyBtnTextActive: {
+    color: '#fff',
+  },
+  historyPanel: {
+    backgroundColor: THEME.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: THEME.border,
+    maxHeight: 250,
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: THEME.border,
+  },
+  historyTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: THEME.text,
+  },
+  clearHistoryText: {
+    fontSize: 12,
+    color: THEME.danger,
+  },
+  historyList: {
+    padding: 8,
+  },
+  historyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    backgroundColor: THEME.surfaceLight,
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  historyThumb: {
+    width: 36,
+    height: 48,
+    borderRadius: 4,
+    backgroundColor: THEME.surface,
+  },
+  historyThumbPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  historyInfo: {
+    flex: 1,
+  },
+  historyName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: THEME.text,
+  },
+  historyMeta: {
+    fontSize: 11,
+    color: THEME.textMuted,
+    marginTop: 2,
+  },
+  historyScore: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyScoreText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#fff',
   },
   modeToggle: {
     flexDirection: 'row',
