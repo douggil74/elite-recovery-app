@@ -3011,16 +3011,7 @@ async def scrape_jail_roster(url: str) -> Dict[str, Any]:
     except Exception as e:
         errors.append(f"Cloudscraper: {str(e)[:50]}")
 
-    # Method 2: Try curl_cffi (Chrome TLS fingerprint)
-    if not html:
-        try:
-            from curl_cffi import requests as curl_requests
-            response = curl_requests.get(url, impersonate="chrome", timeout=30)
-            response_status = response.status_code
-            if response.status_code == 200:
-                html = response.text
-        except Exception as e:
-            errors.append(f"Curl-cffi: {str(e)[:50]}")
+    # Method 2: Skip curl_cffi - removed from requirements
 
     # Method 3: Try httpx as fallback
     if not html:
