@@ -23,6 +23,7 @@ const THEME = {
   primary: '#dc2626',
   primaryMuted: '#450a0a',
   success: '#22c55e',
+  info: '#3b82f6',
   text: '#fafafa',
   textSecondary: '#a1a1aa',
   textMuted: '#71717a',
@@ -173,6 +174,20 @@ export default function CasesScreen() {
           />
         }
         ListEmptyComponent={!isLoading ? renderEmptyState : null}
+        ListFooterComponent={cases.length > 0 ? (
+          <View style={styles.footerContainer}>
+            <TouchableOpacity
+              style={styles.importFooterButton}
+              onPress={() => router.push('/import-roster')}
+            >
+              <Ionicons name="download" size={18} color={THEME.primary} />
+              <Text style={styles.importFooterText}>Import from Jail Roster</Text>
+            </TouchableOpacity>
+            <Text style={styles.importFooterHint}>
+              Paste a jail booking link to auto-fill case info
+            </Text>
+          </View>
+        ) : null}
         showsVerticalScrollIndicator={false}
       />
     </View>
@@ -183,6 +198,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: THEME.bg,
+    alignItems: 'center',
+  },
+  innerContainer: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 600,
   },
   header: {
     flexDirection: 'row',
@@ -337,6 +358,37 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.info,
   },
   importHint: {
+    fontSize: 12,
+    color: THEME.textMuted,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  // Footer styles for import link
+  footerContainer: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: THEME.border,
+  },
+  importFooterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: THEME.primary,
+    backgroundColor: THEME.primaryMuted,
+  },
+  importFooterText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: THEME.primary,
+  },
+  importFooterHint: {
     fontSize: 12,
     color: THEME.textMuted,
     marginTop: 8,

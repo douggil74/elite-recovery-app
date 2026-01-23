@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Image,
+  Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -46,6 +48,7 @@ export default function RiskScreen() {
     prefillAge?: string;
     prefillBond?: string;
     prefillCharges?: string;
+    prefillMugshot?: string;
   }>();
   const { createCase } = useCases();
   const [isLoading, setIsLoading] = useState(false);
@@ -58,6 +61,7 @@ export default function RiskScreen() {
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [bondAmount, setBondAmount] = useState('');
+  const [mugshotUrl, setMugshotUrl] = useState<string | null>(null);
   const [priorFTAs, setPriorFTAs] = useState('0');
   const [priorConvictions, setPriorConvictions] = useState('0');
   const [monthsInJail, setMonthsInJail] = useState('0');
@@ -93,11 +97,36 @@ export default function RiskScreen() {
       setCharges(params.prefillCharges);
       hasParams = true;
     }
+    if (params.prefillMugshot) {
+      setMugshotUrl(params.prefillMugshot);
+      hasParams = true;
+    }
 
     if (hasParams) {
       setPrefillApplied(true);
     }
   }, [params, prefillApplied]);
+
+  // Handle mugshot edit/update
+  const handleEditMugshot = () => {
+    Alert.prompt(
+      'Update Photo URL',
+      'Enter a new URL for the subject photo:',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Update',
+          onPress: (newUrl) => {
+            if (newUrl && newUrl.startsWith('http')) {
+              setMugshotUrl(newUrl);
+            }
+          },
+        },
+      ],
+      'plain-text',
+      mugshotUrl || ''
+    );
+  };
 
   const calculateScore = async () => {
     if (!name.trim()) {
@@ -363,6 +392,42 @@ export default function RiskScreen() {
           </Text>
         </View>
 
+        {/* Score Legend */}
+        <View style={styles.legendContainer}>
+          <Text style={styles.legendTitle}>SCORE LEGEND</Text>
+          <View style={styles.legendBar}>
+            <View style={[styles.legendSegment, { backgroundColor: THEME.success, flex: 40 }]} />
+            <View style={[styles.legendSegment, { backgroundColor: THEME.warning, flex: 30 }]} />
+            <View style={[styles.legendSegment, { backgroundColor: '#f97316', flex: 15 }]} />
+            <View style={[styles.legendSegment, { backgroundColor: THEME.danger, flex: 15 }]} />
+          </View>
+          <View style={styles.legendLabels}>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: THEME.success }]} />
+              <Text style={styles.legendText}>0-39</Text>
+              <Text style={styles.legendDesc}>LOW RISK</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: THEME.warning }]} />
+              <Text style={styles.legendText}>40-69</Text>
+              <Text style={styles.legendDesc}>MODERATE</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#f97316' }]} />
+              <Text style={styles.legendText}>70-84</Text>
+              <Text style={styles.legendDesc}>HIGH RISK</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: THEME.danger }]} />
+              <Text style={styles.legendText}>85-100</Text>
+              <Text style={styles.legendDesc}>VERY HIGH</Text>
+            </View>
+          </View>
+          <Text style={styles.legendHint}>
+            Higher scores = greater chance of failure to appear
+          </Text>
+        </View>
+
         {/* Prefill notification */}
         {prefillApplied && !result && (
           <View style={styles.prefillNotice}>
@@ -389,16 +454,33 @@ export default function RiskScreen() {
           renderResult()
         ) : (
           <View style={styles.formContainer}>
-            {/* Name */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Client Name *</Text>
-              <TextInput
-                style={styles.textInput}
-                value={name}
-                onChangeText={setName}
-                placeholder="Full legal name"
-                placeholderTextColor={THEME.textMuted}
-              />
+            {/* Subject Photo & Name Row */}
+            <View style={styles.subjectHeader}>
+              <TouchableOpacity
+                style={styles.mugshotContainer}
+                onPress={handleEditMugshot}
+              >
+                {mugshotUrl ? (
+                  <Image source={{ uri: mugshotUrl }} style={styles.mugshotImage} />
+                ) : (
+                  <View style={[styles.mugshotImage, styles.mugshotPlaceholder]}>
+                    <Ionicons name="person" size={32} color={THEME.textMuted} />
+                  </View>
+                )}
+                <View style={styles.mugshotEditBadge}>
+                  <Ionicons name="camera" size={12} color="#fff" />
+                </View>
+              </TouchableOpacity>
+              <View style={styles.nameInputContainer}>
+                <Text style={styles.inputLabel}>Client Name *</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Full legal name"
+                  placeholderTextColor={THEME.textMuted}
+                />
+              </View>
             </View>
 
             {/* Age & Bond Amount Row */}
@@ -611,9 +693,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: THEME.bg,
+    alignItems: 'center',
   },
   scrollView: {
     flex: 1,
+    width: '100%',
+    maxWidth: 600,
   },
   header: {
     alignItems: 'center',
@@ -641,8 +726,106 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'center',
   },
+  legendContainer: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 16,
+    backgroundColor: THEME.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  legendTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.textMuted,
+    letterSpacing: 1,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  legendBar: {
+    flexDirection: 'row',
+    height: 12,
+    borderRadius: 6,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  legendSegment: {
+    height: '100%',
+  },
+  legendLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  legendItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginBottom: 4,
+  },
+  legendText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: THEME.text,
+  },
+  legendDesc: {
+    fontSize: 9,
+    color: THEME.textMuted,
+    letterSpacing: 0.5,
+    marginTop: 2,
+  },
+  legendHint: {
+    fontSize: 11,
+    color: THEME.textSecondary,
+    textAlign: 'center',
+    fontStyle: 'italic',
+    marginTop: 8,
+  },
   formContainer: {
     padding: 16,
+  },
+  subjectHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    gap: 14,
+  },
+  mugshotContainer: {
+    position: 'relative',
+  },
+  mugshotImage: {
+    width: 80,
+    height: 100,
+    borderRadius: 8,
+    backgroundColor: THEME.surface,
+  },
+  mugshotPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: THEME.border,
+    borderStyle: 'dashed',
+  },
+  mugshotEditBadge: {
+    position: 'absolute',
+    bottom: -4,
+    right: -4,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: THEME.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: THEME.bg,
+  },
+  nameInputContainer: {
+    flex: 1,
   },
   inputGroup: {
     marginBottom: 16,

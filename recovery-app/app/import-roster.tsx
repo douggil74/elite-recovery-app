@@ -77,11 +77,14 @@ interface FTAScore {
   court_records: Array<{
     case_name?: string;
     case_number?: string;
+    docket_number?: string;
     court?: string;
     status?: string;
     has_fta?: boolean;
     has_warrant?: boolean;
     source?: string;
+    date_filed?: string;
+    filing_date?: string;
   }>;
   ai_analysis?: string;
 }
@@ -157,17 +160,27 @@ export default function ImportRosterScreen() {
   };
 
   const clearHistory = async () => {
-    Alert.alert('Clear History', 'Delete all import history?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Clear',
-        style: 'destructive',
-        onPress: async () => {
-          setImportHistory([]);
-          await AsyncStorage.removeItem(IMPORT_HISTORY_KEY);
+    // Use window.confirm on web, Alert.alert on native
+    if (Platform.OS === 'web') {
+      if (window.confirm('Delete all import history?')) {
+        setImportHistory([]);
+        await AsyncStorage.removeItem(IMPORT_HISTORY_KEY);
+        setShowHistory(false);
+      }
+    } else {
+      Alert.alert('Clear History', 'Delete all import history?', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            setImportHistory([]);
+            await AsyncStorage.removeItem(IMPORT_HISTORY_KEY);
+            setShowHistory(false);
+          },
         },
-      },
-    ]);
+      ]);
+    }
   };
 
   // Calculate FTA score for single inmate
@@ -356,6 +369,7 @@ export default function ImportRosterScreen() {
     const params = new URLSearchParams();
     if (extractedData.inmate.name) params.append('prefillName', extractedData.inmate.name);
     if (extractedData.inmate.age) params.append('prefillAge', extractedData.inmate.age);
+    if (extractedData.photo_url) params.append('prefillMugshot', extractedData.photo_url);
     if (extractedData.bonds?.length > 0) {
       const total = extractedData.bonds.reduce((sum, b) => {
         const amt = b.amount?.replace(/[$,]/g, '');
@@ -406,7 +420,8 @@ export default function ImportRosterScreen() {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.header}>
+      <View style={styles.innerContainer}>
+        <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={24} color={THEME.text} />
         </TouchableOpacity>
@@ -651,18 +666,46 @@ export default function ImportRosterScreen() {
                     {singleFtaScore.factors.length > 0 && (
                       <View style={styles.ftaFactorsList}>
                         <Text style={styles.ftaFactorsTitle}>RISK FACTORS</Text>
-                        {singleFtaScore.factors.map((factor, idx) => (
-                          <View key={idx} style={styles.ftaFactorItem}>
-                            <Ionicons
-                              name={factor.impact.startsWith('+') ? 'arrow-up' : 'arrow-down'}
-                              size={14}
-                              color={factor.impact.startsWith('+') ? THEME.danger : THEME.success}
-                            />
-                            <Text style={styles.ftaFactorText}>{factor.factor}</Text>
-                            <Text style={[
-                              styles.ftaFactorImpact,
-                              { color: factor.impact.startsWith('+') ? THEME.danger : THEME.success }
-                            ]}>{factor.impact}</Text>
+                        {singleFtaScore.factors.map((factor: any, idx) => (
+                          <View key={idx}>
+                            <View style={styles.ftaFactorItem}>
+                              <Ionicons
+                                name={factor.impact.startsWith('+') ? 'arrow-up' : 'arrow-down'}
+                                size={14}
+                                color={factor.impact.startsWith('+') ? THEME.danger : THEME.success}
+                              />
+                              <Text style={styles.ftaFactorText}>{factor.factor}</Text>
+                              <Text style={[
+                                styles.ftaFactorImpact,
+                                { color: factor.impact.startsWith('+') ? THEME.danger : THEME.success }
+                              ]}>{factor.impact}</Text>
+                            </View>
+                            {/* Show source charge and research tip for FTA factors */}
+                            {factor.source_charge && (
+                              <View style={styles.ftaDetailBox}>
+                                <Text style={styles.ftaDetailLabel}>SOURCE CHARGE:</Text>
+                                <Text style={styles.ftaDetailText}>{factor.source_charge}</Text>
+
+                                <Text style={[styles.ftaDetailLabel, { marginTop: 10 }]}>⚠️ FIND CASE NUMBER:</Text>
+                                <Text style={styles.ftaDetailTip}>
+                                  This charge indicates an existing warrant/FTA from another case.
+                                  To get the CASE NUMBER and DATE for legal documentation:
+                                </Text>
+                                <View style={styles.ftaResearchSteps}>
+                                  <Text style={styles.ftaResearchStep}>1. Search re:SearchLA (Louisiana Odyssey)</Text>
+                                  <Text style={styles.ftaResearchStep}>2. Check NCIC/FBI warrant database</Text>
+                                  <Text style={styles.ftaResearchStep}>3. Contact originating jurisdiction</Text>
+                                </View>
+
+                                <TouchableOpacity
+                                  style={styles.ftaResearchBtn}
+                                  onPress={() => Linking.openURL('https://researchla.tylerhost.net/CourtRecordsSearch/')}
+                                >
+                                  <Ionicons name="search" size={14} color="#fff" />
+                                  <Text style={styles.ftaResearchBtnText}>Search LA Courts</Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
                           </View>
                         ))}
                       </View>
@@ -683,9 +726,10 @@ export default function ImportRosterScreen() {
                       </View>
                     )}
 
-                    {/* Court Records - FTA/Warrant Alerts */}
-                    {singleFtaScore.court_records.length > 0 && (
-                      <View style={styles.courtRecordsBox}>
+                    {/* Court Records - ALWAYS SHOW THIS SECTION */}
+                    <View style={styles.courtRecordsBox}>
+                      {singleFtaScore.court_records.length > 0 ? (
+                        <>
                         <View style={styles.courtRecordsHeader}>
                           <Ionicons name="document-text" size={18} color={THEME.text} />
                           <Text style={styles.courtRecordsTitle}>
@@ -713,21 +757,39 @@ export default function ImportRosterScreen() {
                           </View>
                         )}
 
-                        {/* Case List */}
-                        {singleFtaScore.court_records.slice(0, 5).map((record, idx) => (
-                          <View key={idx} style={styles.courtRecordItem}>
-                            <Text style={styles.courtRecordCase}>
-                              {record.case_number || record.case_name || 'Case'}
-                            </Text>
+                        {/* Case List - with case numbers and dates for legal documentation */}
+                        <Text style={styles.courtRecordSectionLabel}>COURT CASES (for legal documentation):</Text>
+                        {singleFtaScore.court_records.slice(0, 5).map((record: any, idx) => (
+                          <View key={idx} style={[
+                            styles.courtRecordItem,
+                            (record.has_fta || record.has_warrant) && styles.courtRecordHighlight
+                          ]}>
+                            <View style={styles.courtRecordHeader}>
+                              <Text style={styles.courtRecordCaseNumber}>
+                                {record.case_number || record.docket_number || record.case_name || 'Case #N/A'}
+                              </Text>
+                              {(record.has_fta || record.has_warrant) && (
+                                <View style={styles.courtRecordBadge}>
+                                  <Text style={styles.courtRecordBadgeText}>
+                                    {record.has_fta ? 'FTA' : 'WARRANT'}
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
                             <Text style={styles.courtRecordMeta}>
-                              {record.court} {record.source ? `(${record.source})` : ''}
+                              {record.court} {record.source ? `· ${record.source}` : ''}
                             </Text>
+                            {(record.date_filed || record.filing_date) && (
+                              <Text style={styles.courtRecordDate}>
+                                Filed: {record.date_filed || record.filing_date}
+                              </Text>
+                            )}
                             {record.status && (
                               <Text style={[
                                 styles.courtRecordStatus,
                                 { color: record.status.toLowerCase().includes('active') ? THEME.warning : THEME.textMuted }
                               ]}>
-                                {record.status}
+                                Status: {record.status}
                               </Text>
                             )}
                           </View>
@@ -737,8 +799,42 @@ export default function ImportRosterScreen() {
                             +{singleFtaScore.court_records.length - 5} more records
                           </Text>
                         )}
-                      </View>
-                    )}
+                        </>
+                      ) : (
+                        /* NO COURT RECORDS FOUND - Show search guidance */
+                        <View style={styles.noCourtRecordsBox}>
+                          <Ionicons name="alert-circle" size={24} color={THEME.warning} />
+                          <Text style={styles.noCourtRecordsTitle}>
+                            NO COURT RECORDS FOUND AUTOMATICALLY
+                          </Text>
+                          <Text style={styles.noCourtRecordsText}>
+                            The FTA/warrant flag came from the current FUGITIVE charge.
+                            To get the CASE NUMBER and DATE of the original warrant:
+                          </Text>
+                          <View style={styles.courtSearchSteps}>
+                            <Text style={styles.courtSearchStep}>
+                              1. Search Louisiana Odyssey (re:SearchLA)
+                            </Text>
+                            <Text style={styles.courtSearchStep}>
+                              2. Contact the arresting agency
+                            </Text>
+                            <Text style={styles.courtSearchStep}>
+                              3. Check NCIC records via law enforcement
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            style={styles.searchCourtBtn}
+                            onPress={() => Linking.openURL('https://researchla.tylerhost.net/CourtRecordsSearch/')}
+                          >
+                            <Ionicons name="search" size={16} color="#fff" />
+                            <Text style={styles.searchCourtBtnText}>SEARCH LA COURT RECORDS</Text>
+                          </TouchableOpacity>
+                          <Text style={styles.courtSearchNote}>
+                            Search by name to find originating case #, date, and jurisdiction
+                          </Text>
+                        </View>
+                      )}
+                    </View>
 
                     {/* AI Analysis */}
                     {singleFtaScore.ai_analysis && (
@@ -794,6 +890,7 @@ export default function ImportRosterScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -802,6 +899,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: THEME.bg,
+    alignItems: 'center', // Center content horizontally
+  },
+  innerContainer: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 600, // Limit width on desktop for better readability
   },
   header: {
     flexDirection: 'row',
@@ -1508,6 +1611,114 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  ftaDetailBox: {
+    marginLeft: 22,
+    marginTop: 6,
+    marginBottom: 10,
+    padding: 10,
+    backgroundColor: '#4a0000',
+    borderRadius: 6,
+    borderLeftWidth: 3,
+    borderLeftColor: THEME.danger,
+  },
+  ftaDetailLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.textMuted,
+    letterSpacing: 0.5,
+    marginTop: 4,
+  },
+  ftaDetailText: {
+    fontSize: 13,
+    color: THEME.text,
+    marginTop: 2,
+  },
+  ftaDetailTip: {
+    fontSize: 12,
+    color: THEME.warning,
+    marginTop: 2,
+  },
+  ftaResearchSteps: {
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  ftaResearchStep: {
+    fontSize: 12,
+    color: THEME.text,
+    marginBottom: 4,
+    paddingLeft: 8,
+  },
+  ftaResearchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: THEME.info,
+    paddingVertical: 10,
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  ftaResearchBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  noCourtRecordsBox: {
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: THEME.warning + '15',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: THEME.warning + '40',
+  },
+  noCourtRecordsTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: THEME.warning,
+    marginTop: 8,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  noCourtRecordsText: {
+    fontSize: 13,
+    color: THEME.text,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  courtSearchSteps: {
+    marginTop: 12,
+    marginBottom: 12,
+    width: '100%',
+  },
+  courtSearchStep: {
+    fontSize: 13,
+    color: THEME.text,
+    marginBottom: 6,
+    paddingLeft: 8,
+  },
+  searchCourtBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: THEME.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    width: '100%',
+  },
+  searchCourtBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  courtSearchNote: {
+    fontSize: 11,
+    color: THEME.textMuted,
+    marginTop: 8,
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
   priorBookingsBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1585,15 +1796,61 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     flex: 1,
   },
+  courtRecordSectionLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.textMuted,
+    letterSpacing: 0.5,
+    marginTop: 8,
+    marginBottom: 4,
+  },
   courtRecordItem: {
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: THEME.border,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    marginTop: 6,
+    backgroundColor: THEME.surfaceLight,
+    borderRadius: 6,
+    borderLeftWidth: 3,
+    borderLeftColor: THEME.border,
+  },
+  courtRecordHighlight: {
+    borderLeftColor: THEME.danger,
+    backgroundColor: '#2a0a0a',
+  },
+  courtRecordHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  courtRecordCaseNumber: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: THEME.text,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  courtRecordBadge: {
+    backgroundColor: THEME.danger,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  courtRecordBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 0.5,
   },
   courtRecordCase: {
     fontSize: 13,
     fontWeight: '600',
     color: THEME.text,
+  },
+  courtRecordDate: {
+    fontSize: 12,
+    color: THEME.warning,
+    marginTop: 2,
+    fontWeight: '600',
   },
   courtRecordMeta: {
     fontSize: 11,
