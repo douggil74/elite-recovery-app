@@ -577,19 +577,35 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
     }
   };
 
+  // Get the best available subject name (used throughout the component)
+  const getSubjectName = useCallback(() => {
+    // Priority: parsed report > case name > roster data > 'Subject'
+    if (parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown') {
+      return parsedData.subject.fullName;
+    }
+    if (caseData?.name) {
+      return caseData.name;
+    }
+    if (caseData?.rosterData?.inmate?.name) {
+      return caseData.rosterData.inmate.name;
+    }
+    return 'Subject';
+  }, [parsedData, caseData]);
+
   // Init greeting
   useEffect(() => {
     if (caseData && chatLoaded && chatMessages.length === 0) {
+      const subjectName = getSubjectName();
       setChatMessages([{
         id: 'greeting',
         role: 'agent',
         content: latestReport
-          ? `🎯 **${parsedData?.subject?.fullName || caseData.name}** - ${addresses.length} addresses, ${phones.length} phones.`
-          : `🔍 **${caseData.name}** - Drop files or paste report data.`,
+          ? `🎯 **${subjectName}** - ${addresses.length} addresses, ${phones.length} phones.`
+          : `🔍 **${subjectName}** - Drop files or paste report data.`,
         timestamp: new Date(),
       }]);
     }
-  }, [caseData, latestReport, chatLoaded, chatMessages.length]);
+  }, [caseData, latestReport, chatLoaded, chatMessages.length, getSubjectName]);
 
   const scrollToBottom = () => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
 
@@ -974,7 +990,10 @@ ${result.explanation}`,
     try {
       // Build context about the case for AI
       const contextParts: string[] = [];
-      const subjectName = parsedData?.subject?.fullName || caseData?.name || 'Unknown';
+      // Prioritize: parsed report name > case name > roster data name > 'Subject'
+      const subjectName = (parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown')
+        ? parsedData.subject.fullName
+        : (caseData?.name || caseData?.rosterData?.inmate?.name || 'Subject');
       contextParts.push(`Case Subject: ${subjectName}`);
 
       if (subjectPhoto) {
