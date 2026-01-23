@@ -650,15 +650,23 @@ export default function ImportRosterScreen() {
                   </View>
                 ) : singleFtaScore ? (
                   <View style={[styles.ftaScoreBox, { borderColor: getFTAScoreColor(singleFtaScore.risk_level) }]}>
-                    <View style={styles.ftaScoreHeader}>
-                      <View style={[styles.ftaScoreBadgeLarge, { backgroundColor: getFTAScoreColor(singleFtaScore.risk_level) }]}>
-                        <Text style={styles.ftaScoreNumber}>{singleFtaScore.score}</Text>
-                      </View>
-                      <View style={styles.ftaScoreInfo}>
-                        <Text style={[styles.ftaScoreRisk, { color: getFTAScoreColor(singleFtaScore.risk_level) }]}>
-                          {singleFtaScore.risk_level.replace('_', ' ')} RISK
-                        </Text>
-                        <Text style={styles.ftaScoreSubtext}>FTA Risk Score (0-100)</Text>
+                    {/* Subject header with photo and score */}
+                    <View style={styles.ftaSubjectHeader}>
+                      {extractedData?.photo_url && (
+                        <Image source={{ uri: extractedData.photo_url }} style={styles.ftaSubjectPhoto} />
+                      )}
+                      <View style={styles.ftaScoreHeaderRight}>
+                        <View style={styles.ftaScoreHeader}>
+                          <View style={[styles.ftaScoreBadgeLarge, { backgroundColor: getFTAScoreColor(singleFtaScore.risk_level) }]}>
+                            <Text style={styles.ftaScoreNumber}>{singleFtaScore.score}</Text>
+                          </View>
+                          <View style={styles.ftaScoreInfo}>
+                            <Text style={[styles.ftaScoreRisk, { color: getFTAScoreColor(singleFtaScore.risk_level) }]}>
+                              {singleFtaScore.risk_level.replace('_', ' ')} RISK
+                            </Text>
+                            <Text style={styles.ftaScoreSubtext}>FTA Risk Score (0-100)</Text>
+                          </View>
+                        </View>
                       </View>
                     </View>
 
@@ -1552,11 +1560,25 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 2,
   },
-  ftaScoreHeader: {
+  ftaSubjectHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
     marginBottom: 16,
+  },
+  ftaSubjectPhoto: {
+    width: 70,
+    height: 90,
+    borderRadius: 8,
+    backgroundColor: THEME.surfaceLight,
+  },
+  ftaScoreHeaderRight: {
+    flex: 1,
+  },
+  ftaScoreHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
   },
   ftaScoreBadgeLarge: {
     width: 56,
