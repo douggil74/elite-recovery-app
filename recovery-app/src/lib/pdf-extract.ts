@@ -88,6 +88,85 @@ export interface ExtractResult {
   text?: string;
   pageCount?: number;
   error?: string;
+  usedOcr?: boolean;
+}
+
+// OCR using OpenAI Vision API for scanned PDFs
+async function ocrWithOpenAI(imageBase64: string, pageNum: number): Promise<string> {
+  const apiKey = await getOpenAIKey();
+  if (!apiKey) {
+    throw new Error('OpenAI API key not configured. Go to Settings to add it.');
+  }
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'Extract ALL text from this document image. Return ONLY the extracted text, preserving the layout as much as possible. Include all names, addresses, phone numbers, dates, and any other information visible.',
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`,
+              },
+            },
+          ],
+        },
+      ],
+      max_tokens: 4000,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`OpenAI API error: ${error}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+// Get OpenAI API key from settings
+async function getOpenAIKey(): Promise<string | null> {
+  try {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+    const settings = await AsyncStorage.getItem('app_settings');
+    if (settings) {
+      const parsed = JSON.parse(settings);
+      return parsed.openaiApiKey || null;
+    }
+  } catch (e) {
+    console.error('Failed to get OpenAI key:', e);
+  }
+  return null;
+}
+
+// Render PDF page to image for OCR
+async function renderPageToImage(pdfjs: any, pdf: PDFDocumentProxy, pageNum: number): Promise<string> {
+  const page = await pdf.getPage(pageNum);
+  const viewport = page.getViewport({ scale: 2.0 }); // Higher scale for better OCR
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  canvas.height = viewport.height;
+  canvas.width = viewport.width;
+
+  await page.render({
+    canvasContext: context,
+    viewport: viewport,
+  }).promise;
+
+  return canvas.toDataURL('image/png');
 }
 
 /**
@@ -135,9 +214,44 @@ export async function extractTextFromPdf(data: ArrayBuffer | Uint8Array): Promis
     const fullText = textParts.join('\n\n');
 
     if (fullText.length < 50) {
+      // PDF has no text - try OCR
+      console.log('PDF has no text content, attempting OCR...');
+
+      try {
+        const ocrTexts: string[] = [];
+        const maxPages = Math.min(pdf.numPages, 10); // Limit to 10 pages for speed
+
+        for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+          console.log(`OCR processing page ${pageNum}/${maxPages}...`);
+          const imageData = await renderPageToImage(pdfjs, pdf, pageNum);
+          const pageText = await ocrWithOpenAI(imageData, pageNum);
+          if (pageText.trim()) {
+            ocrTexts.push(`--- Page ${pageNum} ---\n${pageText}`);
+          }
+        }
+
+        const ocrFullText = ocrTexts.join('\n\n');
+
+        if (ocrFullText.length > 50) {
+          return {
+            success: true,
+            text: ocrFullText,
+            pageCount: pdf.numPages,
+            usedOcr: true,
+          };
+        }
+      } catch (ocrError) {
+        console.error('OCR failed:', ocrError);
+        return {
+          success: false,
+          error: `PDF is scanned/image-based. OCR failed: ${ocrError instanceof Error ? ocrError.message : 'Unknown error'}`,
+          pageCount: pdf.numPages,
+        };
+      }
+
       return {
         success: false,
-        error: 'PDF appears to be empty or contains only images. Try pasting the text directly.',
+        error: 'PDF appears to be empty or OCR could not extract text.',
         pageCount: pdf.numPages,
       };
     }
