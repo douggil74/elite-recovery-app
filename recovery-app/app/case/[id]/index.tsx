@@ -466,6 +466,14 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
     setIsSearchingOSINT(true);
     setOsintSearched(true);
 
+    // Check if we have mugshot for photo verification
+    const hasMugshot = subjectPhoto || caseData?.mugshotUrl;
+    const demographics = caseData?.rosterData?.inmate ? {
+      race: caseData.rosterData.inmate.race || caseData.rosterData.inmate.Race,
+      sex: caseData.rosterData.inmate.sex || caseData.rosterData.inmate.Sex,
+      age: caseData.rosterData.inmate.age || caseData.rosterData.inmate.Age,
+    } : null;
+
     try {
       if (pythonBackendAvailable) {
         // Use Python backend
@@ -496,14 +504,24 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
           status: 'unknown' as const,
         })));
 
-        // Single summary message
+        // Single summary message with photo verification warning
         const found = investigation.confirmed_profiles.length;
+        let resultMessage = found > 0
+          ? `✅ Found ${found} profiles for "${fullName}" in ${investigation.execution_time.toFixed(1)}s.\n\n${investigation.confirmed_profiles.slice(0, 5).map(p => `• ${p.platform}: ${p.url}`).join('\n')}${found > 5 ? `\n• +${found - 5} more` : ''}`
+          : `No profiles found for "${fullName}". Try the search links in the right panel.`;
+
+        // Add photo verification warning if we have mugshot
+        if (found > 0 && hasMugshot) {
+          const demographicInfo = demographics
+            ? `\n\n📋 **Subject Demographics:** ${demographics.race || 'Unknown'} ${demographics.sex || 'Unknown'}, Age ${demographics.age || 'Unknown'}`
+            : '';
+          resultMessage += `${demographicInfo}\n\n⚠️ **VERIFY PHOTOS MANUALLY:** Compare each social profile photo to the mugshot. Names can match but people may differ in race, gender, or age. Only pursue profiles where the photo matches the subject.`;
+        }
+
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
           role: 'agent',
-          content: found > 0
-            ? `✅ Found ${found} profiles for "${fullName}" in ${investigation.execution_time.toFixed(1)}s.\n\n${investigation.confirmed_profiles.slice(0, 5).map(p => `• ${p.platform}: ${p.url}`).join('\n')}${found > 5 ? `\n• +${found - 5} more` : ''}`
-            : `No profiles found for "${fullName}". Try the search links in the right panel.`,
+          content: resultMessage,
           timestamp: new Date(),
         }]);
 

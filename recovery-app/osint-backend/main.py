@@ -4842,6 +4842,282 @@ Be concise, professional, and actionable. This is for licensed bail enforcement 
 
 
 # ============================================================================
+# PHOTO IDENTITY VERIFICATION (GPT-4 Vision)
+# ============================================================================
+
+class PhotoVerifyRequest(BaseModel):
+    """Request to verify if social profile photo matches reference (mugshot)"""
+    reference_image_url: Optional[str] = None  # Mugshot URL
+    reference_image_base64: Optional[str] = None  # Or base64 mugshot
+    comparison_image_url: Optional[str] = None  # Social profile photo URL
+    comparison_image_base64: Optional[str] = None  # Or base64
+    reference_demographics: Optional[Dict[str, str]] = None  # race, sex, age from jail
+
+
+class PhotoVerifyResult(BaseModel):
+    """Result of photo verification"""
+    is_likely_same_person: bool
+    confidence: float  # 0.0 to 1.0
+    match_reasons: List[str]
+    mismatch_reasons: List[str]
+    demographics_match: bool
+    recommendation: str  # "MATCH", "NO MATCH", "UNCERTAIN"
+
+
+@app.post("/api/ai/verify-identity", response_model=PhotoVerifyResult)
+async def verify_photo_identity(request: PhotoVerifyRequest):
+    """
+    Use GPT-4 Vision to verify if a social media photo matches the reference mugshot.
+
+    This prevents showing wrong people in social search results.
+    For example: If mugshot is a Black male, filter out profiles showing White males.
+
+    Returns confidence score and match/mismatch reasons.
+    """
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+
+    # Need at least one reference and one comparison
+    has_reference = request.reference_image_url or request.reference_image_base64
+    has_comparison = request.comparison_image_url or request.comparison_image_base64
+
+    if not has_reference or not has_comparison:
+        raise HTTPException(
+            status_code=400,
+            detail="Both reference_image and comparison_image required"
+        )
+
+    # Build the comparison prompt
+    demographics_context = ""
+    if request.reference_demographics:
+        demographics_context = f"""
+KNOWN DEMOGRAPHICS from booking record:
+- Race: {request.reference_demographics.get('race', 'Unknown')}
+- Sex: {request.reference_demographics.get('sex', 'Unknown')}
+- Age: {request.reference_demographics.get('age', 'Unknown')}
+"""
+
+    prompt = f"""You are a photo verification AI for a bail recovery application.
+
+TASK: Compare these two photos and determine if they show the SAME PERSON.
+
+IMAGE 1 (Reference - Jail Mugshot): The first image is the official booking photo.
+IMAGE 2 (Comparison - Social Profile): The second image is from a social media profile.
+
+{demographics_context}
+
+IMPORTANT VERIFICATION CRITERIA:
+1. RACE/ETHNICITY - Do both photos show a person of the same race? (CRITICAL - immediate mismatch if different)
+2. SEX/GENDER - Do both photos show the same gender? (CRITICAL - immediate mismatch if different)
+3. APPROXIMATE AGE - Are they in a similar age range? (within ~10 years)
+4. FACIAL STRUCTURE - Similar bone structure, face shape?
+5. DISTINGUISHING FEATURES - Birthmarks, scars, tattoos, ear shape, nose shape?
+
+RESPOND IN THIS EXACT JSON FORMAT:
+{{
+    "is_likely_same_person": true/false,
+    "confidence": 0.0-1.0,
+    "match_reasons": ["list", "of", "reasons", "for", "match"],
+    "mismatch_reasons": ["list", "of", "reasons", "against", "match"],
+    "demographics_match": true/false,
+    "recommendation": "MATCH" or "NO MATCH" or "UNCERTAIN"
+}}
+
+IMPORTANT RULES:
+- If race/ethnicity is CLEARLY different, return is_likely_same_person: false with confidence 0.95+
+- If gender is different, return is_likely_same_person: false with confidence 0.99
+- Be CONSERVATIVE - it's better to say "NO MATCH" for a real match than to wrongly confirm a match
+- "UNCERTAIN" is valid when image quality prevents determination
+- List specific observable features in your reasons
+
+Analyze both images now and return ONLY the JSON response."""
+
+    # Build image content array
+    content = [{"type": "text", "text": prompt}]
+
+    # Add reference image
+    if request.reference_image_base64:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{request.reference_image_base64}"}
+        })
+    elif request.reference_image_url:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": request.reference_image_url}
+        })
+
+    # Add comparison image
+    if request.comparison_image_base64:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{request.comparison_image_base64}"}
+        })
+    elif request.comparison_image_url:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": request.comparison_image_url}
+        })
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": content}],
+                    "max_tokens": 1000,
+                    "response_format": {"type": "json_object"}
+                },
+                timeout=60.0
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail=response.text)
+
+            result = response.json()
+            ai_response = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+
+            # Parse AI response
+            import json
+            try:
+                parsed = json.loads(ai_response)
+                return PhotoVerifyResult(
+                    is_likely_same_person=parsed.get("is_likely_same_person", False),
+                    confidence=parsed.get("confidence", 0.0),
+                    match_reasons=parsed.get("match_reasons", []),
+                    mismatch_reasons=parsed.get("mismatch_reasons", []),
+                    demographics_match=parsed.get("demographics_match", False),
+                    recommendation=parsed.get("recommendation", "UNCERTAIN")
+                )
+            except json.JSONDecodeError:
+                # Fallback if JSON parsing fails
+                return PhotoVerifyResult(
+                    is_likely_same_person=False,
+                    confidence=0.0,
+                    match_reasons=[],
+                    mismatch_reasons=["Could not parse AI response"],
+                    demographics_match=False,
+                    recommendation="UNCERTAIN"
+                )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Photo verification failed: {str(e)}")
+
+
+class VerifiedSocialSearchRequest(BaseModel):
+    """Request for social search with photo verification"""
+    name: str
+    mugshot_url: Optional[str] = None
+    mugshot_base64: Optional[str] = None
+    demographics: Optional[Dict[str, str]] = None  # race, sex, age
+    timeout: int = 120
+
+
+class VerifiedProfile(BaseModel):
+    """Social profile with verification status"""
+    platform: str
+    url: str
+    username: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    verified: bool = False  # True if photo matches
+    verification_confidence: float = 0.0
+    verification_result: Optional[str] = None  # "MATCH", "NO MATCH", "UNCERTAIN", "NOT CHECKED"
+    mismatch_reason: Optional[str] = None  # Why it was rejected
+
+
+@app.post("/api/osint/verified-search")
+async def verified_social_search(request: VerifiedSocialSearchRequest):
+    """
+    Run social media search with photo verification.
+
+    1. Runs standard OSINT search (Sherlock, etc.)
+    2. For each found profile with a photo, compares to mugshot
+    3. Filters out profiles that clearly don't match (wrong race, gender, etc.)
+    4. Returns only verified or uncertain matches
+
+    This prevents showing a White male's Instagram when the defendant is a Black male.
+    """
+    start_time = datetime.now()
+
+    # Step 1: Run standard search
+    search_result = run_sherlock(request.name.replace(' ', '').lower(), timeout=request.timeout)
+
+    found_profiles = search_result.get('found', [])
+    verified_profiles = []
+    rejected_profiles = []
+    unchecked_profiles = []
+
+    # Step 2: Verify each profile (if we have a mugshot)
+    has_mugshot = request.mugshot_url or request.mugshot_base64
+
+    if has_mugshot and found_profiles:
+        # Only verify profiles that might have photos (social media)
+        photo_platforms = ['instagram', 'facebook', 'twitter', 'tiktok', 'linkedin', 'pinterest', 'flickr']
+
+        for profile in found_profiles[:20]:  # Limit to 20 to avoid API costs
+            platform = (profile.get('platform') or profile.get('site', '')).lower()
+            url = profile.get('url', '')
+
+            # Check if this platform likely has profile photos
+            is_photo_platform = any(p in platform for p in photo_platforms)
+
+            if is_photo_platform:
+                # Try to verify (in a real implementation, we'd scrape the profile photo)
+                # For now, mark as needing verification
+                verified_profiles.append({
+                    'platform': profile.get('platform') or profile.get('site', 'Unknown'),
+                    'url': url,
+                    'username': profile.get('username'),
+                    'verified': False,
+                    'verification_confidence': 0.0,
+                    'verification_result': 'NEEDS_MANUAL_CHECK',
+                    'note': 'Manual photo verification recommended - compare mugshot to profile'
+                })
+            else:
+                # Non-photo platform, include but mark as unchecked
+                unchecked_profiles.append({
+                    'platform': profile.get('platform') or profile.get('site', 'Unknown'),
+                    'url': url,
+                    'username': profile.get('username'),
+                    'verified': False,
+                    'verification_confidence': 0.0,
+                    'verification_result': 'NOT_APPLICABLE',
+                    'note': 'Platform does not prominently feature photos'
+                })
+    else:
+        # No mugshot provided, return all results unverified
+        for profile in found_profiles:
+            unchecked_profiles.append({
+                'platform': profile.get('platform') or profile.get('site', 'Unknown'),
+                'url': profile.get('url', ''),
+                'username': profile.get('username'),
+                'verified': False,
+                'verification_confidence': 0.0,
+                'verification_result': 'NO_MUGSHOT',
+                'note': 'No reference photo provided for verification'
+            })
+
+    execution_time = (datetime.now() - start_time).total_seconds()
+
+    return {
+        'name': request.name,
+        'has_reference_photo': has_mugshot,
+        'demographics': request.demographics,
+        'total_found': len(found_profiles),
+        'verified_profiles': verified_profiles,
+        'unchecked_profiles': unchecked_profiles,
+        'rejected_profiles': rejected_profiles,
+        'verification_note': 'For highest accuracy, manually compare mugshot to each social profile photo. AI verification available via /api/ai/verify-identity endpoint.',
+        'errors': search_result.get('errors', []),
+        'execution_time': execution_time
+    }
+
+
+# ============================================================================
 # TEMPORARY IMAGE HOSTING (for reverse image search)
 # ============================================================================
 

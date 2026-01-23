@@ -584,14 +584,35 @@ export default function ImportRosterScreen() {
                 {extractedData.charges.length > 0 && (
                   <View style={styles.detailBox}>
                     <Text style={styles.detailLabel}>CHARGES ({extractedData.charges.length})</Text>
-                    {extractedData.charges.map((charge, idx) => (
-                      <View key={idx} style={styles.chargeItem}>
-                        <Ionicons name="alert-circle" size={16} color={THEME.danger} />
-                        <Text style={styles.chargeText}>
-                          {charge.charge || charge.description || JSON.stringify(charge)}
-                        </Text>
-                      </View>
-                    ))}
+                    {extractedData.charges.map((charge, idx) => {
+                      const chargeText = (charge.charge || charge.description || '').toUpperCase();
+                      const isFugitive = chargeText.includes('FUGITIVE') || chargeText.includes('FLIGHT');
+                      const isBondRevocation = chargeText.includes('BOND REVOCATION') || chargeText.includes('BAIL JUMPING') || chargeText.includes('SURETY');
+                      const isFTA = chargeText.includes('FAILURE TO APPEAR') || chargeText.includes('FTA') || chargeText.includes('CONTEMPT');
+                      const isHighRisk = isFugitive || isBondRevocation || isFTA;
+
+                      return (
+                        <View key={idx} style={[styles.chargeItem, isHighRisk && styles.chargeItemHighRisk]}>
+                          <Ionicons
+                            name={isHighRisk ? 'warning' : 'alert-circle'}
+                            size={16}
+                            color={isHighRisk ? '#ff0000' : THEME.danger}
+                          />
+                          <View style={styles.chargeTextContainer}>
+                            <Text style={[styles.chargeText, isHighRisk && styles.chargeTextHighRisk]}>
+                              {charge.charge || charge.description || JSON.stringify(charge)}
+                            </Text>
+                            {isHighRisk && (
+                              <Text style={styles.chargeWarning}>
+                                {isFugitive && '⚠️ FUGITIVE CHARGE '}
+                                {isBondRevocation && '⚠️ BOND REVOCATION '}
+                                {isFTA && '⚠️ PRIOR FTA '}
+                              </Text>
+                            )}
+                          </View>
+                        </View>
+                      );
+                    })}
                   </View>
                 )}
 
@@ -1171,6 +1192,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: THEME.text,
     lineHeight: 20,
+  },
+  chargeTextContainer: {
+    flex: 1,
+  },
+  chargeItemHighRisk: {
+    backgroundColor: '#4a0000',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ff0000',
+    marginBottom: 10,
+  },
+  chargeTextHighRisk: {
+    color: '#ff6b6b',
+    fontWeight: '700',
+  },
+  chargeWarning: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#ff0000',
+    marginTop: 4,
+    letterSpacing: 0.5,
   },
   bondBox: {
     flexDirection: 'row',
