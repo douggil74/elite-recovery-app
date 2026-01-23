@@ -181,7 +181,14 @@ export default function ImportRosterScreen() {
       if (total > 0) params.append('prefillBond', total.toString());
     }
     if (extractedData.charges?.length > 0) {
-      params.append('prefillCharges', extractedData.charges.length.toString());
+      // Send actual charge descriptions, not just count
+      const chargeTexts = extractedData.charges
+        .map(c => c.charge || c.description || '')
+        .filter(Boolean)
+        .join(', ');
+      if (chargeTexts) {
+        params.append('prefillCharges', chargeTexts);
+      }
     }
     router.push(`/(tabs)/risk?${params.toString()}`);
   };

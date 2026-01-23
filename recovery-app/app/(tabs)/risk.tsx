@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { calculateRiskScore, RiskScoreResult, RiskScoreInput } from '@/lib/osint-service';
 import { useCases } from '@/hooks/useCases';
@@ -41,11 +41,18 @@ const RISK_COLORS = {
 
 export default function RiskScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    prefillName?: string;
+    prefillAge?: string;
+    prefillBond?: string;
+    prefillCharges?: string;
+  }>();
   const { createCase } = useCases();
   const [isLoading, setIsLoading] = useState(false);
   const [isCreatingCase, setIsCreatingCase] = useState(false);
   const [result, setResult] = useState<RiskScoreResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [prefillApplied, setPrefillApplied] = useState(false);
 
   // Form state
   const [name, setName] = useState('');
@@ -63,6 +70,34 @@ export default function RiskScreen() {
   const [referencesVerified, setReferencesVerified] = useState('2');
   const [monthlyIncome, setMonthlyIncome] = useState('');
   const [charges, setCharges] = useState('');
+
+  // Prefill form from URL params (from import-roster)
+  useEffect(() => {
+    if (prefillApplied) return;
+
+    let hasParams = false;
+    if (params.prefillName) {
+      setName(params.prefillName);
+      hasParams = true;
+    }
+    if (params.prefillAge) {
+      setAge(params.prefillAge);
+      hasParams = true;
+    }
+    if (params.prefillBond) {
+      setBondAmount(params.prefillBond);
+      hasParams = true;
+    }
+    if (params.prefillCharges) {
+      // prefillCharges contains actual charge descriptions
+      setCharges(params.prefillCharges);
+      hasParams = true;
+    }
+
+    if (hasParams) {
+      setPrefillApplied(true);
+    }
+  }, [params, prefillApplied]);
 
   const calculateScore = async () => {
     if (!name.trim()) {
@@ -328,8 +363,18 @@ export default function RiskScreen() {
           </Text>
         </View>
 
+        {/* Prefill notification */}
+        {prefillApplied && !result && (
+          <View style={styles.prefillNotice}>
+            <Ionicons name="checkmark-circle" size={20} color={THEME.success} />
+            <Text style={styles.prefillNoticeText}>
+              Data imported from jail roster
+            </Text>
+          </View>
+        )}
+
         {/* Quick Import from Jail Roster */}
-        {!result && (
+        {!result && !prefillApplied && (
           <TouchableOpacity
             style={styles.importRosterBtn}
             onPress={() => router.push('/import-roster')}
@@ -902,5 +947,22 @@ const styles = StyleSheet.create({
     color: THEME.textSecondary,
     width: '100%',
     marginTop: 2,
+  },
+  prefillNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: THEME.success + '20',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: THEME.success + '40',
+  },
+  prefillNoticeText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: THEME.success,
   },
 });
