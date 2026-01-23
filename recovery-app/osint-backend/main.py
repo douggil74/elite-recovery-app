@@ -3187,19 +3187,8 @@ async def scrape_jail_roster(url: str) -> Dict[str, Any]:
 
         for label in soup.find_all('label'):
             label_text = label.get_text(strip=True).lower()
-            # Find the next input sibling
-            next_input = label.find_next_sibling('input')
-            if not next_input:
-                # Try finding input as next element (might not be direct sibling)
-                parent = label.parent
-                if parent:
-                    inputs = parent.find_all('input')
-                    label_index = list(parent.children).index(label) if label in parent.children else -1
-                    for inp in inputs:
-                        inp_index = list(parent.children).index(inp) if inp in parent.children else -1
-                        if inp_index > label_index:
-                            next_input = inp
-                            break
+            # Find the next input element (not necessarily sibling - find_next traverses DOM)
+            next_input = label.find_next('input')
 
             if next_input and next_input.get('value'):
                 value = next_input.get('value', '').strip()
