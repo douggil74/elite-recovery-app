@@ -3240,29 +3240,71 @@ async def scrape_jail_roster(url: str) -> Dict[str, Any]:
             if name_parts:
                 inmate['name'] = ' '.join(name_parts)
 
-        # Pattern 5: Revize charges table - look for table rows with charge descriptions
-        # Revize uses tables where the first column has the charge description
+        # Pattern 5: Revize charges table - has headers like "Desc.", "Bond Type", "Bond Amt."
         if not charges:
             for table in soup.find_all('table'):
-                rows = table.find_all('tr')
-                for row in rows:
-                    cells = row.find_all('td')
-                    if cells:
-                        # Check if this looks like a charge (long text, often all caps)
-                        first_cell_text = cells[0].get_text(strip=True)
-                        if len(first_cell_text) > 10 and first_cell_text.isupper():
-                            charge_info = {'charge': first_cell_text}
-                            # Additional columns might have bond, status, etc.
-                            if len(cells) > 1:
-                                for i, cell in enumerate(cells[1:], 1):
-                                    cell_text = cell.get_text(strip=True)
-                                    if '$' in cell_text:
-                                        charge_info['bond'] = cell_text
-                                    elif cell_text:
-                                        charge_info[f'col_{i}'] = cell_text
-                            # Only add if not already in charges (dedupe)
-                            if not any(c.get('charge') == first_cell_text for c in charges):
-                                charges.append(charge_info)
+                # Check if this table has Revize-style headers
+                headers = [th.get_text(strip=True).lower() for th in table.find_all('th')]
+
+                # Revize pattern: Desc., Bond Type, Bond Amt.
+                if any('desc' in h for h in headers) and any('bond' in h for h in headers):
+                    # Map header positions
+                    desc_idx = next((i for i, h in enumerate(headers) if 'desc' in h), 0)
+                    bond_type_idx = next((i for i, h in enumerate(headers) if 'bond type' in h or h == 'bond type'), -1)
+                    bond_amt_idx = next((i for i, h in enumerate(headers) if 'bond amt' in h or 'amount' in h), -1)
+
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        cells = row.find_all('td')
+                        if len(cells) > desc_idx:
+                            charge_text = cells[desc_idx].get_text(strip=True)
+                            # Skip empty or non-charge rows
+                            if len(charge_text) > 5 and charge_text.isupper():
+                                charge_info = {'charge': charge_text}
+
+                                # Get bond type
+                                if bond_type_idx >= 0 and len(cells) > bond_type_idx:
+                                    bond_type = cells[bond_type_idx].get_text(strip=True)
+                                    if bond_type:
+                                        charge_info['bond_type'] = bond_type
+
+                                # Get bond amount
+                                if bond_amt_idx >= 0 and len(cells) > bond_amt_idx:
+                                    bond_amt = cells[bond_amt_idx].get_text(strip=True)
+                                    if bond_amt:
+                                        charge_info['bond_amount'] = bond_amt
+                                        # Also add to bonds array if it's a dollar amount
+                                        if '$' in bond_amt or bond_amt.replace(',', '').replace('.', '').isdigit():
+                                            bonds.append({'amount': bond_amt, 'charge': charge_text})
+
+                                # Dedupe
+                                if not any(c.get('charge') == charge_text for c in charges):
+                                    charges.append(charge_info)
+
+                    # Found Revize table, don't process other tables
+                    if charges:
+                        break
+
+            # Fallback: Look for any table with all-caps charge text
+            if not charges:
+                for table in soup.find_all('table'):
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        cells = row.find_all('td')
+                        if cells:
+                            first_cell_text = cells[0].get_text(strip=True)
+                            if len(first_cell_text) > 10 and first_cell_text.isupper():
+                                charge_info = {'charge': first_cell_text}
+                                if len(cells) > 1:
+                                    for i, cell in enumerate(cells[1:], 1):
+                                        cell_text = cell.get_text(strip=True)
+                                        if '$' in cell_text:
+                                            charge_info['bond_amount'] = cell_text
+                                            bonds.append({'amount': cell_text, 'charge': first_cell_text})
+                                        elif cell_text:
+                                            charge_info[f'col_{i}'] = cell_text
+                                if not any(c.get('charge') == first_cell_text for c in charges):
+                                    charges.append(charge_info)
 
         # Extract charges - look for charge tables or lists (skip if Revize pattern found charges)
         if not charges:
