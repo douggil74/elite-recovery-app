@@ -74,7 +74,15 @@ interface FTAScore {
   risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH' | 'UNKNOWN';
   factors: Array<{ factor: string; impact: string; severity: string }>;
   prior_bookings: Array<{ booking_number: number; name: string }>;
-  court_records: Array<{ case_name: string; court: string }>;
+  court_records: Array<{
+    case_name?: string;
+    case_number?: string;
+    court?: string;
+    status?: string;
+    has_fta?: boolean;
+    has_warrant?: boolean;
+    source?: string;
+  }>;
   ai_analysis?: string;
 }
 
@@ -651,6 +659,63 @@ export default function ImportRosterScreen() {
                             This person has been booked at this jail before
                           </Text>
                         </View>
+                      </View>
+                    )}
+
+                    {/* Court Records - FTA/Warrant Alerts */}
+                    {singleFtaScore.court_records.length > 0 && (
+                      <View style={styles.courtRecordsBox}>
+                        <View style={styles.courtRecordsHeader}>
+                          <Ionicons name="document-text" size={18} color={THEME.text} />
+                          <Text style={styles.courtRecordsTitle}>
+                            {singleFtaScore.court_records.length} Court Record(s) Found
+                          </Text>
+                        </View>
+
+                        {/* FTA Alert */}
+                        {singleFtaScore.court_records.some(r => r.has_fta) && (
+                          <View style={[styles.courtAlertBox, { backgroundColor: '#4a0000' }]}>
+                            <Ionicons name="alert-circle" size={20} color={THEME.danger} />
+                            <Text style={[styles.courtAlertText, { color: THEME.danger }]}>
+                              PRIOR FTA: Subject has previous failure(s) to appear
+                            </Text>
+                          </View>
+                        )}
+
+                        {/* Warrant Alert */}
+                        {singleFtaScore.court_records.some(r => r.has_warrant) && (
+                          <View style={[styles.courtAlertBox, { backgroundColor: '#4a0000' }]}>
+                            <Ionicons name="warning" size={20} color="#ff6b6b" />
+                            <Text style={[styles.courtAlertText, { color: '#ff6b6b' }]}>
+                              ACTIVE WARRANT: Subject may have outstanding warrant(s)
+                            </Text>
+                          </View>
+                        )}
+
+                        {/* Case List */}
+                        {singleFtaScore.court_records.slice(0, 5).map((record, idx) => (
+                          <View key={idx} style={styles.courtRecordItem}>
+                            <Text style={styles.courtRecordCase}>
+                              {record.case_number || record.case_name || 'Case'}
+                            </Text>
+                            <Text style={styles.courtRecordMeta}>
+                              {record.court} {record.source ? `(${record.source})` : ''}
+                            </Text>
+                            {record.status && (
+                              <Text style={[
+                                styles.courtRecordStatus,
+                                { color: record.status.toLowerCase().includes('active') ? THEME.warning : THEME.textMuted }
+                              ]}>
+                                {record.status}
+                              </Text>
+                            )}
+                          </View>
+                        ))}
+                        {singleFtaScore.court_records.length > 5 && (
+                          <Text style={styles.courtRecordsMore}>
+                            +{singleFtaScore.court_records.length - 5} more records
+                          </Text>
+                        )}
                       </View>
                     )}
 
@@ -1443,5 +1508,64 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: THEME.text,
     lineHeight: 19,
+  },
+  // Court records styles
+  courtRecordsBox: {
+    backgroundColor: THEME.surface,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  courtRecordsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  courtRecordsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: THEME.text,
+  },
+  courtAlertBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    borderRadius: 6,
+    marginBottom: 10,
+  },
+  courtAlertText: {
+    fontSize: 13,
+    fontWeight: '700',
+    flex: 1,
+  },
+  courtRecordItem: {
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: THEME.border,
+  },
+  courtRecordCase: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: THEME.text,
+  },
+  courtRecordMeta: {
+    fontSize: 11,
+    color: THEME.textMuted,
+    marginTop: 2,
+  },
+  courtRecordStatus: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  courtRecordsMore: {
+    fontSize: 12,
+    color: THEME.textMuted,
+    textAlign: 'center',
+    marginTop: 8,
+    fontStyle: 'italic',
   },
 });
