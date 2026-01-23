@@ -2998,18 +2998,32 @@ async def scrape_jail_roster(url: str) -> Dict[str, Any]:
     html = None
     response_status = None
 
-    # Method 1: Try cloudscraper first (bypasses Cloudflare)
+    # Method 1: Try ScraperAPI first (best anti-bot bypass)
     try:
-        import cloudscraper
-        scraper = cloudscraper.create_scraper(
-            browser={'browser': 'chrome', 'platform': 'darwin', 'desktop': True}
-        )
-        response = scraper.get(url, headers=headers, timeout=30)
-        response_status = response.status_code
-        if response.status_code == 200:
-            html = response.text
+        scraper_api_key = os.environ.get('SCRAPER_API_KEY', 'free_tier')
+        if scraper_api_key and scraper_api_key != 'free_tier':
+            api_url = f"http://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=true"
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.get(api_url)
+                response_status = response.status_code
+                if response.status_code == 200:
+                    html = response.text
     except Exception as e:
-        errors.append(f"Cloudscraper: {str(e)[:50]}")
+        errors.append(f"ScraperAPI: {str(e)[:50]}")
+
+    # Method 2: Try cloudscraper (bypasses Cloudflare)
+    if not html:
+        try:
+            import cloudscraper
+            scraper = cloudscraper.create_scraper(
+                browser={'browser': 'chrome', 'platform': 'darwin', 'desktop': True}
+            )
+            response = scraper.get(url, headers=headers, timeout=30)
+            response_status = response.status_code
+            if response.status_code == 200:
+                html = response.text
+        except Exception as e:
+            errors.append(f"Cloudscraper: {str(e)[:50]}")
 
     # Method 2: Skip curl_cffi - removed from requirements
 
