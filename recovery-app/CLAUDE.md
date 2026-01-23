@@ -17,7 +17,7 @@
 ## Tech Stack
 
 - **Frontend:** Expo/React Native (TypeScript) - works on iOS, Android, web
-- **Backend:** Python Flask on Render (`https://elite-recovery-osint.onrender.com`)
+- **Backend:** Python FastAPI on Render (`https://elite-recovery-osint.onrender.com`)
 - **AI:** GPT-4o via backend proxy (no local API keys needed)
 - **Storage:** AsyncStorage for local data, SQLite for cases
 - **Auth:** Passcode + biometric with AES-256 encryption
@@ -25,227 +25,232 @@
 
 ---
 
-## Core Features (All Working)
+## CURRENT PRIORITY: Jail Roster Scraper (January 2026)
 
-### 1. Photo Intelligence (`src/lib/photo-intelligence.ts`)
-Upload any photo → AI extracts actionable intel:
-- Addresses (house numbers, street signs, mailboxes)
-- License plates (even partial)
-- Businesses/landmarks (for geo-location)
-- Geographic indicators (vegetation, architecture style)
-- People descriptions (clothing, tattoos, associates)
-- EXIF GPS coordinates (automatic extraction)
+### What We Built This Session
 
-### 2. Face Matching (`src/lib/face-match.ts`)
-Upload target photo → Compare against found photos:
-- Extracts 30+ facial biometrics (bone structure focus)
-- Ignores pose, lighting, expression, age differences
-- Compares faces with match scores (0-100)
-- Verdicts: LIKELY_MATCH, POSSIBLE_MATCH, UNLIKELY_MATCH, NO_MATCH
+The **jail roster scraper** is the main feature we've been building. It automatically extracts inmate data from parish jail websites (specifically Revize-powered sites like St. Tammany Parish).
 
-### 3. OSINT Tools (`src/lib/osint-service.ts`)
-Social media and web searches:
-- **Sherlock**: Username search across 400+ platforms
-- **Maigret**: Enhanced username intelligence
-- **Holehe**: Email account discovery
-- Reverse image search capabilities
-- Phone/email lookups
+### How It Works
 
-### 4. Case Management
-- Create cases with subject info
-- Upload documents (skip trace reports, court papers)
-- Track addresses, vehicles, associates
-- AI chat assistant per case
-- Generate tactical recovery briefs
+1. **Single Booking Scrape:**
+   - User pastes a jail booking URL (e.g., `https://inmates.stpso.revize.com/bookings/270105`)
+   - Backend uses `allorigins.win` proxy to bypass Cloudflare/anti-bot protection
+   - Parses HTML to extract: name, age, race, sex, charges, bond amounts, mugshot URL
 
----
+2. **Bulk Import:**
+   - User enters the base jail URL and latest booking number
+   - Selects time period: 24h (~15 bookings), 48h (~30), 72h (~45), 1 week (~50)
+   - Backend scrapes booking numbers in parallel (batches of 5)
+   - Returns list of all inmates with their data
 
-## Self-Learning AI System (Recently Built)
+### Key Technical Details
 
-We built a system that **logs what works and what doesn't** for future reference. This creates institutional knowledge that persists across sessions.
+**Backend (`osint-backend/main.py`):**
+- Uses `allorigins.win` free CORS proxy to bypass 403 blocks
+- Falls back to cloudscraper, httpx, aiohttp if proxy fails
+- Parses Revize HTML format: `<label>First Name</label><input value="RANDY">`
+- Extracts bond info from charge table headers: `Desc.`, `Bond Type`, `Bond Amt.`
 
-### Knowledge Base Files (project root):
-| File | Purpose |
-|------|---------|
-| `LEARNING.md` | Lessons learned, what works, what failed |
-| `AI-PROMPTS.md` | Tested prompts with version history |
-| `OSINT-TECHNIQUES.md` | OSINT methods encyclopedia |
+**Frontend (`app/import-roster.tsx`):**
+- Toggle between "Single Booking" and "Bulk Import" modes
+- Displays extracted data with mugshot, charges, bonds
+- Each inmate has "FTA Risk" and "Create Case" buttons
+- Passes data to FTA Risk page via URL params (`prefillName`, `prefillAge`, `prefillBond`, `prefillCharges`)
 
-### Code:
-| File | Purpose |
-|------|---------|
-| `src/lib/learning-system.ts` | Core tracking module (AsyncStorage persistence) |
-| `src/hooks/useLearningSystem.ts` | React hook for component integration |
+**FTA Risk page (`app/(tabs)/risk.tsx`):**
+- Reads URL params with `useLocalSearchParams`
+- Auto-fills form when navigating from import-roster
+- Shows "Data imported from jail roster" notice when prefilled
 
-### What Gets Automatically Tracked:
-- Photo analysis successes (GPS found, addresses extracted, plates read)
-- Face match results (high-confidence matches, comparison failures)
-- OSINT tool effectiveness (which tools find results)
-- Prompt performance (quality scores, failure patterns)
-
-### How to Use It:
-```typescript
-import learningSystem from './lib/learning-system';
-
-// Log a success
-await learningSystem.logSuccess('photo_intelligence', 'GPS found in EXIF', 'Photo contained coordinates: 30.45, -90.12', 'HIGH');
-
-// Log a failure
-await learningSystem.logFailure('face_matching', 'Comparison failed', 'Backend timeout after 30s');
-
-// Track prompt effectiveness
-await learningSystem.trackPromptUse('photo_analysis_v3', '3.0', true, 85);
-```
-
----
-
-## Key Architecture Decisions
-
-1. **Backend proxy for AI** - No API keys on device, all GPT calls go through Render backend
-2. **Local-first storage** - Cases stored locally with encryption, no cloud dependency
-3. **Non-blocking learning** - Learning calls use `.catch(() => {})` so failures don't break main features
-4. **JSON output from AI** - All prompts require structured JSON output for reliable parsing
-5. **Bone structure focus for faces** - Ignore lighting/pose/expression for accurate matching
-
----
-
-## Important Files
-
-```
-/recovery-app
-├── src/
-│   ├── lib/
-│   │   ├── photo-intelligence.ts   # Photo analysis with GPT-4o
-│   │   ├── face-match.ts           # Face comparison system
-│   │   ├── osint-service.ts        # OSINT tool integrations
-│   │   ├── learning-system.ts      # AI learning tracker
-│   │   ├── chat-context.ts         # Chat AI context builder
-│   │   └── database.ts             # SQLite operations
-│   ├── hooks/
-│   │   ├── useLearningSystem.ts    # React hook for learning
-│   │   ├── useCases.ts             # Case list hook
-│   │   └── useCase.ts              # Single case hook
-│   ├── components/
-│   │   ├── PhotoIntelligence.tsx   # Photo upload/analysis UI
-│   │   ├── FaceMatch.tsx           # Face comparison UI
-│   │   └── OsintTools.tsx          # OSINT search UI
-│   └── app/
-│       ├── (tabs)/                 # Tab navigation screens
-│       ├── case/[id].tsx           # Individual case view
-│       └── auth/                   # Login screens
-├── LEARNING.md                     # Knowledge base
-├── AI-PROMPTS.md                   # Prompt library
-├── OSINT-TECHNIQUES.md             # OSINT techniques
-└── ARCHITECTURE.md                 # Technical architecture
-```
-
----
-
-## Backend Endpoints
-
-**Base URL:** `https://elite-recovery-osint.onrender.com`
+### Backend Endpoints
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
+| `/api/jail-roster` | POST | Scrape single booking URL |
+| `/api/jail-roster/bulk` | POST | Scrape range of booking numbers |
 | `/health` | GET | Health check |
-| `/api/ai/analyze` | POST | Image analysis with GPT-4o vision |
-| `/api/ai/chat` | POST | Text chat completions |
-| `/api/osint/search` | POST | OSINT searches |
-| `/api/sherlock` | POST | Username search |
-| `/api/maigret` | POST | Enhanced username intel |
-| `/api/holehe` | POST | Email account discovery |
-| `/api/investigate` | POST | Intelligent multi-tool investigation |
 
----
-
-## Development Commands
-
-```bash
-cd recovery-app
-npm install
-npm start          # Start Expo dev server
-npm run web        # Run in browser
-npm run ios        # Run on iOS simulator
-npm run android    # Run on Android emulator
+**Single scrape request:**
+```json
+{
+  "url": "https://inmates.stpso.revize.com/bookings/270105"
+}
 ```
 
----
+**Bulk scrape request:**
+```json
+{
+  "base_url": "https://inmates.stpso.revize.com",
+  "start_booking": 270105,
+  "count": 15
+}
+```
 
-## Prompt Engineering Lessons Learned
+### What's Working
 
-These are critical - follow them for all AI prompts:
+- ✅ Single booking scrape with name, age, race, sex, charges, mugshot
+- ✅ Bond type extraction ("TO BE SET BY JUDGE", "CASH PROPERTY SURETY", etc.)
+- ✅ Bond amount extraction when available (e.g., "$2,500")
+- ✅ Bulk import with time period selection
+- ✅ Data flows to FTA Risk page (prefills form)
+- ✅ Create Case from scraped data
 
-1. **Never say "Unknown"** - Force AI to always estimate based on available evidence
-2. **Require JSON output** - Always specify exact JSON structure in prompt
-3. **List what to ignore** - Tell AI to ignore lighting, pose, expression for face matching
-4. **Provide examples** - Show expected output format with sample data
-5. **Set temperature appropriately**:
-   - 0.1-0.2 for factual extraction
-   - 0.3-0.5 for balanced analysis
-   - 0.6-0.8 for creative suggestions
-6. **Include context** - Pass case details, previous analysis results, etc.
+### Known Issues / Limitations
 
-See `AI-PROMPTS.md` for all tested prompts with version history.
-
----
-
-## Current State (January 2026)
-
-**All core features working:**
-- ✅ Photo intelligence (extracts addresses, plates, GPS, businesses)
-- ✅ Face matching (compares faces with bone structure focus)
-- ✅ OSINT tools (Sherlock, Maigret, Holehe)
-- ✅ Case management with AI chat
-- ✅ Document analysis and extraction
-- ✅ Learning system tracking successes/failures
-- ✅ Knowledge base documentation
+- Cloudflare blocks main list page (can't auto-discover latest booking number)
+- User must manually get latest booking # from jail site
+- Some booking numbers don't exist (gaps in sequence) - handled gracefully
+- `allorigins.win` proxy occasionally times out - backend has fallbacks
 
 ---
 
-## Where We're Going
+## OSINT Tools (Paused but Available)
 
-### Near-term priorities:
-- [ ] UI to view/export learning reports
-- [ ] Better EXIF extraction (more metadata fields)
-- [ ] Batch photo processing
-- [ ] Offline mode improvements
-- [ ] Push notifications for social media activity
+We paused OSINT development to focus on jail scraper, but these tools are still installed:
 
-### Future roadmap:
-- Real-time alerts when subject posts on social media
-- Integration with bail bonds management systems
-- Team collaboration features (shared cases)
-- Court document auto-extraction
-- Vehicle tracking integrations
-- Geo-fencing alerts
+| Tool | Status | Endpoint |
+|------|--------|----------|
+| **Sherlock** | Installed | `POST /api/sherlock` |
+| **Holehe** | Installed | `POST /api/holehe` |
+| **Socialscan** | Installed | `POST /api/osint/search` |
 
----
-
-## How to Continue Development
-
-1. **Read first:** `LEARNING.md` for lessons learned
-2. **Check prompts:** `AI-PROMPTS.md` for current working prompts
-3. **Log successes:** Use `learningSystem.logSuccess()` when something works
-4. **Log failures:** Use `learningSystem.logFailure()` when something fails
-5. **Update docs:** Add new learnings to knowledge base files
-6. **Version prompts:** Never delete old prompts, document changes
-
----
-
-## Important Notes
-
-- **Navigation:** Back buttons use explicit routes (not `router.back()`) for web reliability
-- **Auth:** SignIn skips Firestore profile fetch to avoid offline errors
-- **Branding:** App is called "Elite Recovery" throughout UI
-- **Legal:** All features are for licensed bail recovery professionals only
+**Not installed** (to save memory on Render Pro tier - $85/mo, 4GB RAM):
+- Maigret, h8mail, theHarvester, social-analyzer, ignorant, blackbird, instaloader, toutatis, ghunt, phoneinfoga
 
 ---
 
 ## Deployment
 
-- **Frontend:** Vercel (auto-deploys from GitHub)
-- **Backend:** Render (manual deploy when needed)
-- **GitHub:** Repository for version control
+### Frontend (Vercel)
+- Auto-deploys from GitHub OR manual: `npx vercel --prod`
+- Main URL: `https://recovery-app-blond.vercel.app`
+
+### Backend (Render)
+- Auto-deploys from GitHub when connected
+- Service: `elite-recovery-osint` on Render Pro tier
+- URL: `https://elite-recovery-osint.onrender.com`
+- Root directory: `recovery-app/osint-backend`
+
+### GitHub
+- Repo: `douggil74/elite-recovery-app`
+- Main branch: `main`
+
+---
+
+## Important Files for Jail Scraper
+
+```
+/recovery-app
+├── osint-backend/
+│   ├── main.py                    # FastAPI backend with scraper
+│   ├── requirements.txt           # Python dependencies
+│   └── Dockerfile                 # Container config
+├── app/
+│   ├── import-roster.tsx          # Jail roster import UI (single + bulk)
+│   └── (tabs)/
+│       └── risk.tsx               # FTA Risk calculator (reads prefill params)
+```
+
+---
+
+## Code Patterns
+
+### Revize HTML Parsing (main.py ~line 3182)
+```python
+# Pattern 4: Revize jail system - labels followed by input fields
+for label in soup.find_all('label'):
+    label_text = label.get_text(strip=True).lower()
+    next_input = label.find_next('input')  # NOT find_next_sibling!
+    if next_input and next_input.get('value'):
+        value = next_input.get('value', '').strip()
+        if 'first name' in label_text:
+            first_name = value
+        # ... etc
+```
+
+### Passing data to FTA Risk (import-roster.tsx ~line 262)
+```typescript
+const goToFTARisk = () => {
+  const params = new URLSearchParams();
+  params.append('prefillName', extractedData.inmate.name);
+  params.append('prefillAge', extractedData.inmate.age);
+  params.append('prefillCharges', chargeTexts);
+  router.push(`/(tabs)/risk?${params.toString()}`);
+};
+```
+
+### Reading prefill params (risk.tsx ~line 43)
+```typescript
+const params = useLocalSearchParams<{
+  prefillName?: string;
+  prefillAge?: string;
+  prefillBond?: string;
+  prefillCharges?: string;
+}>();
+
+useEffect(() => {
+  if (params.prefillName) setName(params.prefillName);
+  // ... etc
+}, [params]);
+```
+
+---
+
+## What To Work On Next
+
+1. **Bond extraction improvement** - Some Revize sites have different table structures
+2. **Support other jail systems** - JailTracker, county sheriff sites
+3. **Auto-discover latest booking** - Find a way around Cloudflare on list pages
+4. **OSINT integration** - Run Sherlock on extracted names automatically
+5. **Photo intelligence on mugshots** - Analyze mugshots for identifying features
+
+---
+
+## Commands
+
+```bash
+# Frontend
+cd /Users/doug/elite-recovery-la/recovery-app
+npm start              # Dev server
+npx vercel --prod      # Deploy to Vercel
+
+# Backend (local testing)
+cd /Users/doug/elite-recovery-la/recovery-app/osint-backend
+python3 -m uvicorn main:app --reload
+
+# Test jail scraper
+curl -X POST "https://elite-recovery-osint.onrender.com/api/jail-roster" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://inmates.stpso.revize.com/bookings/270105"}'
+
+# Test bulk scrape
+curl -X POST "https://elite-recovery-osint.onrender.com/api/jail-roster/bulk" \
+  -H "Content-Type: application/json" \
+  -d '{"base_url":"https://inmates.stpso.revize.com","start_booking":270105,"count":5}'
+```
+
+---
+
+## User Preferences (Doug)
+
+- Wants **automated** solutions, not manual data entry
+- Cost-conscious - rejected ScraperAPI, using free allorigins.win proxy
+- Upgraded Render to Pro tier ($85/mo) for reliability
+- Primary jail site: St. Tammany Parish (`inmates.stpso.revize.com`)
+- Wants bulk import to be time-based (24h, 72h, etc.)
+
+---
+
+## Session History (Jan 22-23, 2026)
+
+1. Fixed Render deployment issues (indentation errors, memory)
+2. Solved 403 anti-bot blocking with allorigins.win proxy
+3. Built Revize HTML parser for label+input format
+4. Added bond type and amount extraction
+5. Created bulk scraping endpoint with parallel fetching
+6. Built bulk import UI with time period selector
+7. Added data flow from import-roster to FTA Risk page
 
 ---
 
