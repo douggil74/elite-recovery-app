@@ -3033,13 +3033,21 @@ async def scrape_jail_roster(url: str) -> Dict[str, Any]:
         except Exception as e:
             errors.append(f"Httpx: {str(e)[:50]}")
 
-    # Method 4: Playwright disabled - too heavy for free tier (512MB)
-    # if not html:
-    #     try:
-    #         from playwright.async_api import async_playwright
-    #         ... (requires paid tier with more memory)
-    #     except Exception as e:
-    #         errors.append(f"Playwright: {str(e)[:50]}")
+    # Method 4: Playwright headless browser (most powerful - needs Pro tier)
+    if not html:
+        try:
+            from playwright.async_api import async_playwright
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
+                context = await browser.new_context(user_agent=headers['User-Agent'])
+                page = await context.new_page()
+                await page.goto(url, wait_until='networkidle', timeout=30000)
+                await page.wait_for_timeout(2000)
+                html = await page.content()
+                response_status = 200
+                await browser.close()
+        except Exception as e:
+            errors.append(f"Playwright: {str(e)[:50]}")
 
     # If all methods failed
     if not html:
