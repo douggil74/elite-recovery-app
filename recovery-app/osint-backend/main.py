@@ -2997,20 +2997,47 @@ async def scrape_jail_roster(url: str) -> Dict[str, Any]:
 
     html = None
     response_status = None
+    from urllib.parse import quote
 
-    # Method 1: Use allorigins.win free proxy (bypasses anti-bot)
-    try:
-        from urllib.parse import quote
-        proxy_url = f"https://api.allorigins.win/get?url={quote(url, safe='')}"
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(proxy_url)
-            response_status = response.status_code
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('contents'):
-                    html = data['contents']
-    except Exception as e:
-        errors.append(f"Proxy: {str(e)[:50]}")
+    # Method 1: Try multiple free CORS proxies
+    proxy_configs = [
+        # allorigins.win
+        {
+            'url': f"https://api.allorigins.win/get?url={quote(url, safe='')}",
+            'extract': lambda r: r.json().get('contents') if r.status_code == 200 else None
+        },
+        # corsproxy.io
+        {
+            'url': f"https://corsproxy.io/?{quote(url, safe='')}",
+            'extract': lambda r: r.text if r.status_code == 200 else None
+        },
+        # cors.sh
+        {
+            'url': f"https://cors.sh/{url}",
+            'extract': lambda r: r.text if r.status_code == 200 else None,
+            'headers': {'x-cors-api-key': 'temp_free'}
+        },
+        # thingproxy
+        {
+            'url': f"https://thingproxy.freeboard.io/fetch/{url}",
+            'extract': lambda r: r.text if r.status_code == 200 else None
+        },
+    ]
+
+    for proxy in proxy_configs:
+        if html:
+            break
+        try:
+            proxy_headers = proxy.get('headers', {})
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(proxy['url'], headers=proxy_headers)
+                response_status = response.status_code
+                content = proxy['extract'](response)
+                if content and len(content) > 500:  # Must have real content
+                    html = content
+                    break
+        except Exception as e:
+            errors.append(f"Proxy: {str(e)[:30]}")
 
     # Method 2: Try cloudscraper (bypasses Cloudflare)
     if not html:
