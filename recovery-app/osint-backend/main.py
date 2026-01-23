@@ -3424,7 +3424,7 @@ async def jail_roster_scrape(request: JailRosterRequest):
 class BulkJailRosterRequest(BaseModel):
     """Request for bulk jail roster scraping"""
     base_url: str  # e.g., "https://inmates.stpso.revize.com"
-    start_booking: int  # Latest/highest booking number
+    start_booking: Optional[int] = None  # Optional - will auto-discover if not provided
     count: int = 10  # How many to fetch (max 50)
 
 
@@ -3439,13 +3439,54 @@ class BulkJailRosterResult(BaseModel):
     execution_time: float
 
 
+async def find_latest_booking(base_url: str, start_estimate: int = 280000) -> int:
+    """
+    Auto-discover the latest booking number by probing.
+    Uses binary search to find the highest valid booking number.
+    """
+    # Start from an estimate and probe to find valid bookings
+    high = start_estimate
+    low = start_estimate - 10000  # Search within last 10k bookings
+    latest_found = None
+
+    # First, find a valid booking by checking a few numbers
+    test_numbers = [high, high - 100, high - 500, high - 1000, high - 2000]
+
+    for num in test_numbers:
+        url = f"{base_url}/bookings/{num}"
+        try:
+            result = await scrape_jail_roster(url)
+            if result.get('inmate') and result['inmate'].get('name'):
+                latest_found = num
+                low = num  # Found one, search upward from here
+                break
+        except:
+            continue
+
+    # If we found something, try to find higher valid bookings
+    if latest_found:
+        # Check a few numbers above to see if there are newer ones
+        for offset in [10, 20, 50, 100, 200]:
+            test_num = latest_found + offset
+            url = f"{base_url}/bookings/{test_num}"
+            try:
+                result = await scrape_jail_roster(url)
+                if result.get('inmate') and result['inmate'].get('name'):
+                    latest_found = test_num
+            except:
+                continue
+
+    # Default to estimate if nothing found
+    return latest_found if latest_found else start_estimate
+
+
 @app.post("/api/jail-roster/bulk", response_model=BulkJailRosterResult)
 async def bulk_jail_roster_scrape(request: BulkJailRosterRequest):
     """
     Scrape multiple jail roster pages by booking number range.
 
-    Provide the base URL (e.g., https://inmates.stpso.revize.com),
-    the latest booking number, and how many to fetch.
+    Provide the base URL (e.g., https://inmates.stpso.revize.com).
+    If start_booking is not provided, will auto-discover the latest booking number.
 
     Will scrape from start_booking down to start_booking - count + 1.
     """
@@ -3459,8 +3500,14 @@ async def bulk_jail_roster_scrape(request: BulkJailRosterRequest):
     # Normalize base URL
     base_url = request.base_url.rstrip('/')
 
+    # Auto-discover latest booking if not provided
+    if request.start_booking:
+        start_booking = request.start_booking
+    else:
+        start_booking = await find_latest_booking(base_url)
+
     # Generate booking URLs
-    booking_numbers = list(range(request.start_booking, request.start_booking - count, -1))
+    booking_numbers = list(range(start_booking, start_booking - count, -1))
 
     # Scrape in parallel (batches of 5 to be nice to the server)
     inmates = []
@@ -3502,7 +3549,7 @@ async def bulk_jail_roster_scrape(request: BulkJailRosterRequest):
 
     return {
         'base_url': base_url,
-        'start_booking': request.start_booking,
+        'start_booking': start_booking,
         'count_requested': count,
         'count_found': len(inmates),
         'inmates': inmates,

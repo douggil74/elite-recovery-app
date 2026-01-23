@@ -105,7 +105,6 @@ export default function ImportRosterScreen() {
 
   // Bulk scrape state
   const [baseUrl, setBaseUrl] = useState('https://inmates.stpso.revize.com');
-  const [latestBooking, setLatestBooking] = useState('');
   const [selectedPeriod, setSelectedPeriod] = useState(TIME_PERIODS[0]);
   const [bulkResults, setBulkResults] = useState<BulkInmate[]>([]);
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -164,9 +163,8 @@ export default function ImportRosterScreen() {
 
   // Bulk scrape
   const bulkScrape = async () => {
-    const bookingNum = parseInt(latestBooking);
-    if (!bookingNum || bookingNum < 1) {
-      setBulkError('Please enter a valid booking number');
+    if (!baseUrl.trim()) {
+      setBulkError('Please enter a jail roster URL');
       return;
     }
 
@@ -180,7 +178,6 @@ export default function ImportRosterScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           base_url: baseUrl.trim(),
-          start_booking: bookingNum,
           count: selectedPeriod.count,
         }),
       });
@@ -625,7 +622,7 @@ export default function ImportRosterScreen() {
             {/* Bulk Import Section */}
             <View style={styles.section}>
               <Text style={styles.sectionDesc}>
-                Fetch multiple bookings at once. Enter the latest booking number from the jail site and select a time period.
+                Fetch recent bookings automatically. Select a jail site and time period.
               </Text>
 
               {/* Base URL */}
@@ -643,24 +640,6 @@ export default function ImportRosterScreen() {
                   keyboardType="url"
                 />
               </View>
-
-              {/* Latest Booking Number */}
-              <Text style={styles.inputLabel}>LATEST BOOKING NUMBER</Text>
-              <View style={styles.inputContainer}>
-                <Ionicons name="bookmark" size={20} color={THEME.textMuted} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.input}
-                  value={latestBooking}
-                  onChangeText={setLatestBooking}
-                  placeholder="270105"
-                  placeholderTextColor={THEME.textMuted}
-                  keyboardType="numeric"
-                />
-              </View>
-
-              <Text style={styles.inputHint}>
-                Find this on the jail site - it's the booking/inmate ID number
-              </Text>
 
               {/* Time Period Selection */}
               <Text style={styles.inputLabel}>TIME PERIOD</Text>
@@ -708,7 +687,7 @@ export default function ImportRosterScreen() {
 
               {bulkLoading && (
                 <Text style={styles.loadingHint}>
-                  Scraping up to {selectedPeriod.count} bookings... This may take a moment.
+                  Finding latest bookings and scraping up to {selectedPeriod.count} records...
                 </Text>
               )}
 
