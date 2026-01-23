@@ -22,6 +22,13 @@ const STATUS_CONFIG: Record<CaseStatus, { label: string; color: string; bg: stri
   located: { label: 'Located', color: '#22c55e', bg: '#22c55e20' },
 };
 
+const getFtaColor = (score: number): string => {
+  if (score >= 70) return '#ef4444'; // danger - very high risk
+  if (score >= 50) return '#f97316'; // orange - high risk
+  if (score >= 30) return '#f59e0b'; // warning - moderate
+  return '#22c55e'; // success - low risk
+};
+
 export function CaseCard({
   caseData,
   onPress,
@@ -68,21 +75,32 @@ export function CaseCard({
         </View>
 
         {/* Middle row: Stats */}
-        {hasData ? (
-          <View style={styles.statsRow}>
-            <View style={styles.stat}>
-              <Ionicons name="location" size={14} color={COLORS.primary} />
-              <Text style={styles.statText}>{addressCount} locations</Text>
+        <View style={styles.statsRow}>
+          {caseData.ftaScore !== undefined && (
+            <View style={[styles.ftaBadge, { backgroundColor: getFtaColor(caseData.ftaScore) + '25' }]}>
+              <Ionicons name="shield-checkmark" size={12} color={getFtaColor(caseData.ftaScore)} />
+              <Text style={[styles.ftaScore, { color: getFtaColor(caseData.ftaScore) }]}>
+                FTA: {caseData.ftaScore}
+              </Text>
             </View>
-            {phoneCount > 0 && (
+          )}
+          {hasData && (
+            <>
               <View style={styles.stat}>
-                <Ionicons name="call" size={14} color={COLORS.success} />
-                <Text style={styles.statText}>{phoneCount} phones</Text>
+                <Ionicons name="location" size={14} color={COLORS.primary} />
+                <Text style={styles.statText}>{addressCount}</Text>
               </View>
-            )}
-          </View>
-        ) : (
-          <Text style={styles.noDataText}>No report data yet</Text>
+              {phoneCount > 0 && (
+                <View style={styles.stat}>
+                  <Ionicons name="call" size={14} color={COLORS.success} />
+                  <Text style={styles.statText}>{phoneCount}</Text>
+                </View>
+              )}
+            </>
+          )}
+        </View>
+        {!hasData && !caseData.ftaScore && (
+          <Text style={styles.noDataText}>No data yet</Text>
         )}
 
         {/* Bottom row: Meta info */}
@@ -153,17 +171,31 @@ const styles = StyleSheet.create({
   },
   statsRow: {
     flexDirection: 'row',
-    gap: 16,
+    alignItems: 'center',
+    gap: 12,
     marginBottom: 8,
+    flexWrap: 'wrap',
   },
   stat: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
   },
   statText: {
     fontSize: 13,
     color: '#a1a1aa',
+  },
+  ftaBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  ftaScore: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   noDataText: {
     fontSize: 13,

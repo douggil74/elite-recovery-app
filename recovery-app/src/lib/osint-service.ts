@@ -1094,6 +1094,7 @@ export interface RiskScoreInput {
   charges?: string[];
   prior_ftas?: number;
   prior_convictions?: number;
+  months_in_jail?: number;
   employment_status?: 'employed' | 'unemployed' | 'self-employed';
   residence_type?: 'own' | 'rent' | 'homeless' | 'with_family';
   residence_duration_months?: number;

@@ -77,6 +77,23 @@ export default function CasesScreen() {
         <Ionicons name="add" size={20} color="#fff" />
         <Text style={styles.emptyButtonText}>New Case</Text>
       </TouchableOpacity>
+
+      <View style={styles.orDivider}>
+        <View style={styles.orLine} />
+        <Text style={styles.orText}>OR</Text>
+        <View style={styles.orLine} />
+      </View>
+
+      <TouchableOpacity
+        style={[styles.emptyButton, styles.importButton]}
+        onPress={() => router.push('/import-roster')}
+      >
+        <Ionicons name="download" size={20} color="#fff" />
+        <Text style={styles.emptyButtonText}>Import from Jail Roster</Text>
+      </TouchableOpacity>
+      <Text style={styles.importHint}>
+        Paste a jail booking URL to auto-fill case data
+      </Text>
     </View>
   );
 
@@ -88,7 +105,7 @@ export default function CasesScreen() {
           <Text style={styles.greeting}>ELITE RECOVERY SYSTEMS</Text>
           <Text style={styles.subtitle}>
             {totalCases === 0
-              ? 'Ready to hunt'
+              ? '25+ OSINT tools · AI-powered recovery'
               : `${totalCases} case${totalCases !== 1 ? 's' : ''} · ${totalAddresses} locations`}
           </Text>
         </View>
@@ -298,5 +315,31 @@ const styles = StyleSheet.create({
     color: THEME.primary,
     fontSize: 14,
     fontWeight: '600',
+  },
+  orDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+    width: '80%',
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: THEME.border,
+  },
+  orText: {
+    color: THEME.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    paddingHorizontal: 12,
+  },
+  importButton: {
+    backgroundColor: THEME.info,
+  },
+  importHint: {
+    fontSize: 12,
+    color: THEME.textMuted,
+    marginTop: 8,
+    textAlign: 'center',
   },
 });

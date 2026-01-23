@@ -122,7 +122,9 @@ export async function createCase(
   name: string,
   purpose: CasePurpose,
   internalCaseId?: string,
-  notes?: string
+  notes?: string,
+  ftaScore?: number,
+  ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK'
 ): Promise<Case> {
   const id = uuid.v4() as string;
   const now = new Date().toISOString();
@@ -133,6 +135,8 @@ export async function createCase(
     internalCaseId,
     purpose,
     notes,
+    ftaScore,
+    ftaRiskLevel,
     attestationAccepted: false,
     createdAt: now,
     updatedAt: now,

@@ -1179,7 +1179,7 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
             <!DOCTYPE html>
             <html>
             <head>
-              <title>Investigation Report - ${parsedData?.subject?.fullName || caseData?.name}</title>
+              <title>Investigation Report - ${(parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown') ? parsedData.subject.fullName : caseData?.name}</title>
               <style>
                 body { font-family: -apple-system, Arial, sans-serif; margin: 0; color: #1f2937; font-size: 13px; line-height: 1.5; }
                 .header { background: linear-gradient(135deg, #18181b 0%, #27272a 100%); color: white; padding: 30px 40px; }
@@ -1213,7 +1213,7 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
             <body>
               <div class="header">
                 <div class="case-id">Elite Recovery Systems • Case File</div>
-                <h1>${parsedData?.subject?.fullName || caseData?.name}</h1>
+                <h1>${(parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown') ? parsedData.subject.fullName : caseData?.name}</h1>
                 <div class="subtitle">Investigation Report • Generated ${new Date().toLocaleString()}</div>
               </div>
 
@@ -1339,7 +1339,7 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
           {subjectPhoto ? <Image source={{ uri: subjectPhoto }} style={styles.photoImg} /> : <Ionicons name="person" size={20} color={DARK.textMuted} />}
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.caseName} numberOfLines={1}>{parsedData?.subject?.fullName || caseData.name}</Text>
+          <Text style={styles.caseName} numberOfLines={1}>{(parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown') ? parsedData.subject.fullName : (caseData.name || 'Unnamed Subject')}</Text>
           <Text style={styles.caseMeta}>{displayAddresses.length} locations • {phones.length} phones • {uploadedFiles.length} files</Text>
         </View>
         <TouchableOpacity onPress={generateFullReport} disabled={isGeneratingReport} style={[styles.reportBtn, isGeneratingReport && { opacity: 0.5 }]}>
@@ -1422,7 +1422,7 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>👤 SUBJECT</Text>
                 <View style={styles.intelCard}>
-                  <Text style={styles.intelName}>{parsedData.subject.fullName || caseData?.name}</Text>
+                  <Text style={styles.intelName}>{(parsedData.subject.fullName && parsedData.subject.fullName !== 'Unknown') ? parsedData.subject.fullName : caseData?.name}</Text>
                   {parsedData.subject.dateOfBirth && <Text style={styles.intelDetail}>DOB: {parsedData.subject.dateOfBirth}</Text>}
                   {parsedData.subject.ssn && <Text style={styles.intelDetail}>SSN: ***-**-{parsedData.subject.ssn.slice(-4)}</Text>}
                 </View>

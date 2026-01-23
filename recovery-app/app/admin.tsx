@@ -2,7 +2,7 @@
  * Admin Page - Backend Testing, Diagnostics & User Management
  * Password protected - default: 2627f68597G!
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '@/constants';
+import { useAuthContext } from '@/contexts/AuthContext';
 
 const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
 const ADMIN_PASSWORD_KEY = 'elite_admin_password';
@@ -41,6 +42,7 @@ interface AppUser {
 
 export default function AdminScreen() {
   const router = useRouter();
+  const { user: firebaseUser } = useAuthContext();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -64,6 +66,32 @@ export default function AdminScreen() {
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserName, setNewUserName] = useState('');
   const [newUserRole, setNewUserRole] = useState<'admin' | 'agent' | 'viewer'>('agent');
+
+  // Combine Firebase user with manually added users
+  const allUsers = useMemo(() => {
+    const combined: AppUser[] = [];
+
+    // Add Firebase user if logged in
+    if (firebaseUser) {
+      combined.push({
+        id: firebaseUser.uid,
+        email: firebaseUser.email,
+        name: firebaseUser.displayName || 'Firebase User',
+        role: 'admin', // Firebase users are admins by default
+        createdAt: new Date().toISOString(),
+        lastActive: new Date().toISOString(),
+      });
+    }
+
+    // Add manually added users (excluding duplicates)
+    users.forEach(u => {
+      if (!combined.find(c => c.email === u.email)) {
+        combined.push(u);
+      }
+    });
+
+    return combined;
+  }, [firebaseUser, users]);
 
   useEffect(() => {
     loadUsers();
@@ -378,7 +406,7 @@ export default function AdminScreen() {
         >
           <Ionicons name="people" size={18} color={activeTab === 'users' ? '#fff' : '#a1a1aa'} />
           <Text style={[styles.tabText, activeTab === 'users' && styles.tabTextActive]}>
-            Users ({users.length})
+            Users ({allUsers.length})
           </Text>
         </TouchableOpacity>
       </View>
@@ -553,29 +581,38 @@ export default function AdminScreen() {
 
             {/* User List */}
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Users ({users.length})</Text>
-              {users.length === 0 ? (
-                <Text style={styles.emptyText}>No users added yet</Text>
+              <Text style={styles.cardTitle}>Users ({allUsers.length})</Text>
+              {allUsers.length === 0 ? (
+                <Text style={styles.emptyText}>No users yet</Text>
               ) : (
-                users.map(user => (
+                allUsers.map(user => (
                   <View key={user.id} style={styles.userRow}>
                     <View style={styles.userInfo}>
-                      <Text style={styles.userName}>{user.name}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.userName}>{user.name}</Text>
+                        {firebaseUser?.uid === user.id && (
+                          <View style={styles.firebaseBadge}>
+                            <Text style={styles.firebaseBadgeText}>You</Text>
+                          </View>
+                        )}
+                      </View>
                       <Text style={styles.userEmail}>{user.email}</Text>
                       <Text style={styles.userDate}>
-                        Added: {new Date(user.createdAt).toLocaleDateString()}
+                        {firebaseUser?.uid === user.id ? 'Firebase Auth User' : `Added: ${new Date(user.createdAt).toLocaleDateString()}`}
                       </Text>
                     </View>
                     <View style={styles.userActions}>
                       <View style={[styles.roleBadge, { backgroundColor: getRoleBadgeColor(user.role) }]}>
                         <Text style={styles.roleBadgeText}>{user.role}</Text>
                       </View>
-                      <TouchableOpacity
-                        style={styles.removeBtn}
-                        onPress={() => handleRemoveUser(user.id)}
-                      >
-                        <Ionicons name="trash-outline" size={18} color="#ef4444" />
-                      </TouchableOpacity>
+                      {firebaseUser?.uid !== user.id && (
+                        <TouchableOpacity
+                          style={styles.removeBtn}
+                          onPress={() => handleRemoveUser(user.id)}
+                        >
+                          <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                        </TouchableOpacity>
+                      )}
                     </View>
                   </View>
                 ))
@@ -790,6 +827,13 @@ const styles = StyleSheet.create({
   roleBadgeText: { fontSize: 11, fontWeight: '700', color: '#fff', textTransform: 'uppercase' },
   removeBtn: { padding: 4 },
   emptyText: { fontSize: 13, color: '#6b7280', fontStyle: 'italic' },
+  firebaseBadge: {
+    backgroundColor: '#f59e0b',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  firebaseBadgeText: { fontSize: 10, fontWeight: '700', color: '#000' },
   roleDesc: {
     flexDirection: 'row',
     alignItems: 'center',

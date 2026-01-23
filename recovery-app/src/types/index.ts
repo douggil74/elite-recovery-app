@@ -21,6 +21,8 @@ export interface Case {
   internalCaseId?: string;
   purpose: CasePurpose;
   notes?: string;
+  ftaScore?: number;
+  ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK';
   attestationAccepted: boolean;
   createdAt: string;
   updatedAt: string;

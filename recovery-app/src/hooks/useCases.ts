@@ -28,7 +28,9 @@ export interface UseCasesReturn {
     name: string,
     purpose: CasePurpose,
     internalCaseId?: string,
-    notes?: string
+    notes?: string,
+    ftaScore?: number,
+    ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK'
   ) => Promise<Case>;
   deleteCase: (id: string) => Promise<void>;
 }
@@ -87,9 +89,11 @@ export function useCases(): UseCasesReturn {
       name: string,
       purpose: CasePurpose,
       internalCaseId?: string,
-      notes?: string
+      notes?: string,
+      ftaScore?: number,
+      ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK'
     ): Promise<Case> => {
-      const newCase = await dbCreateCase(name, purpose, internalCaseId, notes);
+      const newCase = await dbCreateCase(name, purpose, internalCaseId, notes, ftaScore, ftaRiskLevel);
 
       await audit('case_created', {
         caseId: newCase.id,

@@ -10,8 +10,10 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { calculateRiskScore, RiskScoreResult, RiskScoreInput } from '@/lib/osint-service';
+import { useCases } from '@/hooks/useCases';
 
 // Dark Red Theme
 const THEME = {
@@ -38,7 +40,10 @@ const RISK_COLORS = {
 };
 
 export default function RiskScreen() {
+  const router = useRouter();
+  const { createCase } = useCases();
   const [isLoading, setIsLoading] = useState(false);
+  const [isCreatingCase, setIsCreatingCase] = useState(false);
   const [result, setResult] = useState<RiskScoreResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +53,7 @@ export default function RiskScreen() {
   const [bondAmount, setBondAmount] = useState('');
   const [priorFTAs, setPriorFTAs] = useState('0');
   const [priorConvictions, setPriorConvictions] = useState('0');
+  const [monthsInJail, setMonthsInJail] = useState('0');
   const [employmentStatus, setEmploymentStatus] = useState<'employed' | 'unemployed' | 'self-employed'>('employed');
   const [residenceType, setResidenceType] = useState<'own' | 'rent' | 'with_family' | 'homeless'>('rent');
   const [residenceDuration, setResidenceDuration] = useState('');
@@ -75,6 +81,7 @@ export default function RiskScreen() {
         bond_amount: bondAmount ? parseFloat(bondAmount) : undefined,
         prior_ftas: parseInt(priorFTAs) || 0,
         prior_convictions: parseInt(priorConvictions) || 0,
+        months_in_jail: monthsInJail ? parseInt(monthsInJail) : undefined,
         employment_status: employmentStatus,
         residence_type: residenceType,
         residence_duration_months: residenceDuration ? parseInt(residenceDuration) : undefined,
@@ -101,6 +108,7 @@ export default function RiskScreen() {
     setBondAmount('');
     setPriorFTAs('0');
     setPriorConvictions('0');
+    setMonthsInJail('0');
     setEmploymentStatus('employed');
     setResidenceType('rent');
     setResidenceDuration('');
@@ -112,6 +120,51 @@ export default function RiskScreen() {
     setCharges('');
     setResult(null);
     setError(null);
+  };
+
+  const createCaseWithOSINT = async () => {
+    if (!name.trim() || !result) return;
+    setIsCreatingCase(true);
+    try {
+      const newCase = await createCase(
+        name.trim(),
+        'fta_recovery',
+        undefined,
+        undefined,
+        result.score,
+        result.risk_level
+      );
+      // Navigate to case detail with OSINT auto-run
+      router.push({
+        pathname: `/case/${newCase.id}`,
+        params: { autoRunOSINT: 'true' }
+      });
+    } catch (err) {
+      setError('Failed to create case');
+    } finally {
+      setIsCreatingCase(false);
+    }
+  };
+
+  const createCaseWithDocs = async () => {
+    if (!name.trim() || !result) return;
+    setIsCreatingCase(true);
+    try {
+      const newCase = await createCase(
+        name.trim(),
+        'fta_recovery',
+        undefined,
+        undefined,
+        result.score,
+        result.risk_level
+      );
+      // Navigate to case detail for document upload
+      router.push(`/case/${newCase.id}`);
+    } catch (err) {
+      setError('Failed to create case');
+    } finally {
+      setIsCreatingCase(false);
+    }
   };
 
   const renderToggleButton = (
@@ -210,9 +263,48 @@ export default function RiskScreen() {
           </View>
         </View>
 
+        {/* Action Buttons */}
+        <Text style={styles.nextStepsTitle}>NEXT STEPS</Text>
+
+        <TouchableOpacity
+          style={[styles.actionButton, styles.osintButton]}
+          onPress={createCaseWithOSINT}
+          disabled={isCreatingCase}
+        >
+          {isCreatingCase ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <>
+              <Ionicons name="search" size={20} color="#fff" />
+              <View style={styles.actionButtonTextContainer}>
+                <Text style={styles.actionButtonText}>Run OSINT Search</Text>
+                <Text style={styles.actionButtonSubtext}>Create case & search social media</Text>
+              </View>
+            </>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionButton, styles.docsButton]}
+          onPress={createCaseWithDocs}
+          disabled={isCreatingCase}
+        >
+          {isCreatingCase ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <>
+              <Ionicons name="document-text" size={20} color="#fff" />
+              <View style={styles.actionButtonTextContainer}>
+                <Text style={styles.actionButtonText}>Upload Documents</Text>
+                <Text style={styles.actionButtonSubtext}>Create case & upload docs for refined score</Text>
+              </View>
+            </>
+          )}
+        </TouchableOpacity>
+
         {/* New Assessment Button */}
         <TouchableOpacity style={styles.newAssessmentButton} onPress={resetForm}>
-          <Ionicons name="refresh" size={18} color="#fff" />
+          <Ionicons name="refresh" size={18} color={THEME.text} />
           <Text style={styles.newAssessmentText}>New Assessment</Text>
         </TouchableOpacity>
       </View>
@@ -235,6 +327,18 @@ export default function RiskScreen() {
             Assess failure-to-appear risk before posting bond
           </Text>
         </View>
+
+        {/* Quick Import from Jail Roster */}
+        {!result && (
+          <TouchableOpacity
+            style={styles.importRosterBtn}
+            onPress={() => router.push('/import-roster')}
+          >
+            <Ionicons name="download" size={20} color={THEME.success} />
+            <Text style={styles.importRosterText}>Import from Jail Roster</Text>
+            <Text style={styles.importRosterHint}>Auto-fill data from booking URL</Text>
+          </TouchableOpacity>
+        )}
 
         {result ? (
           renderResult()
@@ -314,6 +418,19 @@ export default function RiskScreen() {
                   keyboardType="numeric"
                 />
               </View>
+            </View>
+
+            {/* Months in Jail */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Months in Jail (total)</Text>
+              <TextInput
+                style={styles.textInput}
+                value={monthsInJail}
+                onChangeText={setMonthsInJail}
+                placeholder="0"
+                placeholderTextColor={THEME.textMuted}
+                keyboardType="numeric"
+              />
             </View>
 
             {/* Employment Status */}
@@ -719,10 +836,71 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: THEME.border,
     marginBottom: 40,
+    marginTop: 12,
   },
   newAssessmentText: {
     fontSize: 15,
     fontWeight: '600',
     color: THEME.text,
+  },
+  nextStepsTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: THEME.textMuted,
+    letterSpacing: 1,
+    marginBottom: 12,
+    marginTop: 8,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+  osintButton: {
+    backgroundColor: THEME.primary,
+  },
+  docsButton: {
+    backgroundColor: '#1e40af',
+  },
+  actionButtonTextContainer: {
+    flex: 1,
+  },
+  actionButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  actionButtonSubtext: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.7)',
+    marginTop: 2,
+  },
+  importRosterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+    backgroundColor: THEME.success + '15',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: THEME.success + '40',
+  },
+  importRosterText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: THEME.success,
+  },
+  importRosterHint: {
+    fontSize: 12,
+    color: THEME.textSecondary,
+    width: '100%',
+    marginTop: 2,
   },
 });

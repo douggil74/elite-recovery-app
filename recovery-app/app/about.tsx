@@ -496,10 +496,10 @@ export default function AboutScreen() {
           </Text>
           <TouchableOpacity
             style={styles.supportLink}
-            onPress={() => Linking.openURL('mailto:support@eliterecovery.la')}
+            onPress={() => Linking.openURL('mailto:douglas@eliterecoveryla.com')}
           >
             <Ionicons name="mail" size={16} color={COLORS.primary} />
-            <Text style={styles.supportLinkText}>support@eliterecovery.la</Text>
+            <Text style={styles.supportLinkText}>douglas@eliterecoveryla.com</Text>
           </TouchableOpacity>
         </View>
 
