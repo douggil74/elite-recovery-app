@@ -1879,8 +1879,194 @@ class MultiUsernameRequest(BaseModel):
     timeout: int = 30
 
 
-def generate_username_variations(full_name: str) -> List[str]:
-    """Generate common username variations from a name"""
+# Common name variants/nicknames mapping (both directions)
+NAME_VARIANTS = {
+    # Male names
+    "william": ["will", "bill", "billy", "willy", "liam"],
+    "will": ["william", "bill", "billy"],
+    "bill": ["william", "will", "billy"],
+    "billy": ["william", "will", "bill"],
+    "robert": ["rob", "robby", "bob", "bobby", "bert"],
+    "rob": ["robert", "robby", "bob", "bobby"],
+    "bob": ["robert", "rob", "bobby"],
+    "bobby": ["robert", "rob", "bob"],
+    "richard": ["rick", "ricky", "dick", "rich", "richie"],
+    "rick": ["richard", "ricky", "rich"],
+    "dick": ["richard", "rick"],
+    "james": ["jim", "jimmy", "jamie", "jem"],
+    "jim": ["james", "jimmy", "jamie"],
+    "jimmy": ["james", "jim", "jamie"],
+    "michael": ["mike", "mikey", "mick", "mickey"],
+    "mike": ["michael", "mikey", "mick"],
+    "john": ["jack", "johnny", "jon"],
+    "jack": ["john", "jackson"],
+    "johnny": ["john", "jonathan"],
+    "jonathan": ["jon", "johnny", "john", "nathan"],
+    "jon": ["john", "jonathan"],
+    "joseph": ["joe", "joey", "jo"],
+    "joe": ["joseph", "joey"],
+    "joey": ["joseph", "joe"],
+    "charles": ["charlie", "chuck", "chas", "chaz"],
+    "charlie": ["charles", "chuck"],
+    "chuck": ["charles", "charlie"],
+    "thomas": ["tom", "tommy", "thom"],
+    "tom": ["thomas", "tommy"],
+    "tommy": ["thomas", "tom"],
+    "daniel": ["dan", "danny", "dani"],
+    "dan": ["daniel", "danny"],
+    "danny": ["daniel", "dan"],
+    "david": ["dave", "davey", "davy"],
+    "dave": ["david", "davey"],
+    "edward": ["ed", "eddie", "ted", "teddy", "ned"],
+    "ed": ["edward", "eddie", "edwin", "edgar"],
+    "eddie": ["edward", "ed", "edwin"],
+    "ted": ["edward", "theodore", "teddy"],
+    "theodore": ["ted", "teddy", "theo"],
+    "anthony": ["tony", "ant"],
+    "tony": ["anthony", "antonio"],
+    "antonio": ["tony", "anthony"],
+    "christopher": ["chris", "topher", "kit"],
+    "chris": ["christopher", "christian", "christine"],
+    "matthew": ["matt", "matty"],
+    "matt": ["matthew", "matty"],
+    "andrew": ["andy", "drew", "andre"],
+    "andy": ["andrew", "anderson"],
+    "drew": ["andrew"],
+    "benjamin": ["ben", "benny", "benji"],
+    "ben": ["benjamin", "benny", "benedict"],
+    "samuel": ["sam", "sammy"],
+    "sam": ["samuel", "sammy", "samantha"],
+    "nicholas": ["nick", "nicky", "nico"],
+    "nick": ["nicholas", "nicky"],
+    "patrick": ["pat", "patty", "paddy"],
+    "pat": ["patrick", "patricia"],
+    "timothy": ["tim", "timmy"],
+    "tim": ["timothy", "timmy"],
+    "steven": ["steve", "stevie", "stephen"],
+    "steve": ["steven", "stephen", "stevie"],
+    "stephen": ["steve", "steven"],
+    "douglas": ["doug", "dougie"],
+    "doug": ["douglas", "dougie"],
+    "gregory": ["greg", "gregg"],
+    "greg": ["gregory", "gregg"],
+    "kenneth": ["ken", "kenny"],
+    "ken": ["kenneth", "kenny", "kendall"],
+    "raymond": ["ray", "raymon"],
+    "ray": ["raymond", "raymon"],
+    "lawrence": ["larry", "laurie"],
+    "larry": ["lawrence", "laurence"],
+    "gerald": ["gerry", "jerry", "gerard"],
+    "jerry": ["gerald", "jerome", "jeremiah"],
+    "jeffrey": ["jeff", "geoff"],
+    "jeff": ["jeffrey", "geoffrey"],
+    "alexander": ["alex", "xander", "al", "lex"],
+    "alex": ["alexander", "alexis", "alexandra"],
+    "nathaniel": ["nate", "nathan", "nat"],
+    "nathan": ["nathaniel", "nate"],
+    "nate": ["nathan", "nathaniel"],
+    "zachary": ["zach", "zack", "zak"],
+    "zach": ["zachary", "zack"],
+    "joshua": ["josh", "joshy"],
+    "josh": ["joshua"],
+    "jacob": ["jake", "jakey"],
+    "jake": ["jacob"],
+    "phillip": ["phil", "pip"],
+    "phil": ["phillip", "philip"],
+    "frederick": ["fred", "freddy", "rick"],
+    "fred": ["frederick", "freddy", "alfred"],
+    "alfred": ["al", "alf", "alfie", "fred"],
+    "al": ["alfred", "albert", "alan", "alex"],
+    "albert": ["al", "bert", "bertie"],
+
+    # Female names
+    "elizabeth": ["liz", "lizzy", "beth", "betty", "eliza", "ellie", "lisa"],
+    "liz": ["elizabeth", "lizzy"],
+    "beth": ["elizabeth", "bethany"],
+    "betty": ["elizabeth", "beatrice"],
+    "jennifer": ["jen", "jenny", "jenn"],
+    "jen": ["jennifer", "jenny"],
+    "jenny": ["jennifer", "jen"],
+    "katherine": ["kate", "katie", "kathy", "cathy", "kat"],
+    "kate": ["katherine", "katelyn", "katie"],
+    "katie": ["katherine", "kate"],
+    "kathy": ["katherine", "kathleen"],
+    "catherine": ["cathy", "kate", "katie", "cat"],
+    "margaret": ["maggie", "meg", "peggy", "marge", "margie"],
+    "maggie": ["margaret", "magdalene"],
+    "patricia": ["pat", "patty", "trish", "tricia"],
+    "trish": ["patricia", "tricia"],
+    "jessica": ["jess", "jessie"],
+    "jess": ["jessica", "jessie"],
+    "rebecca": ["becky", "becca", "beck"],
+    "becky": ["rebecca", "becca"],
+    "samantha": ["sam", "sammy"],
+    "amanda": ["mandy", "amy"],
+    "mandy": ["amanda", "miranda"],
+    "victoria": ["vicky", "vicki", "tori"],
+    "vicky": ["victoria", "vicki"],
+    "stephanie": ["steph", "steffi"],
+    "steph": ["stephanie", "stefan"],
+    "christina": ["chris", "tina", "christy"],
+    "tina": ["christina", "martina", "valentina"],
+    "alexandra": ["alex", "alexa", "lexi", "sandra"],
+    "sandra": ["sandy", "alexandra", "cassandra"],
+    "sandy": ["sandra", "alexander"],
+    "melissa": ["missy", "mel", "lisa"],
+    "mel": ["melissa", "melanie", "melody"],
+    "deborah": ["deb", "debbie", "debby"],
+    "deb": ["deborah", "debbie"],
+    "debbie": ["deborah", "deb"],
+    "kimberly": ["kim", "kimmy"],
+    "kim": ["kimberly", "kimmy"],
+    "michelle": ["shelly", "micki", "mich"],
+    "shelly": ["michelle", "shelley", "rachel"],
+    "nicole": ["nicky", "nikki", "cole"],
+    "nikki": ["nicole", "nicky"],
+    "heather": ["heath"],
+    "ashley": ["ash", "ashy"],
+    "ash": ["ashley", "asher", "ashton"],
+    "brittany": ["brit", "britt"],
+    "cynthia": ["cindy", "cyn"],
+    "cindy": ["cynthia", "lucinda"],
+    "dorothy": ["dot", "dottie", "dolly"],
+    "dot": ["dorothy", "dottie"],
+    "frances": ["fran", "frannie", "frankie"],
+    "fran": ["frances", "francesca"],
+    "jacqueline": ["jackie", "jacqui"],
+    "jackie": ["jacqueline", "jack"],
+    "susan": ["sue", "susie", "suzy"],
+    "sue": ["susan", "susie"],
+    "susie": ["susan", "sue", "suzanne"],
+    "nancy": ["nan"],
+    "ann": ["annie", "anna", "anne"],
+    "anna": ["ann", "annie", "anne"],
+    "anne": ["ann", "anna", "annie"],
+}
+
+
+def get_name_variants(name: str) -> List[str]:
+    """Get all known variants of a first name"""
+    name_lower = name.lower().strip()
+    variants = set([name_lower])
+
+    # Check if this name has variants
+    if name_lower in NAME_VARIANTS:
+        variants.update(NAME_VARIANTS[name_lower])
+
+    # Also check if any variant maps back to this name
+    for key, values in NAME_VARIANTS.items():
+        if name_lower in values:
+            variants.add(key)
+            variants.update(values)
+
+    return list(variants)
+
+
+def generate_username_variations(full_name: str, include_name_variants: bool = True) -> List[str]:
+    """
+    Generate common username variations from a name.
+    Now includes nickname variants (Doug → Douglas, Bill → William, etc.)
+    """
     parts = full_name.lower().split()
     if len(parts) < 2:
         return [full_name.lower().replace(" ", "")]
@@ -1891,28 +2077,38 @@ def generate_username_variations(full_name: str) -> List[str]:
     first_initial = first[0] if first else ""
     last_initial = last[0] if last else ""
 
-    variations = [
-        f"{first}{last}",           # amandadriskell
-        f"{first}_{last}",          # amanda_driskell
-        f"{first}.{last}",          # amanda.driskell
-        f"{first}-{last}",          # amanda-driskell
-        f"{last}{first}",           # driskellamanda
-        f"{first_initial}{last}",   # adriskell
-        f"{first}{last_initial}",   # amandad
-        f"{first}_{last_initial}",  # amanda_d
-        f"{last}_{first}",          # driskell_amanda
-        f"{first}{last}1",          # amandadriskell1
-        f"{first}{last}123",        # amandadriskell123
-        f"real{first}{last}",       # realamandadriskell
-        f"the{first}{last}",        # theamandadriskell
-        f"{first}official",         # amandaofficial
-    ]
+    # Get all first name variants
+    first_names = [first]
+    if include_name_variants:
+        first_names = get_name_variants(first)
 
-    if middle:
+    variations = []
+
+    # Generate variations for each first name variant
+    for fname in first_names:
+        f_initial = fname[0] if fname else ""
         variations.extend([
-            f"{first}{middle[0]}{last}",   # amandajdriskell
-            f"{first}_{middle[0]}_{last}", # amanda_j_driskell
+            f"{fname}{last}",           # douggilford, douglasgilford
+            f"{fname}_{last}",          # doug_gilford
+            f"{fname}.{last}",          # doug.gilford
+            f"{fname}-{last}",          # doug-gilford
+            f"{last}{fname}",           # gilforddoug
+            f"{f_initial}{last}",       # dgilford
+            f"{fname}{last_initial}",   # dougg
+            f"{fname}_{last_initial}",  # doug_g
+            f"{last}_{fname}",          # gilford_doug
+            f"{fname}{last}1",          # douggilford1
+            f"{fname}{last}123",        # douggilford123
+            f"real{fname}{last}",       # realdouggilford
+            f"the{fname}{last}",        # thedouggilford
+            f"{fname}official",         # dougofficial
         ])
+
+        if middle:
+            variations.extend([
+                f"{fname}{middle[0]}{last}",   # dougmgilford
+                f"{fname}_{middle[0]}_{last}", # doug_m_gilford
+            ])
 
     # Remove duplicates and filter
     return list(dict.fromkeys([v for v in variations if len(v) > 2]))
@@ -2074,71 +2270,216 @@ class InvestigatePersonRequest(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     location: Optional[str] = None  # State/city to narrow down
+    state: Optional[str] = None  # 2-letter state code (e.g., "LA")
+    jail_parish: Optional[str] = None  # Parish/county where booked
+    mugshot_url: Optional[str] = None  # For photo verification
+    demographics: Optional[Dict[str, str]] = None  # race, sex, age
+
+
+# US States and common location keywords for filtering
+US_STATES = {
+    "AL": "alabama", "AK": "alaska", "AZ": "arizona", "AR": "arkansas",
+    "CA": "california", "CO": "colorado", "CT": "connecticut", "DE": "delaware",
+    "FL": "florida", "GA": "georgia", "HI": "hawaii", "ID": "idaho",
+    "IL": "illinois", "IN": "indiana", "IA": "iowa", "KS": "kansas",
+    "KY": "kentucky", "LA": "louisiana", "ME": "maine", "MD": "maryland",
+    "MA": "massachusetts", "MI": "michigan", "MN": "minnesota", "MS": "mississippi",
+    "MO": "missouri", "MT": "montana", "NE": "nebraska", "NV": "nevada",
+    "NH": "new hampshire", "NJ": "new jersey", "NM": "new mexico", "NY": "new york",
+    "NC": "north carolina", "ND": "north dakota", "OH": "ohio", "OK": "oklahoma",
+    "OR": "oregon", "PA": "pennsylvania", "RI": "rhode island", "SC": "south carolina",
+    "SD": "south dakota", "TN": "tennessee", "TX": "texas", "UT": "utah",
+    "VT": "vermont", "VA": "virginia", "WA": "washington", "WV": "west virginia",
+    "WI": "wisconsin", "WY": "wyoming", "DC": "washington dc"
+}
+
+# Louisiana parishes for local matching
+LA_PARISHES = [
+    "st. tammany", "st tammany", "orleans", "jefferson", "east baton rouge",
+    "caddo", "calcasieu", "lafayette", "ouachita", "livingston", "tangipahoa",
+    "rapides", "bossier", "terrebonne", "lafourche", "ascension", "iberia",
+    "washington", "st. landry", "st landry", "vermilion", "acadia", "st. mary",
+    "st mary", "natchitoches", "lincoln", "beauregard", "st. john", "st john"
+]
+
+# Non-US locations to filter out
+NON_US_INDICATORS = [
+    "canada", "canadian", "ontario", "quebec", "british columbia", "alberta",
+    "toronto", "vancouver", "montreal", "calgary", "ottawa", "edmonton",
+    "uk", "united kingdom", "england", "london", "manchester", "birmingham",
+    "australia", "sydney", "melbourne", "brisbane", "perth",
+    "germany", "france", "spain", "italy", "netherlands", "sweden",
+    "india", "mumbai", "delhi", "bangalore", "chennai",
+    "mexico", "brazil", "argentina", "colombia",
+    "nigeria", "south africa", "kenya",
+    "philippines", "indonesia", "vietnam", "thailand", "japan", "china", "korea"
+]
+
+
+def check_location_relevance(profile_url: str, profile_bio: str = "", target_state: str = "LA") -> Dict[str, Any]:
+    """
+    Check if a social profile is geographically relevant to the target.
+    Returns relevance score and reason.
+    """
+    url_lower = profile_url.lower()
+    bio_lower = (profile_bio or "").lower()
+    combined = f"{url_lower} {bio_lower}"
+
+    target_state_lower = target_state.lower() if target_state else "la"
+    target_state_full = US_STATES.get(target_state.upper(), target_state_lower) if target_state else "louisiana"
+
+    result = {
+        "is_relevant": True,
+        "confidence": 0.5,  # Default neutral
+        "reason": "No location indicators found",
+        "location_found": None,
+        "is_local": False,
+        "is_foreign": False
+    }
+
+    # Check for non-US locations (strong negative signal)
+    for non_us in NON_US_INDICATORS:
+        if non_us in combined:
+            result["is_relevant"] = False
+            result["confidence"] = 0.1
+            result["reason"] = f"Profile appears to be from {non_us.title()} - likely different person"
+            result["location_found"] = non_us.title()
+            result["is_foreign"] = True
+            return result
+
+    # Check for target state (strong positive signal)
+    if target_state_lower in combined or target_state_full in combined:
+        result["is_relevant"] = True
+        result["confidence"] = 0.9
+        result["reason"] = f"Profile location matches target state ({target_state.upper()})"
+        result["location_found"] = target_state.upper()
+        result["is_local"] = True
+        return result
+
+    # Check for Louisiana parishes specifically
+    if target_state.upper() == "LA":
+        for parish in LA_PARISHES:
+            if parish in combined:
+                result["is_relevant"] = True
+                result["confidence"] = 0.95
+                result["reason"] = f"Profile mentions {parish.title()} parish - strong local match"
+                result["location_found"] = parish.title()
+                result["is_local"] = True
+                return result
+
+    # Check for other US states (might be same person who moved)
+    for state_code, state_name in US_STATES.items():
+        if state_code.lower() != target_state_lower and (state_code.lower() in combined or state_name in combined):
+            result["is_relevant"] = True
+            result["confidence"] = 0.6
+            result["reason"] = f"Profile may be in {state_name.title()} - verify if person relocated"
+            result["location_found"] = state_name.title()
+            return result
+
+    return result
 
 
 class InvestigatePersonResult(BaseModel):
     name: str
+    name_variants_searched: List[str]
     searched_at: str
     flow_steps: List[Dict[str, Any]]
     discovered_emails: List[str]
     discovered_usernames: List[str]
-    confirmed_profiles: List[Dict[str, str]]
+    confirmed_profiles: List[Dict[str, Any]]  # Changed to Any to include location data
+    filtered_profiles: List[Dict[str, Any]]  # Profiles filtered out due to location mismatch
     people_search_links: List[Dict[str, str]]
+    location_context: Optional[Dict[str, str]]
     summary: str
     execution_time: float
 
 
-@app.post("/api/investigate", response_model=InvestigatePersonResult)
+@app.post("/api/investigate")
 async def investigate_person(request: InvestigatePersonRequest):
     """
     Intelligent person investigation flow:
-    1. Generate people search links
-    2. If email provided, check registrations with holehe
-    3. Try username variations with Sherlock
-    4. Compile all findings
+    1. Generate name variants (Doug → Douglas, Bill → William)
+    2. Generate people search links
+    3. If email provided, check registrations with holehe
+    4. Try username variations with Sherlock
+    5. Filter results by geographic relevance
+    6. Compile all findings
     """
     start_time = datetime.now()
     flow_steps = []
     discovered_emails = []
     discovered_usernames = []
     confirmed_profiles = []
+    filtered_profiles = []  # Profiles filtered due to location mismatch
+    name_variants_searched = []
 
-    # Parse name
+    # Parse name and get variants
     name_parts = request.name.lower().split()
     first = name_parts[0] if name_parts else ""
     last = name_parts[-1] if len(name_parts) > 1 else name_parts[0] if name_parts else ""
 
-    # Step 1: Generate people search links
+    # Step 0: Generate name variants (Doug → Douglas, Bill → William)
+    flow_steps.append({
+        "step": 0,
+        "action": "Generate name variants",
+        "status": "running"
+    })
+
+    first_name_variants = get_name_variants(first)
+    name_variants_searched = [f"{fv} {last}" for fv in first_name_variants[:5]]  # Top 5 variants
+
+    flow_steps[-1]["status"] = "complete"
+    flow_steps[-1]["result"] = f"Name variants: {', '.join(first_name_variants[:5])}"
+
+    # Determine target location for filtering
+    target_state = request.state or "LA"  # Default to Louisiana
+    location_context = {
+        "target_state": target_state,
+        "jail_parish": request.jail_parish,
+        "provided_location": request.location
+    }
+
+    # Step 1: Generate people search links (for all name variants)
     flow_steps.append({
         "step": 1,
         "action": "Generate people search links",
         "status": "running"
     })
 
-    people_search_links = [
-        {"name": "TruePeopleSearch", "url": f"https://www.truepeoplesearch.com/results?name={request.name.replace(' ', '%20')}", "type": "free"},
-        {"name": "FastPeopleSearch", "url": f"https://www.fastpeoplesearch.com/name/{request.name.replace(' ', '-')}", "type": "free"},
-        {"name": "Whitepages", "url": f"https://www.whitepages.com/name/{first}-{last}", "type": "free"},
-        {"name": "Spokeo", "url": f"https://www.spokeo.com/{first}-{last}", "type": "paid"},
-        {"name": "BeenVerified", "url": f"https://www.beenverified.com/people/{first}-{last}/", "type": "paid"},
-        {"name": "Intelius", "url": f"https://www.intelius.com/people-search/{first}-{last}/", "type": "paid"},
-        {"name": "ThatsThem", "url": f"https://thatsthem.com/name/{first}-{last}", "type": "free"},
-        {"name": "USSearch", "url": f"https://www.ussearch.com/search/results/people?firstName={first}&lastName={last}", "type": "paid"},
-        {"name": "Facebook", "url": f"https://www.facebook.com/search/people?q={request.name.replace(' ', '%20')}", "type": "social"},
-        {"name": "LinkedIn", "url": f"https://www.linkedin.com/search/results/people/?keywords={request.name.replace(' ', '%20')}", "type": "social"},
-        {"name": "Instagram", "url": f"https://www.instagram.com/{first}{last}/", "type": "social"},
-        {"name": "Twitter/X", "url": f"https://twitter.com/search?q={request.name.replace(' ', '%20')}&f=user", "type": "social"},
-    ]
+    people_search_links = []
 
-    if request.location:
-        loc = request.location.replace(' ', '%20')
+    # Generate links for original name and variants
+    for name_variant in [request.name] + name_variants_searched[:2]:
+        nv_parts = name_variant.lower().split()
+        nv_first = nv_parts[0] if nv_parts else ""
+        nv_last = nv_parts[-1] if len(nv_parts) > 1 else nv_first
+
+        people_search_links.extend([
+            {"name": f"TruePeopleSearch ({nv_first.title()})", "url": f"https://www.truepeoplesearch.com/results?name={name_variant.replace(' ', '%20')}", "type": "free"},
+            {"name": f"FastPeopleSearch ({nv_first.title()})", "url": f"https://www.fastpeoplesearch.com/name/{name_variant.replace(' ', '-')}", "type": "free"},
+            {"name": f"Facebook ({nv_first.title()})", "url": f"https://www.facebook.com/search/people?q={name_variant.replace(' ', '%20')}", "type": "social"},
+        ])
+
+    # Add location-specific searches
+    if request.location or request.state:
+        loc = (request.location or US_STATES.get(request.state, request.state)).replace(' ', '%20')
         people_search_links.extend([
             {"name": "TruePeopleSearch (Location)", "url": f"https://www.truepeoplesearch.com/results?name={request.name.replace(' ', '%20')}&citystatezip={loc}", "type": "free"},
             {"name": "Whitepages (Location)", "url": f"https://www.whitepages.com/name/{first}-{last}/{loc}", "type": "free"},
         ])
 
+    # Standard links
+    people_search_links.extend([
+        {"name": "Whitepages", "url": f"https://www.whitepages.com/name/{first}-{last}", "type": "free"},
+        {"name": "Spokeo", "url": f"https://www.spokeo.com/{first}-{last}", "type": "paid"},
+        {"name": "BeenVerified", "url": f"https://www.beenverified.com/people/{first}-{last}/", "type": "paid"},
+        {"name": "LinkedIn", "url": f"https://www.linkedin.com/search/results/people/?keywords={request.name.replace(' ', '%20')}", "type": "social"},
+        {"name": "Instagram", "url": f"https://www.instagram.com/{first}{last}/", "type": "social"},
+        {"name": "Twitter/X", "url": f"https://twitter.com/search?q={request.name.replace(' ', '%20')}&f=user", "type": "social"},
+    ])
+
     flow_steps[-1]["status"] = "complete"
-    flow_steps[-1]["result"] = f"Generated {len(people_search_links)} search links"
+    flow_steps[-1]["result"] = f"Generated {len(people_search_links)} search links for {len(name_variants_searched) + 1} name variants"
 
     # Step 2: If email provided, check with holehe
     if request.email:
@@ -2162,7 +2503,9 @@ async def investigate_person(request: InvestigatePersonRequest):
                     "platform": service.get('service', 'Unknown'),
                     "source": "holehe (email)",
                     "email": request.email,
-                    "url": f"https://{service.get('service', '').lower().replace(' ', '')}.com"
+                    "url": f"https://{service.get('service', '').lower().replace(' ', '')}.com",
+                    "location_verified": False,
+                    "location_note": "Email registration - location unknown"
                 })
 
             flow_steps[-1]["status"] = "complete"
@@ -2172,15 +2515,15 @@ async def investigate_person(request: InvestigatePersonRequest):
             flow_steps[-1]["status"] = "error"
             flow_steps[-1]["result"] = str(e)
 
-    # Step 3: Try common username variations with Sherlock
+    # Step 3: Try username variations with Sherlock (including name variants)
     flow_steps.append({
         "step": 3,
-        "action": "Search username variations with Sherlock",
+        "action": "Search username variations with Sherlock (includes name variants)",
         "status": "running"
     })
 
-    # Generate smart username variations
-    username_variations = generate_username_variations(request.name)[:5]  # Top 5
+    # Generate smart username variations for ALL name variants
+    username_variations = generate_username_variations(request.name, include_name_variants=True)[:10]  # Top 10
     discovered_usernames.extend(username_variations)
 
     loop = asyncio.get_event_loop()
@@ -2195,41 +2538,76 @@ async def investigate_person(request: InvestigatePersonRequest):
             for profile in result.get('found', []):
                 url = profile.get('url', '')
                 if url and url not in all_sherlock_found:
-                    all_sherlock_found[url] = {
+                    # Check location relevance
+                    loc_check = check_location_relevance(url, "", target_state)
+
+                    profile_data = {
                         "platform": profile.get('platform', 'Unknown'),
                         "url": url,
                         "username": username,
-                        "source": "sherlock"
+                        "source": "sherlock",
+                        "location_verified": loc_check["is_local"],
+                        "location_confidence": loc_check["confidence"],
+                        "location_note": loc_check["reason"],
+                        "location_found": loc_check.get("location_found")
                     }
-                    confirmed_profiles.append(all_sherlock_found[url])
+
+                    all_sherlock_found[url] = profile_data
+
+                    # Filter foreign profiles but keep track of them
+                    if loc_check["is_foreign"]:
+                        filtered_profiles.append({
+                            **profile_data,
+                            "filter_reason": f"Location mismatch: {loc_check['reason']}"
+                        })
+                    else:
+                        confirmed_profiles.append(profile_data)
 
         except Exception as e:
             pass  # Continue with other usernames
 
     flow_steps[-1]["status"] = "complete"
-    flow_steps[-1]["result"] = f"Searched {len(username_variations)} usernames, found {len(all_sherlock_found)} profiles"
+    flow_steps[-1]["result"] = f"Searched {len(username_variations)} usernames, found {len(all_sherlock_found)} profiles, filtered {len(filtered_profiles)} foreign"
+
+    # Step 4: Location filtering summary
+    local_profiles = [p for p in confirmed_profiles if p.get("location_verified")]
+    uncertain_profiles = [p for p in confirmed_profiles if not p.get("location_verified") and not p.get("location_found")]
+
+    flow_steps.append({
+        "step": 4,
+        "action": "Location filtering",
+        "status": "complete",
+        "result": f"Local matches: {len(local_profiles)}, Uncertain: {len(uncertain_profiles)}, Filtered out: {len(filtered_profiles)}"
+    })
 
     # Build summary
     summary_parts = [
         f"Investigated: {request.name}",
-        f"Search links: {len(people_search_links)}",
+        f"Name variants: {', '.join(first_name_variants[:3])}",
         f"Usernames tried: {', '.join(username_variations[:3])}...",
-        f"Confirmed profiles: {len(confirmed_profiles)}"
+        f"Confirmed profiles: {len(confirmed_profiles)}",
+        f"Local matches: {len(local_profiles)}",
     ]
 
+    if filtered_profiles:
+        summary_parts.append(f"Filtered (wrong location): {len(filtered_profiles)}")
+
     if request.email:
-        summary_parts.insert(1, f"Email checked: {request.email}")
+        summary_parts.insert(2, f"Email checked: {request.email}")
 
     execution_time = (datetime.now() - start_time).total_seconds()
 
     return {
         "name": request.name,
+        "name_variants_searched": name_variants_searched,
         "searched_at": datetime.now().isoformat(),
         "flow_steps": flow_steps,
         "discovered_emails": discovered_emails,
         "discovered_usernames": discovered_usernames,
         "confirmed_profiles": confirmed_profiles,
+        "filtered_profiles": filtered_profiles,
         "people_search_links": people_search_links,
+        "location_context": location_context,
         "summary": " | ".join(summary_parts),
         "execution_time": execution_time
     }
