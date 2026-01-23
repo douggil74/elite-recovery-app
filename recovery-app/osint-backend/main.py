@@ -2998,46 +2998,70 @@ async def scrape_jail_roster(url: str) -> Dict[str, Any]:
     html = None
     response_status = None
     from urllib.parse import quote
+    import random
 
-    # Method 1: Try multiple free CORS proxies
-    proxy_configs = [
-        # allorigins.win
-        {
-            'url': f"https://api.allorigins.win/get?url={quote(url, safe='')}",
-            'extract': lambda r: r.json().get('contents') if r.status_code == 200 else None
-        },
-        # corsproxy.io
-        {
-            'url': f"https://corsproxy.io/?{quote(url, safe='')}",
-            'extract': lambda r: r.text if r.status_code == 200 else None
-        },
-        # cors.sh
-        {
-            'url': f"https://cors.sh/{url}",
-            'extract': lambda r: r.text if r.status_code == 200 else None,
-            'headers': {'x-cors-api-key': 'temp_free'}
-        },
-        # thingproxy
-        {
-            'url': f"https://thingproxy.freeboard.io/fetch/{url}",
-            'extract': lambda r: r.text if r.status_code == 200 else None
-        },
+    # Rotate user agents to avoid detection
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
     ]
+    random_ua = random.choice(user_agents)
 
-    for proxy in proxy_configs:
-        if html:
-            break
-        try:
-            proxy_headers = proxy.get('headers', {})
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(proxy['url'], headers=proxy_headers)
-                response_status = response.status_code
-                content = proxy['extract'](response)
-                if content and len(content) > 500:  # Must have real content
-                    html = content
-                    break
-        except Exception as e:
-            errors.append(f"Proxy: {str(e)[:30]}")
+    # Method 1: Try ScrapingBee free tier (100 free credits/month)
+    # Using render=false for speed, premium_proxy for better success
+    try:
+        import os
+        scrapingbee_key = os.environ.get('SCRAPINGBEE_API_KEY')
+        if scrapingbee_key:
+            sb_url = f"https://app.scrapingbee.com/api/v1/?api_key={scrapingbee_key}&url={quote(url, safe='')}&render_js=false"
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.get(sb_url)
+                if response.status_code == 200 and len(response.text) > 500:
+                    html = response.text
+    except Exception as e:
+        errors.append(f"ScrapingBee: {str(e)[:30]}")
+
+    # Method 2: Try multiple free CORS proxies with better headers
+    if not html:
+        proxy_configs = [
+            # allorigins.win
+            {
+                'url': f"https://api.allorigins.win/get?url={quote(url, safe='')}",
+                'extract': lambda r: r.json().get('contents') if r.status_code == 200 else None
+            },
+            # corsproxy.io
+            {
+                'url': f"https://corsproxy.io/?{quote(url, safe='')}",
+                'extract': lambda r: r.text if r.status_code == 200 else None
+            },
+            # webscraping.ai free tier
+            {
+                'url': f"https://api.webscraping.ai/html?api_key=demo&url={quote(url, safe='')}",
+                'extract': lambda r: r.text if r.status_code == 200 else None
+            },
+        ]
+
+        for proxy in proxy_configs:
+            if html:
+                break
+            try:
+                proxy_headers = {
+                    'User-Agent': random_ua,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    **proxy.get('headers', {})
+                }
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(proxy['url'], headers=proxy_headers)
+                    response_status = response.status_code
+                    content = proxy['extract'](response)
+                    if content and len(content) > 500:  # Must have real content
+                        html = content
+                        break
+            except Exception as e:
+                errors.append(f"Proxy: {str(e)[:30]}")
 
     # Method 2: Try cloudscraper (bypasses Cloudflare)
     if not html:
