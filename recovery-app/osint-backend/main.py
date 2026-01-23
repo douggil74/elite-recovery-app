@@ -2998,18 +2998,19 @@ async def scrape_jail_roster(url: str) -> Dict[str, Any]:
     html = None
     response_status = None
 
-    # Method 1: Try ScraperAPI first (best anti-bot bypass)
+    # Method 1: Use allorigins.win free proxy (bypasses anti-bot)
     try:
-        scraper_api_key = os.environ.get('SCRAPER_API_KEY', 'free_tier')
-        if scraper_api_key and scraper_api_key != 'free_tier':
-            api_url = f"http://api.scraperapi.com?api_key={scraper_api_key}&url={url}&render=true"
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.get(api_url)
-                response_status = response.status_code
-                if response.status_code == 200:
-                    html = response.text
+        from urllib.parse import quote
+        proxy_url = f"https://api.allorigins.win/get?url={quote(url, safe='')}"
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(proxy_url)
+            response_status = response.status_code
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('contents'):
+                    html = data['contents']
     except Exception as e:
-        errors.append(f"ScraperAPI: {str(e)[:50]}")
+        errors.append(f"Proxy: {str(e)[:50]}")
 
     # Method 2: Try cloudscraper (bypasses Cloudflare)
     if not html:
