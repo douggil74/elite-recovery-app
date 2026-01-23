@@ -83,6 +83,16 @@ interface BulkInmate {
   charges: ChargeData[];
   bonds: BondData[];
   photo_url: string | null;
+  fta_score?: FTAScore;
+}
+
+interface FTAScore {
+  score: number;
+  risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH' | 'UNKNOWN';
+  factors: Array<{ factor: string; impact: string; severity: string }>;
+  prior_bookings: Array<{ booking_number: number; name: string }>;
+  court_records: Array<{ case_name: string; court: string }>;
+  ai_analysis?: string;
 }
 
 export default function ImportRosterScreen() {
@@ -109,6 +119,7 @@ export default function ImportRosterScreen() {
   const [bulkResults, setBulkResults] = useState<BulkInmate[]>([]);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  const [ftaLoading, setFtaLoading] = useState(false);
 
   const [isCreatingCase, setIsCreatingCase] = useState(false);
 
@@ -161,6 +172,62 @@ export default function ImportRosterScreen() {
     }
   };
 
+  // Calculate FTA scores for inmates
+  const calculateFTAScores = async (inmates: BulkInmate[]) => {
+    setFtaLoading(true);
+    try {
+      // Prepare batch request
+      const scoreRequests = inmates.map((inmate) => ({
+        name: inmate.inmate.name,
+        age: inmate.inmate.age,
+        address: inmate.inmate.address,
+        charges: inmate.charges,
+        bond_amount: getBondAmountNumber(inmate),
+        booking_number: inmate.booking_number,
+        jail_base_url: baseUrl.trim(),
+      }));
+
+      const res = await fetch(`${BACKEND_URL}/api/fta-score/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(scoreRequests),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        // Merge FTA scores into inmates
+        const updatedInmates = inmates.map((inmate, idx) => ({
+          ...inmate,
+          fta_score: data.results[idx] as FTAScore,
+        }));
+        setBulkResults(updatedInmates);
+      }
+    } catch (err) {
+      console.log('FTA scoring error:', err);
+    } finally {
+      setFtaLoading(false);
+    }
+  };
+
+  // Helper to extract bond amount as number
+  const getBondAmountNumber = (inmate: BulkInmate): number => {
+    if (inmate.bonds?.length > 0) {
+      const total = inmate.bonds.reduce((sum, b) => {
+        const amt = b.amount?.replace(/[$,]/g, '');
+        return sum + (parseFloat(amt || '0') || 0);
+      }, 0);
+      if (total > 0) return total;
+    }
+    for (const charge of inmate.charges || []) {
+      if (charge.bond_amount) {
+        const amt = charge.bond_amount.replace(/[$,]/g, '');
+        const num = parseFloat(amt);
+        if (num > 0) return num;
+      }
+    }
+    return 0;
+  };
+
   // Bulk scrape
   const bulkScrape = async () => {
     if (!baseUrl.trim()) {
@@ -191,6 +258,8 @@ export default function ImportRosterScreen() {
       if (data.inmates && data.inmates.length > 0) {
         setBulkResults(data.inmates);
         setBulkError(null);
+        // Auto-calculate FTA scores
+        calculateFTAScores(data.inmates);
       } else {
         setBulkError(`No inmates found. Found ${data.count_found} of ${data.count_requested} requested.`);
       }
@@ -349,6 +418,17 @@ export default function ImportRosterScreen() {
     return null;
   };
 
+  // Get FTA score color based on risk level
+  const getFTAScoreColor = (riskLevel: string) => {
+    switch (riskLevel) {
+      case 'LOW': return THEME.success;
+      case 'MEDIUM': return THEME.warning;
+      case 'HIGH': return '#f97316'; // Orange
+      case 'VERY_HIGH': return THEME.danger;
+      default: return THEME.textMuted;
+    }
+  };
+
   const renderBulkInmateCard = ({ item }: { item: BulkInmate }) => (
     <View style={styles.bulkCard}>
       <View style={styles.bulkCardHeader}>
@@ -360,7 +440,17 @@ export default function ImportRosterScreen() {
           </View>
         )}
         <View style={styles.bulkCardInfo}>
-          <Text style={styles.bulkName}>{item.inmate.name}</Text>
+          <View style={styles.nameRow}>
+            <Text style={styles.bulkName}>{item.inmate.name}</Text>
+            {/* FTA Score Badge */}
+            {item.fta_score ? (
+              <View style={[styles.ftaScoreBadge, { backgroundColor: getFTAScoreColor(item.fta_score.risk_level) }]}>
+                <Text style={styles.ftaScoreText}>{item.fta_score.score}</Text>
+              </View>
+            ) : ftaLoading ? (
+              <ActivityIndicator size="small" color={THEME.primary} />
+            ) : null}
+          </View>
           <View style={styles.bulkDetails}>
             {item.inmate.age && <Text style={styles.bulkDetail}>{item.inmate.age} yrs</Text>}
             {item.inmate.sex && <Text style={styles.bulkDetail}>{item.inmate.sex}</Text>}
@@ -369,6 +459,21 @@ export default function ImportRosterScreen() {
           <Text style={styles.bulkBookingNum}>#{item.booking_number}</Text>
         </View>
       </View>
+
+      {/* FTA Risk Factors */}
+      {item.fta_score && item.fta_score.factors.length > 0 && (
+        <View style={styles.ftaFactorsRow}>
+          <Text style={[styles.ftaRiskLabel, { color: getFTAScoreColor(item.fta_score.risk_level) }]}>
+            {item.fta_score.risk_level.replace('_', ' ')} RISK
+          </Text>
+          {item.fta_score.prior_bookings.length > 0 && (
+            <View style={styles.ftaWarning}>
+              <Ionicons name="alert-circle" size={12} color={THEME.danger} />
+              <Text style={styles.ftaWarningText}>{item.fta_score.prior_bookings.length} prior</Text>
+            </View>
+          )}
+        </View>
+      )}
 
       {/* Charges */}
       {item.charges?.length > 0 && (
@@ -708,7 +813,7 @@ export default function ImportRosterScreen() {
                       {bulkResults.length} Inmates Found
                     </Text>
                     <Text style={styles.bulkResultsSubtitle}>
-                      Tap an inmate for FTA Risk or Case creation
+                      {ftaLoading ? 'Calculating FTA risk scores...' : 'FTA scores shown (0-100, higher = more risk)'}
                     </Text>
                   </View>
                   <TouchableOpacity onPress={clearBulkData}>
@@ -1129,11 +1234,57 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
   },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
   bulkName: {
     fontSize: 16,
     fontWeight: '700',
     color: THEME.text,
-    marginBottom: 4,
+    flex: 1,
+  },
+  ftaScoreBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ftaScoreText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  ftaFactorsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: THEME.border,
+  },
+  ftaRiskLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  ftaWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: THEME.danger + '20',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  ftaWarningText: {
+    fontSize: 10,
+    color: THEME.danger,
+    fontWeight: '600',
   },
   bulkDetails: {
     flexDirection: 'row',

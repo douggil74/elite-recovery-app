@@ -3559,6 +3559,594 @@ async def bulk_jail_roster_scrape(request: BulkJailRosterRequest):
 
 
 # ============================================================================
+# FTA RISK SCORING
+# ============================================================================
+
+class FTAScoreRequest(BaseModel):
+    """Request for FTA risk score calculation"""
+    name: str
+    age: Optional[str] = None
+    address: Optional[str] = None
+    charges: Optional[List[Dict[str, Any]]] = None
+    bond_amount: Optional[float] = None
+    booking_number: Optional[int] = None
+    jail_base_url: Optional[str] = None  # For prior booking search
+    race: Optional[str] = None
+    sex: Optional[str] = None
+
+
+class FTAScoreResult(BaseModel):
+    """FTA risk score result with breakdown"""
+    name: str
+    score: int  # 0-100, higher = more risk
+    risk_level: str  # LOW, MEDIUM, HIGH, VERY_HIGH
+    factors: List[Dict[str, Any]]
+    prior_bookings: List[Dict[str, Any]]
+    court_records: List[Dict[str, Any]]
+    ai_analysis: Optional[str] = None
+    execution_time: float
+
+
+# Louisiana parishes for local check
+LOUISIANA_PARISHES = [
+    "acadia", "allen", "ascension", "assumption", "avoyelles", "beauregard",
+    "bienville", "bossier", "caddo", "calcasieu", "caldwell", "cameron",
+    "catahoula", "claiborne", "concordia", "de soto", "desoto", "east baton rouge",
+    "east carroll", "east feliciana", "evangeline", "franklin", "grant",
+    "iberia", "iberville", "jackson", "jefferson", "jefferson davis", "lafayette",
+    "lafourche", "lasalle", "la salle", "lincoln", "livingston", "madison",
+    "morehouse", "natchitoches", "orleans", "ouachita", "plaquemines",
+    "pointe coupee", "rapides", "red river", "richland", "sabine",
+    "st. bernard", "st bernard", "st. charles", "st charles", "st. helena",
+    "st helena", "st. james", "st james", "st. john", "st john",
+    "st. landry", "st landry", "st. martin", "st martin", "st. mary", "st mary",
+    "st. tammany", "st tammany", "tangipahoa", "tensas", "terrebonne",
+    "union", "vermilion", "vernon", "washington", "webster",
+    "west baton rouge", "west carroll", "west feliciana", "winn"
+]
+
+# Felony indicators in charge text
+FELONY_INDICATORS = [
+    "felony", "murder", "manslaughter", "rape", "armed robbery", "kidnapping",
+    "aggravated", "trafficking", "distribution", "possession with intent",
+    "burglary", "carjacking", "assault with", "battery with", "armed",
+    "first degree", "second degree", "1st degree", "2nd degree"
+]
+
+# Violent crime indicators
+VIOLENT_INDICATORS = [
+    "murder", "manslaughter", "rape", "assault", "battery", "robbery",
+    "kidnapping", "domestic", "violence", "weapon", "armed", "shooting",
+    "stabbing", "threatening", "intimidation", "stalking"
+]
+
+# FTA/Flight risk indicators
+FTA_INDICATORS = [
+    "failure to appear", "fta", "bench warrant", "fugitive", "flight",
+    "bail jumping", "contempt of court", "absconding"
+]
+
+
+def analyze_charges(charges: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Analyze charges for severity and risk factors"""
+    result = {
+        "has_felony": False,
+        "has_violent": False,
+        "has_prior_fta": False,
+        "charge_count": len(charges) if charges else 0,
+        "felony_count": 0,
+        "violent_count": 0,
+        "fta_count": 0
+    }
+
+    if not charges:
+        return result
+
+    for charge in charges:
+        charge_text = (charge.get("charge") or charge.get("description") or "").lower()
+
+        # Check for felony
+        if any(indicator in charge_text for indicator in FELONY_INDICATORS):
+            result["has_felony"] = True
+            result["felony_count"] += 1
+
+        # Check for violent
+        if any(indicator in charge_text for indicator in VIOLENT_INDICATORS):
+            result["has_violent"] = True
+            result["violent_count"] += 1
+
+        # Check for prior FTA
+        if any(indicator in charge_text for indicator in FTA_INDICATORS):
+            result["has_prior_fta"] = True
+            result["fta_count"] += 1
+
+    return result
+
+
+def check_address_local(address: str, jail_parish: str = "st. tammany") -> Dict[str, Any]:
+    """Check if address is local to the jail's jurisdiction"""
+    result = {
+        "is_local": False,
+        "is_louisiana": False,
+        "is_out_of_state": False,
+        "parish_match": False,
+        "detected_state": None,
+        "detected_parish": None
+    }
+
+    if not address:
+        return result
+
+    address_lower = address.lower()
+
+    # Check for Louisiana
+    if "louisiana" in address_lower or ", la" in address_lower or " la " in address_lower:
+        result["is_louisiana"] = True
+
+        # Check for parish match
+        for parish in LOUISIANA_PARISHES:
+            if parish in address_lower:
+                result["detected_parish"] = parish
+                if jail_parish.lower() in parish or parish in jail_parish.lower():
+                    result["parish_match"] = True
+                    result["is_local"] = True
+                break
+    else:
+        # Check for other states
+        state_abbrevs = ["al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga",
+                        "hi", "id", "il", "in", "ia", "ks", "ky", "me", "md", "ma",
+                        "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj", "nm",
+                        "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri", "sc", "sd",
+                        "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy"]
+
+        for abbrev in state_abbrevs:
+            if f", {abbrev}" in address_lower or f" {abbrev} " in address_lower:
+                result["is_out_of_state"] = True
+                result["detected_state"] = abbrev.upper()
+                break
+
+    return result
+
+
+async def search_prior_bookings(name: str, base_url: str, current_booking: int = None) -> List[Dict[str, Any]]:
+    """Search for prior bookings at the same jail"""
+    prior_bookings = []
+
+    if not base_url or not name:
+        return prior_bookings
+
+    # Parse name into parts for searching
+    name_parts = name.upper().split()
+    if len(name_parts) < 2:
+        return prior_bookings
+
+    last_name = name_parts[-1]
+    first_name = name_parts[0]
+
+    # Search a range of booking numbers before current
+    # This is a simple approach - check ~100 bookings back
+    if current_booking:
+        search_range = range(current_booking - 100, current_booking - 1)
+    else:
+        # Start from a reasonable recent number
+        search_range = range(270000, 270100)
+
+    base_url = base_url.rstrip('/')
+
+    async def check_booking(booking_num):
+        url = f"{base_url}/bookings/{booking_num}"
+        try:
+            result = await scrape_jail_roster(url)
+            if result.get('inmate') and result['inmate'].get('name'):
+                inmate_name = result['inmate']['name'].upper()
+                # Check if same person (last name match + first name match)
+                if last_name in inmate_name and first_name in inmate_name:
+                    return {
+                        'booking_number': booking_num,
+                        'name': result['inmate']['name'],
+                        'charges': result.get('charges', []),
+                        'url': url
+                    }
+        except:
+            pass
+        return None
+
+    # Check in batches of 10
+    batch_size = 10
+    search_list = list(search_range)[:50]  # Limit to 50 checks
+
+    for i in range(0, len(search_list), batch_size):
+        batch = search_list[i:i + batch_size]
+        tasks = [check_booking(num) for num in batch]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if result and not isinstance(result, Exception):
+                prior_bookings.append(result)
+
+        if len(prior_bookings) >= 5:  # Found enough
+            break
+
+        await asyncio.sleep(0.3)
+
+    return prior_bookings
+
+
+async def search_court_records(name: str) -> List[Dict[str, Any]]:
+    """Search CourtListener for federal court records"""
+    records = []
+
+    try:
+        # CourtListener API (free, federal records)
+        async with aiohttp.ClientSession() as session:
+            # Search for party name
+            search_url = "https://www.courtlistener.com/api/rest/v3/search/"
+            params = {
+                "q": name,
+                "type": "r",  # RECAP (federal court records)
+                "order_by": "dateFiled desc"
+            }
+
+            async with session.get(search_url, params=params, timeout=15) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    for result in data.get("results", [])[:5]:
+                        records.append({
+                            "case_name": result.get("caseName", "Unknown"),
+                            "court": result.get("court", "Unknown"),
+                            "date_filed": result.get("dateFiled"),
+                            "docket_number": result.get("docketNumber"),
+                            "source": "CourtListener"
+                        })
+    except Exception as e:
+        pass  # CourtListener may not always be available
+
+    return records
+
+
+async def get_ai_fta_analysis(inmate_data: Dict, factors: List[Dict], prior_bookings: List, court_records: List) -> str:
+    """Use GPT-4 to provide FTA risk analysis"""
+    try:
+        # Build context for AI
+        context = f"""
+Analyze the FTA (Failure to Appear) risk for this individual:
+
+Name: {inmate_data.get('name', 'Unknown')}
+Age: {inmate_data.get('age', 'Unknown')}
+Address: {inmate_data.get('address', 'Not provided')}
+Current Charges: {json.dumps(inmate_data.get('charges', []), indent=2)}
+Bond Amount: ${inmate_data.get('bond_amount', 'Unknown')}
+
+Risk Factors Identified:
+{json.dumps(factors, indent=2)}
+
+Prior Bookings Found: {len(prior_bookings)}
+{json.dumps(prior_bookings[:3], indent=2) if prior_bookings else 'None found'}
+
+Court Records Found: {len(court_records)}
+{json.dumps(court_records[:3], indent=2) if court_records else 'None found'}
+
+Provide a brief (2-3 sentence) assessment of this person's flight risk for a bail bondsman. Focus on:
+1. Key risk factors
+2. Community ties indicators
+3. Recommendation (good candidate for bond or high risk)
+"""
+
+        # Call OpenAI API
+        import os
+        openai_key = os.environ.get("OPENAI_API_KEY")
+
+        if not openai_key:
+            return None
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openai_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "gpt-4o",
+                    "messages": [
+                        {"role": "system", "content": "You are an expert bail bond risk assessor. Provide brief, actionable assessments."},
+                        {"role": "user", "content": context}
+                    ],
+                    "max_tokens": 200,
+                    "temperature": 0.3
+                },
+                timeout=30
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        pass
+
+    return None
+
+
+def calculate_fta_score(
+    charge_analysis: Dict,
+    address_analysis: Dict,
+    prior_bookings: List,
+    court_records: List,
+    bond_amount: float = None,
+    age: str = None
+) -> tuple[int, str, List[Dict]]:
+    """Calculate FTA risk score and return factors"""
+
+    score = 50  # Base score
+    factors = []
+
+    # Prior FTA on current charges (+25)
+    if charge_analysis.get("has_prior_fta"):
+        score += 25
+        factors.append({
+            "factor": "Prior FTA/Warrant on record",
+            "impact": "+25",
+            "severity": "high"
+        })
+
+    # Prior bookings at same jail (+15 for each, max +30)
+    if prior_bookings:
+        prior_impact = min(len(prior_bookings) * 15, 30)
+        score += prior_impact
+        factors.append({
+            "factor": f"{len(prior_bookings)} prior booking(s) at this jail",
+            "impact": f"+{prior_impact}",
+            "severity": "high" if len(prior_bookings) > 1 else "medium"
+        })
+
+    # Federal court records (+10)
+    if court_records:
+        score += 10
+        factors.append({
+            "factor": f"{len(court_records)} federal court record(s) found",
+            "impact": "+10",
+            "severity": "medium"
+        })
+
+    # Out of state address (+20)
+    if address_analysis.get("is_out_of_state"):
+        score += 20
+        factors.append({
+            "factor": f"Out-of-state address ({address_analysis.get('detected_state', 'Unknown')})",
+            "impact": "+20",
+            "severity": "high"
+        })
+    # Out of parish but in LA (+10)
+    elif address_analysis.get("is_louisiana") and not address_analysis.get("is_local"):
+        score += 10
+        factors.append({
+            "factor": f"Out-of-parish address ({address_analysis.get('detected_parish', 'Unknown')})",
+            "impact": "+10",
+            "severity": "medium"
+        })
+    # Local address (-15)
+    elif address_analysis.get("is_local"):
+        score -= 15
+        factors.append({
+            "factor": "Local address (same parish)",
+            "impact": "-15",
+            "severity": "low"
+        })
+
+    # Felony charges (+15)
+    if charge_analysis.get("has_felony"):
+        score += 15
+        factors.append({
+            "factor": f"{charge_analysis.get('felony_count', 1)} felony charge(s)",
+            "impact": "+15",
+            "severity": "high"
+        })
+
+    # Violent charges (+10)
+    if charge_analysis.get("has_violent"):
+        score += 10
+        factors.append({
+            "factor": f"{charge_analysis.get('violent_count', 1)} violent charge(s)",
+            "impact": "+10",
+            "severity": "high"
+        })
+
+    # Multiple charges (+5)
+    if charge_analysis.get("charge_count", 0) > 3:
+        score += 5
+        factors.append({
+            "factor": f"Multiple charges ({charge_analysis.get('charge_count')})",
+            "impact": "+5",
+            "severity": "medium"
+        })
+
+    # High bond amount (+10 for >$10k, +5 for >$5k)
+    if bond_amount:
+        if bond_amount > 10000:
+            score += 10
+            factors.append({
+                "factor": f"High bond amount (${bond_amount:,.0f})",
+                "impact": "+10",
+                "severity": "medium"
+            })
+        elif bond_amount > 5000:
+            score += 5
+            factors.append({
+                "factor": f"Moderate bond amount (${bond_amount:,.0f})",
+                "impact": "+5",
+                "severity": "low"
+            })
+
+    # Age factors
+    if age:
+        try:
+            age_int = int(age)
+            if age_int < 25:
+                score += 5
+                factors.append({
+                    "factor": f"Young age ({age_int})",
+                    "impact": "+5",
+                    "severity": "low"
+                })
+            elif age_int > 50:
+                score -= 5
+                factors.append({
+                    "factor": f"Older age ({age_int})",
+                    "impact": "-5",
+                    "severity": "low"
+                })
+        except:
+            pass
+
+    # No prior bookings found (-10)
+    if not prior_bookings:
+        score -= 10
+        factors.append({
+            "factor": "No prior bookings found at this jail",
+            "impact": "-10",
+            "severity": "low"
+        })
+
+    # Clamp score to 0-100
+    score = max(0, min(100, score))
+
+    # Determine risk level
+    if score >= 75:
+        risk_level = "VERY_HIGH"
+    elif score >= 60:
+        risk_level = "HIGH"
+    elif score >= 40:
+        risk_level = "MEDIUM"
+    else:
+        risk_level = "LOW"
+
+    return score, risk_level, factors
+
+
+@app.post("/api/fta-score", response_model=FTAScoreResult)
+async def calculate_fta_risk(request: FTAScoreRequest):
+    """
+    Calculate FTA (Failure to Appear) risk score for an inmate.
+
+    Uses multiple data sources:
+    - Charge analysis (felony, violent, prior FTA)
+    - Address analysis (local vs out of state)
+    - Prior booking search at same jail
+    - CourtListener federal court records
+    - AI-powered risk assessment
+
+    Returns score 0-100 with detailed factor breakdown.
+    """
+    start_time = datetime.now()
+
+    # Analyze charges
+    charge_analysis = analyze_charges(request.charges or [])
+
+    # Analyze address
+    address_analysis = check_address_local(
+        request.address or "",
+        "st. tammany"  # Default to St. Tammany for now
+    )
+
+    # Search for prior bookings (run in parallel with court search)
+    prior_bookings_task = search_prior_bookings(
+        request.name,
+        request.jail_base_url or "https://inmates.stpso.revize.com",
+        request.booking_number
+    )
+
+    court_records_task = search_court_records(request.name)
+
+    # Run both searches in parallel
+    prior_bookings, court_records = await asyncio.gather(
+        prior_bookings_task,
+        court_records_task
+    )
+
+    # Calculate score
+    score, risk_level, factors = calculate_fta_score(
+        charge_analysis,
+        address_analysis,
+        prior_bookings,
+        court_records,
+        request.bond_amount,
+        request.age
+    )
+
+    # Get AI analysis
+    inmate_data = {
+        "name": request.name,
+        "age": request.age,
+        "address": request.address,
+        "charges": request.charges,
+        "bond_amount": request.bond_amount
+    }
+    ai_analysis = await get_ai_fta_analysis(inmate_data, factors, prior_bookings, court_records)
+
+    execution_time = (datetime.now() - start_time).total_seconds()
+
+    return {
+        "name": request.name,
+        "score": score,
+        "risk_level": risk_level,
+        "factors": factors,
+        "prior_bookings": prior_bookings,
+        "court_records": court_records,
+        "ai_analysis": ai_analysis,
+        "execution_time": execution_time
+    }
+
+
+@app.post("/api/fta-score/batch")
+async def calculate_fta_batch(inmates: List[FTAScoreRequest]):
+    """
+    Calculate FTA scores for multiple inmates at once.
+    Useful for bulk import - returns scores for all inmates.
+    Limited to 20 at a time to avoid overload.
+    """
+    start_time = datetime.now()
+
+    # Limit batch size
+    inmates = inmates[:20]
+
+    results = []
+
+    # Process in smaller batches to avoid overwhelming external APIs
+    batch_size = 5
+    for i in range(0, len(inmates), batch_size):
+        batch = inmates[i:i + batch_size]
+        tasks = [calculate_fta_risk(inmate) for inmate in batch]
+        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for j, result in enumerate(batch_results):
+            if isinstance(result, Exception):
+                # Return a default score on error
+                results.append({
+                    "name": batch[j].name,
+                    "score": 50,
+                    "risk_level": "UNKNOWN",
+                    "factors": [{"factor": "Error calculating score", "impact": "0", "severity": "unknown"}],
+                    "prior_bookings": [],
+                    "court_records": [],
+                    "ai_analysis": None,
+                    "execution_time": 0
+                })
+            else:
+                results.append(result)
+
+        # Small delay between batches
+        if i + batch_size < len(inmates):
+            await asyncio.sleep(1)
+
+    execution_time = (datetime.now() - start_time).total_seconds()
+
+    return {
+        "count": len(results),
+        "results": results,
+        "execution_time": execution_time
+    }
+
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
