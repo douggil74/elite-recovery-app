@@ -112,6 +112,8 @@ export default function ImportRosterScreen() {
     bonds: BondData[];
     photo_url: string | null;
   } | null>(null);
+  const [singleFtaScore, setSingleFtaScore] = useState<FTAScore | null>(null);
+  const [singleFtaLoading, setSingleFtaLoading] = useState(false);
 
   // Bulk scrape state
   const [baseUrl, setBaseUrl] = useState('https://inmates.stpso.revize.com');
@@ -122,6 +124,56 @@ export default function ImportRosterScreen() {
   const [ftaLoading, setFtaLoading] = useState(false);
 
   const [isCreatingCase, setIsCreatingCase] = useState(false);
+
+  // Calculate FTA score for single inmate
+  const calculateSingleFTAScore = async (inmateData: {
+    inmate: InmateData;
+    charges: ChargeData[];
+    bonds: BondData[];
+  }) => {
+    setSingleFtaLoading(true);
+    try {
+      // Calculate bond amount
+      let bondAmount = 0;
+      if (inmateData.bonds?.length > 0) {
+        bondAmount = inmateData.bonds.reduce((sum, b) => {
+          const amt = b.amount?.replace(/[$,]/g, '');
+          return sum + (parseFloat(amt || '0') || 0);
+        }, 0);
+      }
+
+      // Extract booking number from URL if possible
+      const bookingMatch = url.match(/\/bookings\/(\d+)/);
+      const bookingNumber = bookingMatch ? parseInt(bookingMatch[1]) : undefined;
+
+      // Extract base URL
+      const urlObj = new URL(url);
+      const jailBaseUrl = `${urlObj.protocol}//${urlObj.host}`;
+
+      const res = await fetch(`${BACKEND_URL}/api/fta-score`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: inmateData.inmate.name,
+          age: inmateData.inmate.age,
+          address: inmateData.inmate.address,
+          charges: inmateData.charges,
+          bond_amount: bondAmount > 0 ? bondAmount : undefined,
+          booking_number: bookingNumber,
+          jail_base_url: jailBaseUrl,
+        }),
+      });
+
+      if (res.ok) {
+        const scoreData = await res.json();
+        setSingleFtaScore(scoreData as FTAScore);
+      }
+    } catch (err) {
+      console.log('FTA score error:', err);
+    } finally {
+      setSingleFtaLoading(false);
+    }
+  };
 
   // Single URL scrape
   const scrapeRoster = async () => {
@@ -138,6 +190,7 @@ export default function ImportRosterScreen() {
     setIsLoading(true);
     setScrapeError(null);
     setExtractedData(null);
+    setSingleFtaScore(null);
 
     try {
       const res = await fetch(`${BACKEND_URL}/api/jail-roster`, {
@@ -153,13 +206,16 @@ export default function ImportRosterScreen() {
       const data = await res.json();
 
       if (data.inmate?.name) {
-        setExtractedData({
+        const extracted = {
           inmate: data.inmate,
           charges: data.charges || [],
           bonds: data.bonds || [],
           photo_url: data.photo_url,
-        });
+        };
+        setExtractedData(extracted);
         setScrapeError(null);
+        // Auto-calculate FTA score
+        calculateSingleFTAScore(extracted);
       } else if (data.errors?.length > 0) {
         setScrapeError(data.errors.join(' | '));
       } else {
@@ -375,6 +431,7 @@ export default function ImportRosterScreen() {
   const clearData = () => {
     setExtractedData(null);
     setScrapeError(null);
+    setSingleFtaScore(null);
   };
 
   const clearBulkData = () => {
@@ -682,6 +739,75 @@ export default function ImportRosterScreen() {
                     </View>
                   </View>
                 )}
+
+                {/* FTA Risk Score */}
+                {singleFtaLoading ? (
+                  <View style={styles.ftaLoadingBox}>
+                    <ActivityIndicator color={THEME.primary} />
+                    <Text style={styles.ftaLoadingText}>Analyzing FTA risk factors...</Text>
+                  </View>
+                ) : singleFtaScore ? (
+                  <View style={[styles.ftaScoreBox, { borderColor: getFTAScoreColor(singleFtaScore.risk_level) }]}>
+                    <View style={styles.ftaScoreHeader}>
+                      <View style={[styles.ftaScoreBadgeLarge, { backgroundColor: getFTAScoreColor(singleFtaScore.risk_level) }]}>
+                        <Text style={styles.ftaScoreNumber}>{singleFtaScore.score}</Text>
+                      </View>
+                      <View style={styles.ftaScoreInfo}>
+                        <Text style={[styles.ftaScoreRisk, { color: getFTAScoreColor(singleFtaScore.risk_level) }]}>
+                          {singleFtaScore.risk_level.replace('_', ' ')} RISK
+                        </Text>
+                        <Text style={styles.ftaScoreSubtext}>FTA Risk Score (0-100)</Text>
+                      </View>
+                    </View>
+
+                    {/* Risk Factors */}
+                    {singleFtaScore.factors.length > 0 && (
+                      <View style={styles.ftaFactorsList}>
+                        <Text style={styles.ftaFactorsTitle}>RISK FACTORS</Text>
+                        {singleFtaScore.factors.map((factor, idx) => (
+                          <View key={idx} style={styles.ftaFactorItem}>
+                            <Ionicons
+                              name={factor.impact.startsWith('+') ? 'arrow-up' : 'arrow-down'}
+                              size={14}
+                              color={factor.impact.startsWith('+') ? THEME.danger : THEME.success}
+                            />
+                            <Text style={styles.ftaFactorText}>{factor.factor}</Text>
+                            <Text style={[
+                              styles.ftaFactorImpact,
+                              { color: factor.impact.startsWith('+') ? THEME.danger : THEME.success }
+                            ]}>{factor.impact}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* Prior Bookings Warning */}
+                    {singleFtaScore.prior_bookings.length > 0 && (
+                      <View style={styles.priorBookingsBox}>
+                        <Ionicons name="warning" size={18} color={THEME.danger} />
+                        <View style={styles.priorBookingsInfo}>
+                          <Text style={styles.priorBookingsTitle}>
+                            {singleFtaScore.prior_bookings.length} Prior Booking(s) Found
+                          </Text>
+                          <Text style={styles.priorBookingsText}>
+                            This person has been booked at this jail before
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+
+                    {/* AI Analysis */}
+                    {singleFtaScore.ai_analysis && (
+                      <View style={styles.aiAnalysisBox}>
+                        <View style={styles.aiAnalysisHeader}>
+                          <Ionicons name="sparkles" size={16} color={THEME.purple} />
+                          <Text style={styles.aiAnalysisTitle}>AI ASSESSMENT</Text>
+                        </View>
+                        <Text style={styles.aiAnalysisText}>{singleFtaScore.ai_analysis}</Text>
+                      </View>
+                    )}
+                  </View>
+                ) : null}
 
                 {/* Action Buttons */}
                 <View style={styles.actions}>
@@ -1347,5 +1473,129 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#fff',
+  },
+  // Single FTA Score styles
+  ftaLoadingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: THEME.surface,
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  ftaLoadingText: {
+    color: THEME.textSecondary,
+    fontSize: 14,
+  },
+  ftaScoreBox: {
+    backgroundColor: THEME.surface,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 2,
+  },
+  ftaScoreHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: 16,
+  },
+  ftaScoreBadgeLarge: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ftaScoreNumber: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  ftaScoreInfo: {
+    flex: 1,
+  },
+  ftaScoreRisk: {
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  ftaScoreSubtext: {
+    fontSize: 12,
+    color: THEME.textMuted,
+    marginTop: 2,
+  },
+  ftaFactorsList: {
+    borderTopWidth: 1,
+    borderTopColor: THEME.border,
+    paddingTop: 12,
+    marginBottom: 12,
+  },
+  ftaFactorsTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.textMuted,
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  ftaFactorItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  ftaFactorText: {
+    flex: 1,
+    fontSize: 13,
+    color: THEME.text,
+  },
+  ftaFactorImpact: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  priorBookingsBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: THEME.danger + '15',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  priorBookingsInfo: {
+    flex: 1,
+  },
+  priorBookingsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: THEME.danger,
+  },
+  priorBookingsText: {
+    fontSize: 12,
+    color: THEME.textSecondary,
+    marginTop: 2,
+  },
+  aiAnalysisBox: {
+    backgroundColor: THEME.purple + '15',
+    padding: 12,
+    borderRadius: 8,
+  },
+  aiAnalysisHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+  },
+  aiAnalysisTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.purple,
+    letterSpacing: 0.5,
+  },
+  aiAnalysisText: {
+    fontSize: 13,
+    color: THEME.text,
+    lineHeight: 19,
   },
 });
