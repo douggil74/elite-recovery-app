@@ -11,335 +11,135 @@ interface FeatureSection {
 
 const FEATURES: FeatureSection[] = [
   {
-    title: 'AI (GPT-4o-mini) - Actual Intelligence',
+    title: 'Jail Roster Import',
+    icon: 'download',
+    items: [
+      { name: 'Auto-Scrape Bookings', description: 'Paste jail booking URL to extract inmate data automatically', type: 'tool' },
+      { name: 'Mugshot Extraction', description: 'Pulls booking photo from supported jail sites', type: 'tool' },
+      { name: 'Charge Parsing', description: 'Extracts all charges with bond amounts', type: 'tool' },
+      { name: 'Bulk Import', description: 'Import multiple inmates by time period (24h, 48h, 72h)', type: 'tool' },
+      { name: 'Revize Sites', description: 'Works with St. Tammany Parish and other Revize-powered jails', type: 'tool' },
+    ],
+  },
+  {
+    title: 'FTA Risk Scoring',
+    icon: 'analytics',
+    items: [
+      { name: 'Risk Score (0-100)', description: 'Calculates failure-to-appear probability', type: 'ai' },
+      { name: 'Prior FTA Detection', description: 'Detects FUGITIVE charges indicating prior warrants', type: 'tool' },
+      { name: 'Charge Analysis', description: 'Weighs felony vs misdemeanor, violent crimes', type: 'tool' },
+      { name: 'Bond Amount Factor', description: 'Higher bonds = more skin in the game', type: 'tool' },
+      { name: 'AI Assessment', description: 'GPT-4o generates risk narrative with recommendations', type: 'ai' },
+    ],
+  },
+  {
+    title: 'AI Intelligence (GPT-4o)',
     icon: 'hardware-chip',
     items: [
-      { name: 'AI Chat', description: 'Understands questions, provides intelligent investigation advice', type: 'ai' },
-      { name: 'Document Analysis', description: 'Reads skip-trace reports, extracts addresses/phones/names', type: 'ai' },
-      { name: 'Recovery Brief', description: 'Generates tactical plans for locating subjects', type: 'ai' },
-      { name: 'Photo Intelligence', description: 'Analyzes images for addresses, plates, landmarks', type: 'ai' },
-      { name: 'Face Matching', description: 'Compares facial structure for identity verification', type: 'ai' },
+      { name: 'AI Chat', description: 'Ask questions, get investigation advice', type: 'ai' },
+      { name: 'Photo Analysis', description: 'Analyzes photos for addresses, plates, landmarks', type: 'ai' },
+      { name: 'Document Reading', description: 'Extracts info from skip-trace reports', type: 'ai' },
+      { name: 'Recovery Brief', description: 'Generates tactical recovery plans', type: 'ai' },
     ],
   },
   {
-    title: 'OSINT Username Tools',
+    title: 'Username Search',
     icon: 'at',
     items: [
-      { name: 'Sherlock', description: 'Scrapes 400+ websites for username existence', type: 'tool' },
-      { name: 'Maigret', description: 'Comprehensive username search with metadata extraction', type: 'tool' },
-      { name: 'Blackbird', description: 'Alternative username search engine', type: 'tool' },
-      { name: 'Social-Analyzer', description: 'Enhanced search across 1000+ sites with profile analysis', type: 'tool' },
-      { name: 'Socialscan', description: 'Quick username availability checker', type: 'tool' },
+      { name: 'Sherlock', description: 'Searches 400+ sites for username matches', type: 'tool' },
+      { name: 'Socialscan', description: 'Quick username availability check', type: 'tool' },
+      { name: 'Name Variations', description: 'Auto-generates usernames from name (Doug/Douglas, etc.)', type: 'tool' },
     ],
   },
   {
-    title: 'OSINT Email Tools',
+    title: 'Email Search',
     icon: 'mail',
     items: [
       { name: 'Holehe', description: 'Checks if email is registered on 120+ services', type: 'tool' },
-      { name: 'h8mail', description: 'Searches data breaches and leaks for email exposure', type: 'tool' },
-      { name: 'GHunt', description: 'Investigates Google accounts (name, photos, reviews)', type: 'tool' },
-      { name: 'theHarvester', description: 'Domain reconnaissance - finds emails, hosts, people', type: 'tool' },
     ],
   },
   {
-    title: 'OSINT Phone Tools',
-    icon: 'call',
-    items: [
-      { name: 'PhoneInfoga', description: 'Advanced phone OSINT - carrier, location, Google dorks', type: 'tool' },
-      { name: 'Ignorant', description: 'Checks phone number for social media accounts', type: 'tool' },
-    ],
-  },
-  {
-    title: 'OSINT Instagram Tools',
-    icon: 'logo-instagram',
-    items: [
-      { name: 'Instaloader', description: 'Gets Instagram profile data - followers, bio, posts', type: 'tool' },
-      { name: 'Toutatis', description: 'Extracts phone/email from Instagram profiles', type: 'tool' },
-    ],
-  },
-  {
-    title: 'Court Record Search',
-    icon: 'briefcase',
-    items: [
-      { name: 'CourtListener API', description: 'Federal court records, opinions, dockets', type: 'api' },
-      { name: 'State Court Links', description: 'Direct links to LA, TX, FL, CA, GA, NY, AL, MS courts', type: 'db' },
-      { name: 'Offender Search', description: 'State DOC inmate/offender databases', type: 'db' },
-    ],
-  },
-  {
-    title: 'Web & Domain Intelligence',
-    icon: 'globe',
-    items: [
-      { name: 'Web Search', description: 'DuckDuckGo search integration', type: 'api' },
-      { name: 'WHOIS Lookup', description: 'Domain registration and ownership info', type: 'tool' },
-      { name: 'Wayback Machine', description: 'Historical website snapshots', type: 'api' },
-      { name: 'IP Geolocation', description: 'IP address location lookup', type: 'api' },
-    ],
-  },
-  {
-    title: 'Vehicle & Property Search',
-    icon: 'car',
-    items: [
-      { name: 'Plate Lookup', description: 'License plate search links (FAXVIN, VinCheck)', type: 'db' },
-      { name: 'VIN Decoder', description: 'NHTSA VIN decoder and history reports', type: 'api' },
-      { name: 'State DMV Links', description: 'Direct links to state DMV systems', type: 'db' },
-      { name: 'Carfax/AutoCheck', description: 'Vehicle history report links', type: 'db' },
-    ],
-  },
-  {
-    title: 'Risk Scoring & Assessment',
-    icon: 'analytics',
-    items: [
-      { name: 'Bond Risk Score', description: 'Algorithmic risk assessment for bond clients', type: 'ai' },
-      { name: 'FTA Risk Factors', description: 'Prior failures to appear weighted heavily', type: 'tool' },
-      { name: 'Employment Scoring', description: 'Job stability assessment', type: 'tool' },
-      { name: 'Residence Stability', description: 'Housing situation evaluation', type: 'tool' },
-      { name: 'Local Ties Assessment', description: 'Community connection scoring', type: 'tool' },
-    ],
-  },
-  {
-    title: 'Document & Metadata Analysis',
-    icon: 'document-attach',
-    items: [
-      { name: 'EXIF Extraction', description: 'Photo metadata (GPS, camera, date)', type: 'tool' },
-      { name: 'PDF Metadata', description: 'Author, creation date, edit history', type: 'tool' },
-      { name: 'Word Doc Analysis', description: 'DOCX author and revision tracking', type: 'tool' },
-    ],
-  },
-  {
-    title: 'Photo Intelligence',
-    icon: 'camera',
-    items: [
-      { name: 'Address Extraction', description: 'Identifies house numbers, street signs, mailbox addresses', type: 'tool' },
-      { name: 'License Plate Detection', description: 'Reads partial/full plates, identifies state, suggests DMV lookup', type: 'tool' },
-      { name: 'Business Recognition', description: 'Identifies store names, logos, chains to narrow location', type: 'tool' },
-      { name: 'Geographic Analysis', description: 'Terrain, vegetation, architecture style for region identification', type: 'tool' },
-      { name: 'Associate Detection', description: 'Identifies people in photos, clothing, distinguishing marks', type: 'tool' },
-      { name: 'Reverse Image Search', description: 'Links to Google, Yandex, TinEye, PimEyes, FaceCheck.ID', type: 'tool' },
-    ],
-  },
-  {
-    title: 'Social Media Search',
+    title: 'Social Media Links',
     icon: 'share-social',
     items: [
-      { name: 'Facebook', description: 'Profile and people search', type: 'api' },
-      { name: 'Instagram', description: 'Username search with variations', type: 'api' },
-      { name: 'TikTok', description: 'Profile search', type: 'api' },
-      { name: 'Twitter/X', description: 'User search', type: 'api' },
-      { name: 'LinkedIn', description: 'Professional profile search', type: 'api' },
-      { name: 'Snapchat', description: 'Username lookup', type: 'api' },
-      { name: 'Reddit', description: 'User search', type: 'api' },
-      { name: 'GitHub', description: 'Developer profile search', type: 'api' },
+      { name: 'Facebook', description: 'Direct search link with name variations', type: 'db' },
+      { name: 'Instagram', description: 'Profile search link', type: 'db' },
+      { name: 'TikTok', description: 'Profile search link', type: 'db' },
+      { name: 'Twitter/X', description: 'User search link', type: 'db' },
+      { name: 'LinkedIn', description: 'Professional profile search link', type: 'db' },
+      { name: 'Snapchat', description: 'Add by username link', type: 'db' },
     ],
   },
   {
-    title: 'People Search Databases',
+    title: 'Court Records',
+    icon: 'briefcase',
+    items: [
+      { name: 'CourtListener', description: 'Federal court records search (limited without key)', type: 'api' },
+      { name: 'LA Court Records', description: 'Link to re:SearchLA (Tyler Technologies)', type: 'db' },
+    ],
+  },
+  {
+    title: 'People Search Links',
     icon: 'people',
     items: [
       { name: 'TruePeopleSearch', description: 'Free comprehensive people search', type: 'db' },
       { name: 'FastPeopleSearch', description: 'Quick people lookup', type: 'db' },
       { name: 'Whitepages', description: 'Phone and address directory', type: 'db' },
       { name: 'Spokeo', description: 'Aggregated people data', type: 'db' },
-      { name: "That's Them", description: 'People finder service', type: 'db' },
-      { name: 'PeekYou', description: 'Social profile aggregator', type: 'db' },
-      { name: 'ZabaSearch', description: 'Free people search', type: 'db' },
-      { name: 'Radaris', description: 'Background check data', type: 'db' },
-      { name: 'BeenVerified', description: 'Comprehensive background', type: 'db' },
-      { name: 'Intelius', description: 'People intelligence', type: 'db' },
     ],
   },
   {
-    title: 'Court & Criminal Records',
-    icon: 'document-text',
-    items: [
-      { name: 'CourtListener', description: 'Federal court records and opinions', type: 'db' },
-      { name: 'PACER', description: 'Federal court filings', type: 'db' },
-      { name: 'UniCourt', description: 'Court case search', type: 'db' },
-      { name: 'Docket Alarm', description: 'Legal docket search', type: 'db' },
-      { name: 'JailBase', description: 'Jail booking records', type: 'db' },
-      { name: 'BustedNewspaper', description: 'Arrest news and mugshots', type: 'db' },
-      { name: 'VINELink', description: 'Offender custody status', type: 'db' },
-      { name: 'NSOPW', description: 'National sex offender registry', type: 'db' },
-    ],
-  },
-  {
-    title: 'Property & Business Records',
-    icon: 'business',
-    items: [
-      { name: 'County Assessor Search', description: 'Property ownership records', type: 'db' },
-      { name: 'Zillow', description: 'Real estate records', type: 'db' },
-      { name: 'Redfin', description: 'Property sales history', type: 'db' },
-      { name: 'OpenCorporates', description: 'Corporate officer search', type: 'db' },
-      { name: 'Corp Wiki', description: 'Business connections', type: 'db' },
-      { name: 'Crunchbase', description: 'Startup and business profiles', type: 'db' },
-    ],
-  },
-  {
-    title: 'Fraud & Scam Research',
-    icon: 'warning',
-    items: [
-      { name: 'Social Catfish', description: 'Scam and catfish detection', type: 'db' },
-      { name: 'ScamDigger', description: 'Romance scam database', type: 'db' },
-      { name: 'ScamWarners', description: 'Scam reports and alerts', type: 'db' },
-      { name: 'RomanceScam', description: 'Romance fraud database', type: 'db' },
-    ],
-  },
-  {
-    title: 'Username OSINT',
-    icon: 'at',
-    items: [
-      { name: 'WhatsMyName', description: 'Username search across 400+ sites', type: 'tool' },
-      { name: 'Username Variations', description: 'Auto-generates common username patterns from name', type: 'tool' },
-      { name: 'Platform Verification', description: 'Checks if profiles exist on 70+ platforms', type: 'api' },
-      { name: 'Namechk', description: 'Username availability checker', type: 'tool' },
-      { name: 'KnowEm', description: 'Brand username search', type: 'tool' },
-    ],
-  },
-  {
-    title: 'Phone Intelligence',
-    icon: 'call',
-    items: [
-      { name: 'Area Code Database', description: 'Full US area code location mapping', type: 'db' },
-      { name: 'Carrier Detection', description: 'Identifies phone carrier and line type', type: 'tool' },
-      { name: 'VoIP Detection', description: 'Identifies burner/VoIP numbers', type: 'tool' },
-      { name: 'TrueCaller Search', description: 'Caller ID and spam check', type: 'api' },
-      { name: 'Whitepages Phone', description: 'Reverse phone lookup', type: 'db' },
-      { name: 'NumLookup', description: 'Phone number intelligence', type: 'api' },
-    ],
-  },
-  {
-    title: 'Email Intelligence',
-    icon: 'mail',
-    items: [
-      { name: 'Email Analysis', description: 'Extracts provider, domain type, possible real name', type: 'tool' },
-      { name: 'Disposable Detection', description: 'Identifies temporary/burner emails', type: 'tool' },
-      { name: 'Gravatar Check', description: 'Finds profile photo from email hash', type: 'api' },
-      { name: 'Service Registration', description: 'Checks registration on Twitter, Spotify, Discord, etc.', type: 'api' },
-      { name: 'Business Email Detection', description: 'Identifies corporate vs personal emails', type: 'tool' },
-    ],
-  },
-  {
-    title: 'Genealogy & Historical',
-    icon: 'git-network',
-    items: [
-      { name: 'FamilySearch', description: 'Family history records', type: 'db' },
-      { name: 'Ancestry', description: 'Ancestry and genealogy records', type: 'db' },
-      { name: 'FindAGrave', description: 'Cemetery and memorial records', type: 'db' },
-      { name: 'Newspapers.com', description: 'Historical newspaper archives', type: 'db' },
-      { name: 'Archive.org', description: 'Internet archive and wayback machine', type: 'db' },
-    ],
-  },
-  {
-    title: 'Data Storage & Sync',
+    title: 'Data Storage',
     icon: 'cloud',
     items: [
-      { name: 'Firebase Firestore', description: 'Real-time cloud database for case sync', type: 'db' },
-      { name: 'SQLite (Native)', description: 'Local encrypted storage for mobile apps', type: 'db' },
-      { name: 'AsyncStorage (Web)', description: 'Browser local storage for web app', type: 'db' },
-      { name: 'Auto-Sync', description: 'All changes automatically sync to cloud', type: 'tool' },
-      { name: 'Multi-Device', description: 'Access cases from any device with same account', type: 'tool' },
-    ],
-  },
-  {
-    title: 'Security Features',
-    icon: 'shield-checkmark',
-    items: [
-      { name: 'Passcode Lock', description: '4-8 digit passcode protection', type: 'tool' },
-      { name: 'Biometric Auth', description: 'Face ID and Touch ID support', type: 'tool' },
-      { name: 'Auto-Delete', description: 'Configurable automatic case deletion', type: 'tool' },
-      { name: 'Audit Log', description: 'Complete activity tracking', type: 'tool' },
-      { name: 'Field Masking', description: 'Sensitive data hidden by default', type: 'tool' },
+      { name: 'Local Storage', description: 'Cases saved locally via AsyncStorage', type: 'db' },
+      { name: 'Import History', description: 'Tracks all jail roster imports', type: 'tool' },
     ],
   },
 ];
 
 const PYTHON_TOOLS_LIVE = [
   // AI Tools
-  { name: 'GPT-4o Chat', description: 'ACTUAL AI - understands language, gives investigation advice', status: 'live', category: 'ai' },
-  { name: 'GPT-4o Vision', description: 'ACTUAL AI - analyzes photos, reads documents', status: 'live', category: 'ai' },
-  { name: 'GPT-4o Brief', description: 'ACTUAL AI - writes tactical recovery plans', status: 'live', category: 'ai' },
+  { name: 'GPT-4o Chat', description: 'AI chat for investigation questions', status: 'live', category: 'ai' },
+  { name: 'GPT-4o Vision', description: 'AI photo/document analysis', status: 'live', category: 'ai' },
+  { name: 'FTA Risk Analysis', description: 'AI-generated risk assessments', status: 'live', category: 'ai' },
+  // Jail Roster
+  { name: 'Jail Roster Scraper', description: 'Extract inmate data from Revize jail sites', status: 'live', category: 'scraper' },
+  { name: 'Bulk Import', description: 'Import multiple inmates at once', status: 'live', category: 'scraper' },
   // Username Search
   { name: 'Sherlock', description: 'Username search across 400+ sites', status: 'live', category: 'username' },
-  { name: 'Maigret', description: 'Comprehensive username intelligence', status: 'live', category: 'username' },
-  { name: 'Blackbird', description: 'Alternative username search engine', status: 'live', category: 'username' },
-  { name: 'Social-Analyzer', description: 'Enhanced search across 1000+ sites', status: 'live', category: 'username' },
   { name: 'Socialscan', description: 'Quick username availability check', status: 'live', category: 'username' },
   // Email Tools
-  { name: 'Holehe', description: 'Check email registration on services', status: 'live', category: 'email' },
-  { name: 'h8mail', description: 'Email breach/leak database search', status: 'live', category: 'email' },
-  { name: 'GHunt', description: 'Google account investigation', status: 'live', category: 'email' },
-  { name: 'theHarvester', description: 'Domain/email reconnaissance', status: 'live', category: 'email' },
-  // Phone Tools
-  { name: 'PhoneInfoga', description: 'Advanced phone number OSINT', status: 'live', category: 'phone' },
-  { name: 'Ignorant', description: 'Phone social account discovery', status: 'live', category: 'phone' },
-  // Instagram
-  { name: 'Instaloader', description: 'Instagram profile intelligence', status: 'live', category: 'instagram' },
-  { name: 'Toutatis', description: 'Instagram deep intel (phone/email)', status: 'live', category: 'instagram' },
+  { name: 'Holehe', description: 'Check email registration on 120+ services', status: 'live', category: 'email' },
   // Court Records
-  { name: 'CourtListener API', description: 'Federal court records search', status: 'live', category: 'court' },
-  { name: 'State Courts', description: 'State court record links (LA, TX, FL, CA, etc.)', status: 'live', category: 'court' },
-  // Web/Domain Intel
-  { name: 'Web Search', description: 'DuckDuckGo web search integration', status: 'live', category: 'web' },
-  { name: 'WHOIS Lookup', description: 'Domain registration information', status: 'live', category: 'web' },
-  { name: 'Wayback Machine', description: 'Historical website snapshots', status: 'live', category: 'web' },
-  { name: 'IP Geolocation', description: 'IP address location lookup', status: 'live', category: 'web' },
-  // Vehicle/Background
-  { name: 'Vehicle Search', description: 'License plate & VIN search links', status: 'live', category: 'vehicle' },
-  { name: 'Background Links', description: 'Background check service aggregator', status: 'live', category: 'background' },
+  { name: 'CourtListener API', description: 'Federal court records (limited without key)', status: 'live', category: 'court' },
   // Risk Scoring
-  { name: 'Risk Scoring', description: 'Bond client risk assessment algorithm', status: 'live', category: 'risk' },
-  // Document Analysis
-  { name: 'Metadata Extraction', description: 'Extract EXIF, PDF, DOCX metadata', status: 'live', category: 'document' },
-  // Social Scraping
-  { name: 'Social Scraper', description: 'Twitter & Reddit post scraping', status: 'live', category: 'social' },
+  { name: 'FTA Scoring', description: 'Failure-to-appear risk calculation', status: 'live', category: 'risk' },
 ];
 
 const BACKEND_INFO = {
   url: 'https://elite-recovery-osint.onrender.com',
   version: '3.0.0',
   endpoints: [
+    // Jail Roster
+    '/api/jail-roster - Scrape single jail booking',
+    '/api/jail-roster/bulk - Bulk import from jail',
+    // FTA Risk
+    '/api/fta-score - Calculate FTA risk score',
+    '/api/fta-score/batch - Batch FTA scoring',
     // Username
     '/api/sherlock - Username search (400+ sites)',
-    '/api/maigret - Comprehensive username search',
-    '/api/blackbird - Alternative username search',
-    '/api/social-analyzer - Enhanced search (1000+ sites)',
     '/api/socialscan - Quick availability check',
-    '/api/multi-username - Username variation search',
+    '/api/osint/search - Combined username search',
     // Email
     '/api/holehe - Email account discovery',
-    '/api/h8mail - Email breach/leak checking',
-    '/api/ghunt - Google account investigation',
-    '/api/harvester - Domain reconnaissance',
-    // Phone
-    '/api/phoneinfoga - Advanced phone OSINT',
-    '/api/ignorant - Phone social discovery',
-    // Instagram
-    '/api/instagram - Instagram profile intel',
-    '/api/toutatis - Instagram deep intel',
     // Court Records
     '/api/court-records - Federal court search',
-    '/api/state-courts - State court links',
-    // Web/Domain
-    '/api/web-search - DuckDuckGo search',
-    '/api/whois - Domain WHOIS lookup',
-    '/api/wayback - Historical snapshots',
-    '/api/ip-lookup - IP geolocation',
-    // Vehicle/Background
-    '/api/vehicle-search - Plate/VIN links',
-    '/api/background-links - Background check links',
-    // Risk & Analysis
-    '/api/risk-score - Bond client scoring',
-    '/api/extract-metadata - Document metadata',
-    '/api/social-scrape - Social media scraping',
-    // Combined
-    '/api/investigate - Intelligent investigation',
-    '/api/sweep - Full OSINT sweep',
-    '/api/mega-sweep - ALL tools combined',
+    '/api/la-court-records - Louisiana court search',
     // AI
     '/api/ai/chat - AI chat (OpenAI proxy)',
     '/api/ai/analyze - Image/document analysis',
-    '/api/ai/brief - Recovery brief generation',
+    '/health - Service health check',
   ]
 };
 
@@ -391,20 +191,20 @@ export default function AboutScreen() {
         {/* Stats */}
         <View style={styles.statsRow}>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>25+</Text>
+            <Text style={styles.statNumber}>5</Text>
             <Text style={styles.statLabel}>OSINT Tools</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>1500+</Text>
+            <Text style={styles.statNumber}>400+</Text>
             <Text style={styles.statLabel}>Sites Searched</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>35+</Text>
+            <Text style={styles.statNumber}>15</Text>
             <Text style={styles.statLabel}>API Endpoints</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>0</Text>
-            <Text style={styles.statLabel}>Keys Needed</Text>
+            <Text style={styles.statNumber}>GPT-4o</Text>
+            <Text style={styles.statLabel}>AI Model</Text>
           </View>
         </View>
 
