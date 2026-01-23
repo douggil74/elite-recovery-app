@@ -3421,6 +3421,96 @@ async def jail_roster_scrape(request: JailRosterRequest):
     return await scrape_jail_roster(request.url)
 
 
+class BulkJailRosterRequest(BaseModel):
+    """Request for bulk jail roster scraping"""
+    base_url: str  # e.g., "https://inmates.stpso.revize.com"
+    start_booking: int  # Latest/highest booking number
+    count: int = 10  # How many to fetch (max 50)
+
+
+class BulkJailRosterResult(BaseModel):
+    """Result from bulk jail roster scraping"""
+    base_url: str
+    start_booking: int
+    count_requested: int
+    count_found: int
+    inmates: list
+    errors: list
+    execution_time: float
+
+
+@app.post("/api/jail-roster/bulk", response_model=BulkJailRosterResult)
+async def bulk_jail_roster_scrape(request: BulkJailRosterRequest):
+    """
+    Scrape multiple jail roster pages by booking number range.
+
+    Provide the base URL (e.g., https://inmates.stpso.revize.com),
+    the latest booking number, and how many to fetch.
+
+    Will scrape from start_booking down to start_booking - count + 1.
+    """
+    import asyncio
+
+    start_time = datetime.now()
+
+    # Limit to 50 max to avoid overloading
+    count = min(request.count, 50)
+
+    # Normalize base URL
+    base_url = request.base_url.rstrip('/')
+
+    # Generate booking URLs
+    booking_numbers = list(range(request.start_booking, request.start_booking - count, -1))
+
+    # Scrape in parallel (batches of 5 to be nice to the server)
+    inmates = []
+    errors = []
+
+    async def scrape_one(booking_num):
+        url = f"{base_url}/bookings/{booking_num}"
+        try:
+            result = await scrape_jail_roster(url)
+            if result.get('inmate') and result['inmate'].get('name'):
+                return {
+                    'booking_number': booking_num,
+                    **result
+                }
+            else:
+                return None
+        except Exception as e:
+            errors.append(f"Booking {booking_num}: {str(e)[:50]}")
+            return None
+
+    # Process in batches of 5
+    batch_size = 5
+    for i in range(0, len(booking_numbers), batch_size):
+        batch = booking_numbers[i:i + batch_size]
+        tasks = [scrape_one(num) for num in batch]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, Exception):
+                errors.append(str(result)[:50])
+            elif result is not None:
+                inmates.append(result)
+
+        # Small delay between batches
+        if i + batch_size < len(booking_numbers):
+            await asyncio.sleep(0.5)
+
+    execution_time = (datetime.now() - start_time).total_seconds()
+
+    return {
+        'base_url': base_url,
+        'start_booking': request.start_booking,
+        'count_requested': count,
+        'count_found': len(inmates),
+        'inmates': inmates,
+        'errors': errors,
+        'execution_time': execution_time
+    }
+
+
 # ============================================================================
 # HEALTH CHECK
 # ============================================================================
