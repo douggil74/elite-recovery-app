@@ -3260,39 +3260,42 @@ async def scrape_jail_roster(url: str) -> Dict[str, Any]:
                                         charge_info['bond'] = cell_text
                                     elif cell_text:
                                         charge_info[f'col_{i}'] = cell_text
-                            charges.append(charge_info)
+                            # Only add if not already in charges (dedupe)
+                            if not any(c.get('charge') == first_cell_text for c in charges):
+                                charges.append(charge_info)
 
-        # Extract charges - look for charge tables or lists
-        charge_tables = soup.find_all('table', class_=lambda x: x and 'charge' in str(x).lower())
-        if not charge_tables:
-            # Try finding tables that might contain charges
-            for table in soup.find_all('table'):
-                headers = [th.get_text(strip=True).lower() for th in table.find_all('th')]
-                if any('charge' in h or 'offense' in h for h in headers):
-                    charge_tables.append(table)
+        # Extract charges - look for charge tables or lists (skip if Revize pattern found charges)
+        if not charges:
+            charge_tables = soup.find_all('table', class_=lambda x: x and 'charge' in str(x).lower())
+            if not charge_tables:
+                # Try finding tables that might contain charges
+                for table in soup.find_all('table'):
+                    headers = [th.get_text(strip=True).lower() for th in table.find_all('th')]
+                    if any('charge' in h or 'offense' in h for h in headers):
+                        charge_tables.append(table)
 
-        for table in charge_tables:
-            rows = table.find_all('tr')
-            headers = []
-            for row in rows:
-                ths = row.find_all('th')
-                if ths:
-                    headers = [th.get_text(strip=True).lower() for th in ths]
-                else:
-                    cells = row.find_all('td')
-                    if cells and headers:
-                        charge = {}
-                        for i, cell in enumerate(cells):
-                            if i < len(headers):
-                                charge[headers[i]] = cell.get_text(strip=True)
-                        if charge:
-                            charges.append(charge)
-                    elif cells and len(cells) >= 2:
-                        # No headers, assume first cell is charge description
-                        charges.append({
-                            'charge': cells[0].get_text(strip=True),
-                            'details': cells[1].get_text(strip=True) if len(cells) > 1 else ''
-                        })
+            for table in charge_tables:
+                rows = table.find_all('tr')
+                headers = []
+                for row in rows:
+                    ths = row.find_all('th')
+                    if ths:
+                        headers = [th.get_text(strip=True).lower() for th in ths]
+                    else:
+                        cells = row.find_all('td')
+                        if cells and headers:
+                            charge = {}
+                            for i, cell in enumerate(cells):
+                                if i < len(headers):
+                                    charge[headers[i]] = cell.get_text(strip=True)
+                            if charge:
+                                charges.append(charge)
+                        elif cells and len(cells) >= 2:
+                            # No headers, assume first cell is charge description
+                            charges.append({
+                                'charge': cells[0].get_text(strip=True),
+                                'details': cells[1].get_text(strip=True) if len(cells) > 1 else ''
+                            })
 
         # Extract bonds
         bond_tables = soup.find_all('table', class_=lambda x: x and 'bond' in str(x).lower())
