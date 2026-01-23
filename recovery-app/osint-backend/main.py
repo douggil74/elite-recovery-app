@@ -3179,6 +3179,100 @@ async def scrape_jail_roster(url: str) -> Dict[str, Any]:
                     elif 'booking' in label and 'booking_number' not in inmate:
                         inmate['booking_number'] = value
 
+        # Pattern 4: Revize jail system - labels followed by input fields with values
+        # Format: <label class="form-label">First Name</label><input value="RANDY">
+        first_name = ''
+        last_name = ''
+        middle_name = ''
+
+        for label in soup.find_all('label'):
+            label_text = label.get_text(strip=True).lower()
+            # Find the next input sibling
+            next_input = label.find_next_sibling('input')
+            if not next_input:
+                # Try finding input as next element (might not be direct sibling)
+                parent = label.parent
+                if parent:
+                    inputs = parent.find_all('input')
+                    label_index = list(parent.children).index(label) if label in parent.children else -1
+                    for inp in inputs:
+                        inp_index = list(parent.children).index(inp) if inp in parent.children else -1
+                        if inp_index > label_index:
+                            next_input = inp
+                            break
+
+            if next_input and next_input.get('value'):
+                value = next_input.get('value', '').strip()
+                if not value:
+                    continue
+
+                # Map Revize field labels to inmate data
+                if 'first name' in label_text:
+                    first_name = value
+                elif 'last name' in label_text:
+                    last_name = value
+                elif 'middle' in label_text:
+                    middle_name = value
+                elif label_text == 'age' or 'age' == label_text.strip():
+                    inmate['age'] = value
+                elif 'race' in label_text:
+                    inmate['race'] = value
+                elif label_text in ['sex', 'gender'] or 'sex' in label_text:
+                    inmate['sex'] = value
+                elif 'height' in label_text:
+                    inmate['height'] = value
+                elif 'weight' in label_text:
+                    inmate['weight'] = value
+                elif 'hair' in label_text:
+                    inmate['hair_color'] = value
+                elif 'eye' in label_text:
+                    inmate['eye_color'] = value
+                elif 'address' in label_text or 'city' in label_text:
+                    if 'address' not in inmate:
+                        inmate['address'] = value
+                    else:
+                        inmate['address'] += ', ' + value
+                elif 'booking' in label_text and 'date' not in label_text:
+                    inmate['booking_number'] = value
+                elif 'arrest' in label_text or 'booking date' in label_text:
+                    inmate['booking_date'] = value
+                elif 'dob' in label_text or 'birth' in label_text:
+                    inmate['dob'] = value
+
+        # Combine first/middle/last name for Revize format
+        if first_name or last_name:
+            name_parts = []
+            if first_name:
+                name_parts.append(first_name)
+            if middle_name:
+                name_parts.append(middle_name)
+            if last_name:
+                name_parts.append(last_name)
+            if name_parts:
+                inmate['name'] = ' '.join(name_parts)
+
+        # Pattern 5: Revize charges table - look for table rows with charge descriptions
+        # Revize uses tables where the first column has the charge description
+        if not charges:
+            for table in soup.find_all('table'):
+                rows = table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all('td')
+                    if cells:
+                        # Check if this looks like a charge (long text, often all caps)
+                        first_cell_text = cells[0].get_text(strip=True)
+                        if len(first_cell_text) > 10 and first_cell_text.isupper():
+                            charge_info = {'charge': first_cell_text}
+                            # Additional columns might have bond, status, etc.
+                            if len(cells) > 1:
+                                for i, cell in enumerate(cells[1:], 1):
+                                    cell_text = cell.get_text(strip=True)
+                                    if '$' in cell_text:
+                                        charge_info['bond'] = cell_text
+                                    elif cell_text:
+                                        charge_info[f'col_{i}'] = cell_text
+                            charges.append(charge_info)
+
         # Extract charges - look for charge tables or lists
         charge_tables = soup.find_all('table', class_=lambda x: x and 'charge' in str(x).lower())
         if not charge_tables:
