@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '@/constants';
 import type { Case } from '@/types';
@@ -62,6 +62,17 @@ export function CaseCard({
       onPress={onPress}
       activeOpacity={0.7}
     >
+      {/* Mugshot photo */}
+      <View style={styles.photoContainer}>
+        {caseData.mugshotUrl ? (
+          <Image source={{ uri: caseData.mugshotUrl }} style={styles.mugshot} />
+        ) : (
+          <View style={styles.mugshotPlaceholder}>
+            <Ionicons name="person" size={24} color="#52525b" />
+          </View>
+        )}
+      </View>
+
       {/* Main content */}
       <View style={styles.content}>
         {/* Top row: Name and status */}
@@ -141,6 +152,25 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 10,
     borderLeftWidth: 4,
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  photoContainer: {
+    marginRight: 12,
+  },
+  mugshot: {
+    width: 50,
+    height: 60,
+    borderRadius: 6,
+    backgroundColor: '#18181b',
+  },
+  mugshotPlaceholder: {
+    width: 50,
+    height: 60,
+    borderRadius: 6,
+    backgroundColor: '#18181b',
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#27272a',
   },

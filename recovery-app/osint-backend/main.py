@@ -27,11 +27,18 @@ from pydantic import BaseModel, EmailStr
 import aiohttp
 import httpx
 
+# Playwright for browser automation (replaces ScrapingBee)
+try:
+    from playwright.async_api import async_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+
 # Initialize FastAPI
 app = FastAPI(
     title="Elite Recovery OSINT API",
     description="Advanced OSINT intelligence gathering for fugitive recovery",
-    version="1.5.0"
+    version="3.3.0"
 )
 
 # CORS - allow all origins for the recovery app
@@ -2066,6 +2073,7 @@ def generate_username_variations(full_name: str, include_name_variants: bool = T
     """
     Generate common username variations from a name.
     Now includes nickname variants (Doug → Douglas, Bill → William, etc.)
+    Optimized to search most common patterns first.
     """
     parts = full_name.lower().split()
     if len(parts) < 2:
@@ -2081,16 +2089,24 @@ def generate_username_variations(full_name: str, include_name_variants: bool = T
     first_names = [first]
     if include_name_variants:
         first_names = get_name_variants(first)
+        # Ensure original name is first
+        if first in first_names:
+            first_names.remove(first)
+        first_names = [first] + first_names
 
     variations = []
 
-    # Generate variations for each first name variant
+    # FIRST: Add the most common patterns for EACH name variant
+    # This ensures both "douggilford" AND "douglasgilford" are in top results
+    for fname in first_names:
+        variations.append(f"{fname}{last}")        # douggilford, douglasgilford
+        variations.append(f"{fname}_{last}")       # doug_gilford, douglas_gilford
+        variations.append(f"{fname}.{last}")       # doug.gilford, douglas.gilford
+
+    # THEN: Add secondary patterns
     for fname in first_names:
         f_initial = fname[0] if fname else ""
         variations.extend([
-            f"{fname}{last}",           # douggilford, douglasgilford
-            f"{fname}_{last}",          # doug_gilford
-            f"{fname}.{last}",          # doug.gilford
             f"{fname}-{last}",          # doug-gilford
             f"{last}{fname}",           # gilforddoug
             f"{f_initial}{last}",       # dgilford
@@ -2523,7 +2539,8 @@ async def investigate_person(request: InvestigatePersonRequest):
     })
 
     # Generate smart username variations for ALL name variants
-    username_variations = generate_username_variations(request.name, include_name_variants=True)[:10]  # Top 10
+    # Increased from 10 to 20 to ensure all name variants get adequate coverage
+    username_variations = generate_username_variations(request.name, include_name_variants=True)[:20]
     discovered_usernames.extend(username_variations)
 
     loop = asyncio.get_event_loop()
@@ -3387,21 +3404,7 @@ async def scrape_jail_roster(url: str) -> Dict[str, Any]:
     ]
     random_ua = random.choice(user_agents)
 
-    # Method 1: Try ScrapingBee free tier (100 free credits/month)
-    # Using render=false for speed, premium_proxy for better success
-    try:
-        import os
-        scrapingbee_key = os.environ.get('SCRAPINGBEE_API_KEY')
-        if scrapingbee_key:
-            sb_url = f"https://app.scrapingbee.com/api/v1/?api_key={scrapingbee_key}&url={quote(url, safe='')}&render_js=false"
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.get(sb_url)
-                if response.status_code == 200 and len(response.text) > 500:
-                    html = response.text
-    except Exception as e:
-        errors.append(f"ScrapingBee: {str(e)[:30]}")
-
-    # Method 2: Try multiple free CORS proxies with better headers
+    # Method 1: Try multiple free CORS proxies with better headers
     if not html:
         proxy_configs = [
             # allorigins.win
@@ -4034,7 +4037,7 @@ async def search_la_court_records(name: str, parish: str = None, dob: str = None
     """
     Search Louisiana court records via Tyler Technologies portal.
     Credentials stored in environment variables for security.
-    Uses ScrapingBee for JavaScript rendering when available.
+    Uses Playwright for browser automation when available.
     """
     import os
     import re
@@ -4051,7 +4054,6 @@ async def search_la_court_records(name: str, parish: str = None, dob: str = None
     # Get credentials from environment
     court_user = os.environ.get('LA_COURT_USERNAME')
     court_pass = os.environ.get('LA_COURT_PASSWORD')
-    scrapingbee_key = os.environ.get('SCRAPINGBEE_API_KEY')
 
     if not court_user or not court_pass:
         errors.append("Court records credentials not configured (LA_COURT_USERNAME, LA_COURT_PASSWORD)")
@@ -4080,41 +4082,187 @@ async def search_la_court_records(name: str, parish: str = None, dob: str = None
     active_keywords = ['active', 'open', 'pending', 'arraignment', 'trial']
 
     try:
-        # Try ScrapingBee first (has JavaScript rendering for Angular sites)
-        if scrapingbee_key:
+        # Use Playwright browser automation for Tyler's Angular app
+        if PLAYWRIGHT_AVAILABLE and court_user and court_pass:
             try:
-                # ScrapingBee can render JavaScript and handle sessions
-                search_url = f"https://researchla.tylerhost.net/CourtRecordsSearch/#!/search?firstName={quote(first_name)}&lastName={quote(last_name)}"
-
-                async with httpx.AsyncClient(timeout=90.0) as client:
-                    scrapingbee_url = f"https://app.scrapingbee.com/api/v1/"
-
-                    response = await client.get(
-                        scrapingbee_url,
-                        params={
-                            'api_key': scrapingbee_key,
-                            'url': search_url,
-                            'render_js': 'true',
-                            'wait': 5000,  # Wait 5 seconds for Angular to load
-                            'premium_proxy': 'true',
-                        },
-                        timeout=90.0
+                async with async_playwright() as p:
+                    # Launch headless Chromium
+                    browser = await p.chromium.launch(headless=True)
+                    context = await browser.new_context(
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                     )
+                    page = await context.new_page()
 
-                    if response.status_code == 200:
-                        html = response.text
+                    try:
+                        # Navigate to Tyler court search
+                        login_url = "https://researchla.tylerhost.net/CourtRecordsSearch/"
+                        await page.goto(login_url, wait_until='networkidle', timeout=30000)
 
-                        # Parse the rendered HTML for case results
+                        # Wait for Angular app to load
+                        await page.wait_for_timeout(2000)
+
+                        # Try to find and click login link
+                        login_selectors = ['a[href*="Login"]', 'a:has-text("Sign In")', 'a:has-text("Login")', '.login-link']
+                        for selector in login_selectors:
+                            try:
+                                login_link = await page.query_selector(selector)
+                                if login_link:
+                                    await login_link.click()
+                                    await page.wait_for_timeout(2000)
+                                    break
+                            except:
+                                continue
+
+                        # Fill in credentials
+                        email_selectors = ['input[name="Email"]', 'input[type="email"]', '#Email', 'input[id*="mail"]']
+                        for selector in email_selectors:
+                            try:
+                                email_input = await page.query_selector(selector)
+                                if email_input:
+                                    await email_input.fill(court_user)
+                                    break
+                            except:
+                                continue
+
+                        password_selectors = ['input[name="Password"]', 'input[type="password"]', '#Password']
+                        for selector in password_selectors:
+                            try:
+                                pass_input = await page.query_selector(selector)
+                                if pass_input:
+                                    await pass_input.fill(court_pass)
+                                    break
+                            except:
+                                continue
+
+                        # Click login button
+                        submit_selectors = ['button[type="submit"]', 'input[type="submit"]', 'button:has-text("Log In")', 'button:has-text("Sign In")']
+                        for selector in submit_selectors:
+                            try:
+                                submit_btn = await page.query_selector(selector)
+                                if submit_btn:
+                                    await submit_btn.click()
+                                    await page.wait_for_timeout(3000)
+                                    break
+                            except:
+                                continue
+
+                        # Navigate to search (may already be there after login)
+                        search_selectors = ['a[href*="search"]', 'a:has-text("Search")', '.search-link']
+                        for selector in search_selectors:
+                            try:
+                                search_link = await page.query_selector(selector)
+                                if search_link:
+                                    await search_link.click()
+                                    await page.wait_for_timeout(2000)
+                                    break
+                            except:
+                                continue
+
+                        # Fill in search form - try name search
+                        last_name_selectors = ['input[name="LastName"]', 'input[ng-model*="lastName"]', '#LastName', 'input[placeholder*="Last"]']
+                        for selector in last_name_selectors:
+                            try:
+                                ln_input = await page.query_selector(selector)
+                                if ln_input:
+                                    await ln_input.fill(last_name)
+                                    break
+                            except:
+                                continue
+
+                        first_name_selectors = ['input[name="FirstName"]', 'input[ng-model*="firstName"]', '#FirstName', 'input[placeholder*="First"]']
+                        for selector in first_name_selectors:
+                            try:
+                                fn_input = await page.query_selector(selector)
+                                if fn_input:
+                                    await fn_input.fill(first_name)
+                                    break
+                            except:
+                                continue
+
+                        # Click search button
+                        search_btn_selectors = ['button[type="submit"]', 'button:has-text("Search")', 'input[value="Search"]', '.btn-search']
+                        for selector in search_btn_selectors:
+                            try:
+                                search_btn = await page.query_selector(selector)
+                                if search_btn:
+                                    await search_btn.click()
+                                    await page.wait_for_timeout(5000)
+                                    break
+                            except:
+                                continue
+
+                        # Get the rendered HTML
+                        html = await page.content()
+
+                        # Parse results
                         from bs4 import BeautifulSoup
+                        import re
                         soup = BeautifulSoup(html, 'html.parser')
 
-                        # Look for case rows (Tyler uses various table/grid formats)
-                        case_rows = soup.select('.case-row, .search-result, tr[data-case], .case-item, tbody tr')
+                        # Tyler case number patterns
+                        case_num_patterns = [
+                            r'\b(\d{4,6}-[A-Z]-\d{4})\b',
+                            r'\b(\d{4}-\d{5,6})\b',
+                            r'\b([A-Z]{2,3}-\d{4}-\d+)\b',
+                        ]
+                        date_pattern = r'\b(\d{1,2}/\d{1,2}/\d{2,4}|\w+ \d{1,2}, \d{4})\b'
 
+                        # Try multiple selectors for case rows
+                        row_selectors = [
+                            '.case-row', '.search-result', '.case-item',
+                            'tr[ng-repeat]', 'tr[data-case]', 'div[ng-repeat]',
+                            '.results-row', '.case-result', 'tbody tr', '.list-group-item'
+                        ]
+
+                        case_rows = []
+                        for selector in row_selectors:
+                            found = soup.select(selector)
+                            if found:
+                                case_rows = found
+                                break
+
+                        # If no rows, try finding case numbers in full text
+                        if not case_rows:
+                            full_text = soup.get_text()
+                            for pattern in case_num_patterns:
+                                found_cases = re.findall(pattern, full_text)
+                                for case_num in found_cases:
+                                    case_data = {
+                                        'case_number': case_num,
+                                        'case_type': '',
+                                        'filing_date': '',
+                                        'status': '',
+                                        'charges': [],
+                                        'court': 'Louisiana State Court',
+                                        'has_fta': False,
+                                        'has_warrant': False
+                                    }
+                                    idx = full_text.lower().find(case_num.lower())
+                                    if idx > 0:
+                                        context = full_text[max(0, idx-200):idx+200].lower()
+                                        for keyword in fta_keywords:
+                                            if keyword in context:
+                                                case_data['has_fta'] = True
+                                                fta_count += 1
+                                                break
+                                        for keyword in warrant_keywords:
+                                            if keyword in context:
+                                                case_data['has_warrant'] = True
+                                                warrant_count += 1
+                                                break
+                                        for keyword in active_keywords:
+                                            if keyword in context:
+                                                active_count += 1
+                                                break
+                                        date_matches = re.findall(date_pattern, context)
+                                        if date_matches:
+                                            case_data['filing_date'] = date_matches[0]
+                                    cases.append(case_data)
+
+                        # Process rows if found
                         for row in case_rows:
-                            case_text = row.get_text(' ', strip=True).lower()
-
-                            # Extract case info
+                            case_text = row.get_text(' ', strip=True)
+                            case_text_lower = case_text.lower()
                             case_data = {
                                 'case_number': '',
                                 'case_type': '',
@@ -4125,137 +4273,171 @@ async def search_la_court_records(name: str, parish: str = None, dob: str = None
                                 'has_fta': False,
                                 'has_warrant': False
                             }
-
-                            # Try to find case number
-                            case_num_elem = row.select_one('.case-number, [data-case-number], td:first-child a')
-                            if case_num_elem:
-                                case_data['case_number'] = case_num_elem.get_text(strip=True)
-
-                            # Check for FTA/warrant indicators
+                            for pattern in case_num_patterns:
+                                match = re.search(pattern, case_text)
+                                if match:
+                                    case_data['case_number'] = match.group(1)
+                                    break
+                            if not case_data['case_number']:
+                                case_num_elem = row.select_one('.case-number, [data-case-number], td:first-child a, a')
+                                if case_num_elem:
+                                    case_data['case_number'] = case_num_elem.get_text(strip=True)
+                            date_match = re.search(date_pattern, case_text)
+                            if date_match:
+                                case_data['filing_date'] = date_match.group(1)
                             for keyword in fta_keywords:
-                                if keyword in case_text:
+                                if keyword in case_text_lower:
                                     case_data['has_fta'] = True
                                     fta_count += 1
                                     break
-
                             for keyword in warrant_keywords:
-                                if keyword in case_text:
+                                if keyword in case_text_lower:
                                     case_data['has_warrant'] = True
                                     warrant_count += 1
                                     break
-
                             for keyword in active_keywords:
-                                if keyword in case_text:
+                                if keyword in case_text_lower:
                                     active_count += 1
                                     break
-
                             if case_data['case_number']:
                                 cases.append(case_data)
 
-                        if not cases and 'No results' not in html and 'no records' not in html.lower():
-                            errors.append("Could not parse results from ScrapingBee response")
+                        # Debug info if no cases found
+                        if not cases:
+                            if 'login' in html.lower() or 'sign in' in html.lower():
+                                errors.append("Login may have failed - still on login page")
+                            elif 'no results' in html.lower() or 'no records' in html.lower():
+                                errors.append("No court records found for this name")
+                            else:
+                                title_elem = soup.find('title')
+                                page_title = title_elem.get_text(strip=True) if title_elem else 'Unknown'
+                                errors.append(f"Page: {page_title}")
 
-                    else:
-                        errors.append(f"ScrapingBee returned {response.status_code}")
+                    finally:
+                        await browser.close()
 
             except Exception as e:
-                errors.append(f"ScrapingBee error: {str(e)[:50]}")
+                errors.append(f"Playwright error: {str(e)[:50]}")
 
-        # Fallback to direct API approach
-        if not cases and not errors:
-            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-                # Step 1: Get login page to establish session
-                login_url = "https://researchla.tylerhost.net/CourtRecordsSearch/Account/Login"
+        # Fallback to direct API approach if Playwright didn't find cases
+        if not cases and court_user and court_pass:
+            api_errors = []
 
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'application/json, text/plain, */*',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Origin': 'https://researchla.tylerhost.net',
-                    'Referer': 'https://researchla.tylerhost.net/CourtRecordsSearch/',
-                }
+            try:
+                async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+                    # Step 1: Get login page to establish session
+                    login_url = "https://researchla.tylerhost.net/CourtRecordsSearch/Account/Login"
 
-                # Try to authenticate
-                auth_data = {
-                    'Email': court_user,
-                    'Password': court_pass,
-                    'RememberMe': False
-                }
-
-                login_response = await client.post(
-                    login_url,
-                    json=auth_data,
-                    headers=headers
-                )
-
-                if login_response.status_code != 200:
-                    errors.append(f"Login failed: {login_response.status_code}")
-                else:
-                    # Step 2: Search for defendant
-                    search_url = "https://researchla.tylerhost.net/CourtRecordsSearch/api/Search"
-
-                    search_data = {
-                        'SearchType': 'Party',
-                        'LastName': last_name,
-                        'FirstName': first_name,
-                        'MiddleName': '',
-                        'DateOfBirth': dob or '',
-                        'CaseNumber': '',
-                        'PageNumber': 1,
-                        'PageSize': 50
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'application/json, text/plain, */*',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Content-Type': 'application/json',
+                        'Origin': 'https://researchla.tylerhost.net',
+                        'Referer': 'https://researchla.tylerhost.net/CourtRecordsSearch/',
                     }
 
-                    if parish:
-                        search_data['Court'] = parish
+                    # Try to authenticate with JSON
+                    auth_data = {
+                        'Email': court_user,
+                        'Password': court_pass,
+                        'RememberMe': False
+                    }
 
-                    search_response = await client.post(
-                        search_url,
-                        json=search_data,
+                    login_response = await client.post(
+                        login_url,
+                        json=auth_data,
                         headers=headers
                     )
 
-                if search_response.status_code == 200:
-                    try:
-                        results = search_response.json()
+                    # If JSON login fails, try form data
+                    if login_response.status_code not in [200, 302]:
+                        form_headers = headers.copy()
+                        form_headers['Content-Type'] = 'application/x-www-form-urlencoded'
+                        login_response = await client.post(
+                            login_url,
+                            data=auth_data,
+                            headers=form_headers
+                        )
 
-                        # Parse results (structure depends on Tyler's API)
-                        if isinstance(results, dict) and 'Cases' in results:
-                            for case_data in results.get('Cases', []):
-                                case = {
-                                    'case_number': case_data.get('CaseNumber', ''),
-                                    'case_type': case_data.get('CaseType', ''),
-                                    'filing_date': case_data.get('FilingDate', ''),
-                                    'status': case_data.get('Status', ''),
-                                    'charges': case_data.get('Charges', []),
-                                    'court': case_data.get('Court', ''),
-                                    'judge': case_data.get('Judge', ''),
-                                    'next_hearing': case_data.get('NextHearing', ''),
-                                    'disposition': case_data.get('Disposition', '')
-                                }
-                                cases.append(case)
+                    if login_response.status_code not in [200, 302]:
+                        api_errors.append(f"Direct API login failed: {login_response.status_code}")
+                    else:
+                        # Step 2: Search for defendant
+                        search_url = "https://researchla.tylerhost.net/CourtRecordsSearch/api/Search"
 
-                                # Count FTAs and active cases
-                                status_lower = (case.get('status') or '').lower()
-                                if 'fta' in status_lower or 'failure to appear' in status_lower or 'bench warrant' in status_lower:
-                                    fta_count += 1
-                                if 'active' in status_lower or 'open' in status_lower or 'pending' in status_lower:
-                                    active_count += 1
+                        search_data = {
+                            'SearchType': 'Party',
+                            'LastName': last_name,
+                            'FirstName': first_name,
+                            'MiddleName': '',
+                            'DateOfBirth': dob or '',
+                            'CaseNumber': '',
+                            'PageNumber': 1,
+                            'PageSize': 50
+                        }
 
-                        elif isinstance(results, list):
-                            for case_data in results:
-                                case = {
-                                    'case_number': str(case_data.get('CaseNumber', case_data.get('caseNumber', ''))),
-                                    'case_type': case_data.get('CaseType', case_data.get('caseType', '')),
-                                    'filing_date': case_data.get('FilingDate', case_data.get('filingDate', '')),
-                                    'status': case_data.get('Status', case_data.get('status', '')),
-                                    'court': case_data.get('Court', case_data.get('court', '')),
-                                }
-                                cases.append(case)
+                        if parish:
+                            search_data['Court'] = parish
 
-                    except Exception as e:
-                        errors.append(f"Failed to parse results: {str(e)[:50]}")
-                else:
-                    errors.append(f"Search failed: {search_response.status_code}")
+                        search_response = await client.post(
+                            search_url,
+                            json=search_data,
+                            headers=headers
+                        )
+
+                        if search_response.status_code == 200:
+                            try:
+                                results = search_response.json()
+
+                                # Parse results (structure depends on Tyler's API)
+                                if isinstance(results, dict) and 'Cases' in results:
+                                    for case_data in results.get('Cases', []):
+                                        case = {
+                                            'case_number': case_data.get('CaseNumber', ''),
+                                            'case_type': case_data.get('CaseType', ''),
+                                            'filing_date': case_data.get('FilingDate', ''),
+                                            'status': case_data.get('Status', ''),
+                                            'charges': case_data.get('Charges', []),
+                                            'court': case_data.get('Court', ''),
+                                            'judge': case_data.get('Judge', ''),
+                                            'next_hearing': case_data.get('NextHearing', ''),
+                                            'disposition': case_data.get('Disposition', '')
+                                        }
+                                        cases.append(case)
+
+                                        # Count FTAs and active cases
+                                        status_lower = (case.get('status') or '').lower()
+                                        if 'fta' in status_lower or 'failure to appear' in status_lower or 'bench warrant' in status_lower:
+                                            fta_count += 1
+                                        if 'active' in status_lower or 'open' in status_lower or 'pending' in status_lower:
+                                            active_count += 1
+
+                                elif isinstance(results, list):
+                                    for case_data in results:
+                                        case = {
+                                            'case_number': str(case_data.get('CaseNumber', case_data.get('caseNumber', ''))),
+                                            'case_type': case_data.get('CaseType', case_data.get('caseType', '')),
+                                            'filing_date': case_data.get('FilingDate', case_data.get('filingDate', '')),
+                                            'status': case_data.get('Status', case_data.get('status', '')),
+                                            'court': case_data.get('Court', case_data.get('court', '')),
+                                        }
+                                        cases.append(case)
+
+                                # Clear Playwright errors if API succeeded
+                                if cases:
+                                    errors = []
+
+                            except Exception as e:
+                                api_errors.append(f"API parse error: {str(e)[:50]}")
+                        else:
+                            api_errors.append(f"API search failed: {search_response.status_code}")
+
+            except Exception as e:
+                api_errors.append(f"Direct API error: {str(e)[:50]}")
+
+            # Add API errors to main errors list
+            errors.extend(api_errors)
 
     except Exception as e:
         errors.append(f"Court search error: {str(e)[:100]}")
@@ -4397,7 +4579,9 @@ def analyze_charges(charges: List[Dict[str, Any]]) -> Dict[str, Any]:
         "charge_count": len(charges) if charges else 0,
         "felony_count": 0,
         "violent_count": 0,
-        "fta_count": 0
+        "fta_count": 0,
+        "fta_charges": [],  # Track which charges triggered FTA flag
+        "fta_type": None  # Type of FTA indicator found
     }
 
     if not charges:
@@ -4405,6 +4589,7 @@ def analyze_charges(charges: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     for charge in charges:
         charge_text = (charge.get("charge") or charge.get("description") or "").lower()
+        charge_display = charge.get("charge") or charge.get("description") or ""
 
         # Check for felony
         if any(indicator in charge_text for indicator in FELONY_INDICATORS):
@@ -4416,10 +4601,22 @@ def analyze_charges(charges: List[Dict[str, Any]]) -> Dict[str, Any]:
             result["has_violent"] = True
             result["violent_count"] += 1
 
-        # Check for prior FTA
-        if any(indicator in charge_text for indicator in FTA_INDICATORS):
-            result["has_prior_fta"] = True
-            result["fta_count"] += 1
+        # Check for prior FTA - track which indicator and charge
+        for indicator in FTA_INDICATORS:
+            if indicator in charge_text:
+                result["has_prior_fta"] = True
+                result["fta_count"] += 1
+                result["fta_charges"].append(charge_display)
+                # Set type based on indicator
+                if indicator in ["fugitive", "flight"]:
+                    result["fta_type"] = "FUGITIVE"
+                elif indicator in ["failure to appear", "fta"]:
+                    result["fta_type"] = "FTA"
+                elif indicator in ["bench warrant"]:
+                    result["fta_type"] = "BENCH_WARRANT"
+                elif indicator in ["bail jumping", "absconding"]:
+                    result["fta_type"] = "BAIL_VIOLATION"
+                break  # Only count each charge once
 
     return result
 
@@ -4512,9 +4709,9 @@ async def search_prior_bookings(name: str, base_url: str, current_booking: int =
             pass
         return None
 
-    # Check in batches of 10
-    batch_size = 10
-    search_list = list(search_range)[:50]  # Limit to 50 checks
+    # Check in batches of 5 (reduced for speed)
+    batch_size = 5
+    search_list = list(search_range)[:10]  # Limit to 10 checks for speed
 
     for i in range(0, len(search_list), batch_size):
         batch = search_list[i:i + batch_size]
@@ -4525,21 +4722,19 @@ async def search_prior_bookings(name: str, base_url: str, current_booking: int =
             if result and not isinstance(result, Exception):
                 prior_bookings.append(result)
 
-        if len(prior_bookings) >= 5:  # Found enough
+        if len(prior_bookings) >= 2:  # Found enough, stop early
             break
-
-        await asyncio.sleep(0.3)
 
     return prior_bookings
 
 
 async def search_court_records(name: str) -> List[Dict[str, Any]]:
-    """Search CourtListener for federal court records"""
+    """Search CourtListener for federal court records (with 8s timeout for speed)"""
     records = []
 
     try:
         # CourtListener API (free, federal records)
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as session:
             # Search for party name
             search_url = "https://www.courtlistener.com/api/rest/v3/search/"
             params = {
@@ -4548,7 +4743,7 @@ async def search_court_records(name: str) -> List[Dict[str, Any]]:
                 "order_by": "dateFiled desc"
             }
 
-            async with session.get(search_url, params=params, timeout=15) as resp:
+            async with session.get(search_url, params=params) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     for result in data.get("results", [])[:5]:
@@ -4600,7 +4795,7 @@ Provide a brief (2-3 sentence) assessment of this person's flight risk for a bai
         if not openai_key:
             return None
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
             async with session.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={
@@ -4608,15 +4803,14 @@ Provide a brief (2-3 sentence) assessment of this person's flight risk for a bai
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "gpt-4o",
+                    "model": "gpt-4o-mini",  # Use faster model for quick analysis
                     "messages": [
                         {"role": "system", "content": "You are an expert bail bond risk assessor. Provide brief, actionable assessments."},
                         {"role": "user", "content": context}
                     ],
-                    "max_tokens": 200,
+                    "max_tokens": 150,
                     "temperature": 0.3
-                },
-                timeout=30
+                }
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -4643,10 +4837,27 @@ def calculate_fta_score(
     # Prior FTA on current charges (+25)
     if charge_analysis.get("has_prior_fta"):
         score += 25
+        fta_type = charge_analysis.get("fta_type", "FTA")
+        fta_charges = charge_analysis.get("fta_charges", [])
+        charge_detail = fta_charges[0] if fta_charges else "Unknown"
+
+        # Build detailed factor message
+        if fta_type == "FUGITIVE":
+            factor_msg = f"FUGITIVE charge - active warrant from another jurisdiction"
+        elif fta_type == "BENCH_WARRANT":
+            factor_msg = f"Bench warrant - prior court no-show"
+        elif fta_type == "BAIL_VIOLATION":
+            factor_msg = f"Bail jumping/absconding charge"
+        else:
+            factor_msg = f"Prior FTA/Warrant on record"
+
         factors.append({
-            "factor": "Prior FTA/Warrant on record",
+            "factor": factor_msg,
             "impact": "+25",
-            "severity": "high"
+            "severity": "high",
+            "source_charge": charge_detail,
+            "fta_type": fta_type,
+            "research_tip": "Check Louisiana Odyssey (re:SearchLA) and NCIC for originating case"
         })
 
     # Prior bookings at same jail (+15 for each, max +30)
@@ -4808,26 +5019,12 @@ async def calculate_fta_risk(request: FTAScoreRequest):
         "st. tammany"  # Default to St. Tammany for now
     )
 
-    # Search for prior bookings (run in parallel with court searches)
-    prior_bookings_task = search_prior_bookings(
-        request.name,
-        request.jail_base_url or "https://inmates.stpso.revize.com",
-        request.booking_number
-    )
-
-    # Federal court records (CourtListener)
-    federal_court_task = search_court_records(request.name)
-
-    # Louisiana state court records (Tyler Technologies)
-    la_court_task = search_la_court_records(request.name)
-
-    # Run all searches in parallel
-    prior_bookings, federal_records, la_records = await asyncio.gather(
-        prior_bookings_task,
-        federal_court_task,
-        la_court_task,
-        return_exceptions=True
-    )
+    # ALL external searches disabled for SPEED
+    # The FTA score is calculated from charge analysis only
+    # User can manually search court records via links
+    prior_bookings = []
+    federal_records = []
+    la_records = {"cases": [], "fta_cases": 0}
 
     # Handle any exceptions gracefully
     if isinstance(prior_bookings, Exception):
@@ -4879,6 +5076,15 @@ async def calculate_fta_risk(request: FTAScoreRequest):
 
     execution_time = (datetime.now() - start_time).total_seconds()
 
+    # Build search status info
+    search_status = {
+        "federal_search": "completed" if isinstance(federal_records, list) else "failed",
+        "la_search": "completed" if isinstance(la_records, dict) else "failed",
+        "prior_bookings_search": "completed" if isinstance(prior_bookings, list) else "failed",
+        "la_credentials_set": bool(os.environ.get('LA_COURT_USERNAME')),
+        "playwright_available": PLAYWRIGHT_AVAILABLE,
+    }
+
     return {
         "name": request.name,
         "score": score,
@@ -4887,7 +5093,8 @@ async def calculate_fta_risk(request: FTAScoreRequest):
         "prior_bookings": prior_bookings,
         "court_records": court_records,
         "ai_analysis": ai_analysis,
-        "execution_time": execution_time
+        "execution_time": execution_time,
+        "search_status": search_status
     }
 
 
@@ -4942,6 +5149,77 @@ async def calculate_fta_batch(inmates: List[FTAScoreRequest]):
 
 
 # ============================================================================
+# DEBUG: Tyler Court Search
+# ============================================================================
+
+@app.get("/api/debug-tyler")
+async def debug_tyler_search(name: str = "Sara Richard"):
+    """Debug endpoint to see what Tyler's site returns using Playwright"""
+    if not PLAYWRIGHT_AVAILABLE:
+        return {"error": "Playwright not available"}
+
+    # Parse name
+    parts = name.strip().split()
+    first_name = parts[0] if parts else ""
+    last_name = parts[-1] if len(parts) > 1 else parts[0]
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            )
+            page = await context.new_page()
+
+            try:
+                # Navigate to Tyler court search
+                search_url = "https://researchla.tylerhost.net/CourtRecordsSearch/"
+                await page.goto(search_url, wait_until='networkidle', timeout=30000)
+                await page.wait_for_timeout(3000)
+
+                # Get the rendered HTML
+                html = await page.content()
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(html, 'html.parser')
+
+                # Get page title
+                title = soup.find('title')
+                title_text = title.get_text(strip=True) if title else "No title"
+
+                # Get all input fields
+                inputs = soup.find_all('input')
+                input_info = [{"name": i.get('name'), "id": i.get('id'), "type": i.get('type')} for i in inputs[:20]]
+
+                # Get all buttons
+                buttons = soup.find_all(['button', 'input[type="submit"]'])
+                button_info = [{"text": b.get_text(strip=True)[:50], "type": b.get('type')} for b in buttons[:10]]
+
+                # Get all links
+                links = soup.find_all('a')
+                link_info = [{"text": a.get_text(strip=True)[:30], "href": a.get('href', '')[:50]} for a in links[:15]]
+
+                # Get body text sample
+                body_text = soup.get_text()[:2000]
+
+                return {
+                    "status": "success",
+                    "page_title": title_text,
+                    "html_length": len(html),
+                    "inputs_found": input_info,
+                    "buttons_found": button_info,
+                    "links_found": link_info,
+                    "body_sample": body_text,
+                    "searched_name": {"first": first_name, "last": last_name},
+                    "engine": "playwright"
+                }
+            finally:
+                await browser.close()
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
@@ -4991,7 +5269,7 @@ async def health_check():
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
         'tools': tools,
-        'version': '3.0.0'
+        'version': '3.2.0'
     }
 
 
@@ -5000,7 +5278,7 @@ async def root():
     """Root endpoint with API info"""
     return {
         'name': 'Elite Recovery OSINT API',
-        'version': '3.0.0',
+        'version': '3.2.0',
         'endpoints': {
             # Username searches
             '/api/sherlock': 'Username search (400+ sites)',
