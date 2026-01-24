@@ -226,15 +226,16 @@ const styles = StyleSheet.create({
     fontFamily: '"Black Ops One", monospace',
   },
   brandAcronym: {
-    fontSize: 9,
-    color: THEME.textMuted,
-    letterSpacing: 1.5,
-    marginTop: 6,
+    fontSize: 12,
+    color: THEME.textSecondary,
+    letterSpacing: 2,
+    marginTop: 8,
     textTransform: 'uppercase',
   },
   acronymLetter: {
     color: THEME.primary,
-    fontWeight: '800',
+    fontWeight: '700',
+    fontSize: 13,
   },
   subtitle: {
     fontSize: 13,
