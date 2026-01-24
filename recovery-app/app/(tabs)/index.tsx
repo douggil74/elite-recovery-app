@@ -7,6 +7,7 @@ import {
   RefreshControl,
   TouchableOpacity,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -185,7 +186,12 @@ export default function CasesScreen() {
             tintColor={THEME.primary}
           />
         }
-        ListEmptyComponent={!isLoading ? renderEmptyState : null}
+        ListEmptyComponent={isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={THEME.primary} />
+            <Text style={styles.loadingText}>Loading cases...</Text>
+          </View>
+        ) : renderEmptyState()}
         showsVerticalScrollIndicator={false}
       />
     </View>
@@ -301,6 +307,17 @@ const styles = StyleSheet.create({
   },
   listContentEmpty: {
     flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 60,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 14,
+    color: THEME.textSecondary,
   },
   emptyContainer: {
     flex: 1,

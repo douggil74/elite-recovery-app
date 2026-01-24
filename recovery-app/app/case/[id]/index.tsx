@@ -539,15 +539,12 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
               timestamp: new Date(),
             }]);
           } else {
-            setChatMessages(prev => [...prev, {
-              id: uniqueId(),
-              role: 'agent',
-              content: `⚠️ Face extraction: ${result.error || 'Could not detect face'}`,
-              timestamp: new Date(),
-            }]);
+            // Silent failure - face extraction is optional
+            console.log('Face extraction skipped:', result.error);
           }
         } catch (err: any) {
-          console.error('Face extraction error:', err);
+          // Silent failure - don't clutter chat with face errors
+          console.log('Face extraction skipped:', err?.message);
         }
 
         setIsExtractingFace(false);
