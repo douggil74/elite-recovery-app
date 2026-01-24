@@ -135,6 +135,8 @@ export interface CreateCaseOptions {
     charges: Record<string, any>[];
     bonds: Record<string, any>[];
   };
+  existingId?: string; // Used for syncing from cloud to preserve case ID
+  skipSync?: boolean; // Skip cloud sync (used when pulling from cloud)
 }
 
 export async function createCase(
@@ -146,7 +148,8 @@ export async function createCase(
   ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK',
   options?: Partial<CreateCaseOptions>
 ): Promise<Case> {
-  const id = uuid.v4() as string;
+  // Use existingId if provided (for cloud sync) or generate new
+  const id = options?.existingId || (uuid.v4() as string);
   const now = new Date().toISOString();
 
   const newCase: Case = {
@@ -182,8 +185,10 @@ export async function createCase(
     );
   }
 
-  // Auto-sync to cloud
-  syncCase(newCase).catch(err => console.warn('Auto-sync failed:', err));
+  // Auto-sync to cloud (skip if pulled from cloud)
+  if (!options?.skipSync) {
+    syncCase(newCase).catch(err => console.warn('Auto-sync failed:', err));
+  }
 
   return newCase;
 }

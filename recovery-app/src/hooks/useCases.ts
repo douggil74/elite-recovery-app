@@ -10,7 +10,8 @@ import {
 } from '@/lib/database';
 import { audit } from '@/lib/audit';
 import { deleteCaseDirectory } from '@/lib/storage';
-import { syncCase, deleteSyncedCase, isSyncEnabled } from '@/lib/sync';
+import { syncCase, deleteSyncedCase, isSyncEnabled, fetchSyncedCases } from '@/lib/sync';
+import { createCase as dbCreateCaseFromCloud } from '@/lib/database';
 import type { Case, CasePurpose } from '@/types';
 import type { CaseStatus } from '@/components/CaseCard';
 
@@ -51,8 +52,46 @@ export function useCases(): UseCasesReturn {
       // Cleanup expired cases first
       await cleanupExpiredCases();
 
-      // Fetch all cases
-      const allCases = await getAllCases();
+      // Fetch local cases
+      let allCases = await getAllCases();
+
+      // If cloud sync is enabled, also pull from Firestore and merge
+      const cloudEnabled = await isSyncEnabled();
+      if (cloudEnabled) {
+        try {
+          const cloudCases = await fetchSyncedCases();
+          if (cloudCases.length > 0) {
+            // Merge cloud cases with local - cloud wins for conflicts
+            const localIds = new Set(allCases.map(c => c.id));
+            const newFromCloud = cloudCases.filter(c => !localIds.has(c.id));
+
+            // Save new cloud cases to local database
+            for (const cloudCase of newFromCloud) {
+              try {
+                await dbCreateCaseFromCloud(
+                  cloudCase.name,
+                  cloudCase.purpose || 'bail_recovery',
+                  cloudCase.internalCaseId,
+                  cloudCase.notes,
+                  cloudCase.ftaScore,
+                  cloudCase.ftaRiskLevel,
+                  { existingId: cloudCase.id, skipSync: true }
+                );
+              } catch (e) {
+                console.warn('Failed to save cloud case locally:', e);
+              }
+            }
+
+            // Refresh local cases after merge
+            if (newFromCloud.length > 0) {
+              allCases = await getAllCases();
+            }
+          }
+        } catch (syncErr) {
+          console.warn('Cloud sync fetch failed:', syncErr);
+          // Continue with local cases
+        }
+      }
 
       // Fetch stats and photos for each case
       const casesWithStats: CaseWithStats[] = await Promise.all(
