@@ -44,6 +44,12 @@ export default function CasesScreen() {
   const router = useRouter();
   const { cases, isLoading, error, refresh, deleteCase } = useCases();
 
+  // Initial load
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  // Refresh when screen gets focus (coming back from other tabs)
   useFocusEffect(
     useCallback(() => {
       refresh();
