@@ -1165,6 +1165,63 @@ ${result.explanation}`,
     setIsSending(true);
     scrollToBottom();
 
+    // COMMAND DETECTION: "add X as associate" or "add associate X"
+    const addAssociateMatch = userTextLower.match(/add\s+(.+?)\s+as\s+(associate|relative|contact|friend|family)/i) ||
+                              userTextLower.match(/add\s+(associate|relative|contact)\s+(.+)/i);
+    if (addAssociateMatch) {
+      const name = addAssociateMatch[1].replace(/(associate|relative|contact|friend|family)/gi, '').trim();
+      const normalizedName = normalizeName(name) || name;
+
+      if (normalizedName.length > 1) {
+        const newAssociate = {
+          name: normalizedName,
+          relationship: 'associate',
+          source: 'manual_add',
+        };
+
+        setDiscoveredAssociates(prev => {
+          if (prev.some(a => normalizeName(a.name)?.toLowerCase() === normalizedName.toLowerCase())) {
+            return prev;
+          }
+          return [...prev, newAssociate];
+        });
+
+        setChatMessages(prev => [...prev, {
+          id: uniqueId(),
+          role: 'agent',
+          content: `✓ Added **${normalizedName}** as associate.\n\nWhat's their relationship to ${getSubjectName()}? (friend, family, employer, co-signer, etc.)`,
+          timestamp: new Date(),
+        }]);
+        setIsSending(false);
+        scrollToBottom();
+        chatInputRef.current?.focus();
+        return;
+      }
+    }
+
+    // COMMAND: Update relationship for last added associate
+    const relationshipMatch = userTextLower.match(/^(friend|family|mother|father|sister|brother|spouse|wife|husband|girlfriend|boyfriend|employer|coworker|co-signer|cosigner|roommate|neighbor)$/i);
+    if (relationshipMatch && discoveredAssociates.length > 0) {
+      const relationship = relationshipMatch[1];
+      setDiscoveredAssociates(prev => {
+        const updated = [...prev];
+        if (updated.length > 0) {
+          updated[updated.length - 1] = { ...updated[updated.length - 1], relationship };
+        }
+        return updated;
+      });
+
+      setChatMessages(prev => [...prev, {
+        id: uniqueId(),
+        role: 'agent',
+        content: `✓ Updated relationship to **${relationship}**. Ready for more intel.`,
+        timestamp: new Date(),
+      }]);
+      setIsSending(false);
+      scrollToBottom();
+      return;
+    }
+
     // INTUITIVE URL DETECTION - Auto-scrape arrest records, jail rosters, etc.
     const urlMatch = userText.match(/https?:\/\/[^\s]+/i);
     if (urlMatch) {
