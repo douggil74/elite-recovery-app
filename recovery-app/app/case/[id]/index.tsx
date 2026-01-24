@@ -297,6 +297,8 @@ export default function CaseDetailScreen() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatInputRef = useRef<TextInput>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editedName, setEditedName] = useState('');
 
   const latestReport = reports[0];
   const parsedData = latestReport?.parsedData;
@@ -2255,6 +2257,24 @@ ${result.explanation}`,
     setIsGeneratingReport(false);
   };
 
+  const handleEditName = () => {
+    setEditedName(getSubjectName());
+    setIsEditingName(true);
+  };
+
+  const handleSaveName = async () => {
+    const trimmed = editedName.trim();
+    if (trimmed && trimmed !== getSubjectName() && caseData?.id) {
+      try {
+        await updateCase(caseData.id, { name: trimmed });
+        await refresh();
+      } catch (err) {
+        console.error('Failed to update name:', err);
+      }
+    }
+    setIsEditingName(false);
+  };
+
   const handleDelete = async () => {
     const confirmed = await confirm({ title: 'Delete Case', message: `Delete "${caseData?.name}"?`, confirmText: 'Delete', destructive: true });
     if (confirmed) {
@@ -2312,7 +2332,29 @@ ${result.explanation}`,
           {subjectPhoto ? <Image source={{ uri: subjectPhoto }} style={styles.photoImg} /> : <Ionicons name="person" size={20} color={DARK.textMuted} />}
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.caseName} numberOfLines={1}>{getSubjectName()}</Text>
+          {isEditingName ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TextInput
+                value={editedName}
+                onChangeText={setEditedName}
+                onSubmitEditing={handleSaveName}
+                onBlur={handleSaveName}
+                autoFocus
+                style={[styles.caseName, { borderBottomWidth: 1, borderBottomColor: DARK.primary, paddingBottom: 2, minWidth: 150 }]}
+              />
+              <TouchableOpacity onPress={handleSaveName}>
+                <Ionicons name="checkmark" size={20} color={DARK.success} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setIsEditingName(false)}>
+                <Ionicons name="close" size={20} color={DARK.textMuted} />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity onPress={handleEditName} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.caseName} numberOfLines={1}>{getSubjectName()}</Text>
+              <Ionicons name="pencil" size={14} color={DARK.textMuted} />
+            </TouchableOpacity>
+          )}
           <Text style={styles.caseMeta}>{displayAddresses.length} locations • {phones.length} phones • {uploadedFiles.length} files</Text>
         </View>
         <TouchableOpacity onPress={generateFullReport} disabled={isGeneratingReport} style={[styles.reportBtn, isGeneratingReport && { opacity: 0.5 }]}>
