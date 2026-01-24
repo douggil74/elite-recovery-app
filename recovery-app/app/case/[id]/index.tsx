@@ -296,6 +296,8 @@ export default function CaseDetailScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatInputRef = useRef<TextInput>(null);
+  const dropZoneRef = useRef<View>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const latestReport = reports[0];
   const parsedData = latestReport?.parsedData;
@@ -404,6 +406,66 @@ export default function CaseDetailScreen() {
   }, [id, discoveredAssociates]);
 
   useFocusEffect(useCallback(() => { refresh(); }, [refresh]));
+
+  // Native DOM drag-and-drop handlers for web
+  useEffect(() => {
+    if (!isWeb || !dropZoneRef.current) return;
+
+    // Get the native DOM node from the React Native Web View
+    const node = (dropZoneRef.current as any)._nativeRef || dropZoneRef.current;
+    if (!node || typeof node.addEventListener !== 'function') return;
+
+    const handleDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragOver(true);
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Only set false if we're leaving the drop zone entirely
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const x = e.clientX;
+      const y = e.clientY;
+      if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
+        setIsDragOver(false);
+      }
+    };
+
+    const handleDrop = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragOver(false);
+
+      const files = e.dataTransfer?.files;
+      if (files?.length > 0 && fileInputRef.current) {
+        const dt = new DataTransfer();
+        for (let i = 0; i < files.length; i++) {
+          dt.items.add(files[i]);
+        }
+        fileInputRef.current.files = dt.files;
+        fileInputRef.current.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    };
+
+    node.addEventListener('dragenter', handleDragEnter);
+    node.addEventListener('dragover', handleDragOver);
+    node.addEventListener('dragleave', handleDragLeave);
+    node.addEventListener('drop', handleDrop);
+
+    return () => {
+      node.removeEventListener('dragenter', handleDragEnter);
+      node.removeEventListener('dragover', handleDragOver);
+      node.removeEventListener('dragleave', handleDragLeave);
+      node.removeEventListener('drop', handleDrop);
+    };
+  }, [isWeb]);
 
   // Initialize Face Matching Service (no API key needed - uses backend proxy)
   useEffect(() => {
@@ -2270,13 +2332,17 @@ ${result.explanation}`,
         isMobile && { flexDirection: 'column' }
       ]}>
 
-        {/* COLUMN 1: Chat */}
-        <View style={[
-          styles.col,
-          styles.chatCol,
-          isWeb && !isMobile && { flex: 1 },
-          isMobile && { height: 300 }
-        ]}>
+        {/* COLUMN 1: Chat (Drop Zone for files) */}
+        <View
+          ref={dropZoneRef}
+          style={[
+            styles.col,
+            styles.chatCol,
+            isWeb && !isMobile && { flex: 1 },
+            isMobile && { height: 300 },
+            isDragOver && { borderColor: DARK.primary, borderWidth: 2, borderStyle: 'dashed' }
+          ]}
+        >
           <View style={styles.colTitleRow}>
             <View>
               <Text style={styles.colTitleText}>🔴 TRACE</Text>
@@ -2295,27 +2361,17 @@ ${result.explanation}`,
               <Ionicons name="copy-outline" size={14} color={DARK.textMuted} />
             </TouchableOpacity>
           </View>
+          {/* Drag-over indicator */}
+          {isDragOver && (
+            <View style={styles.dropOverlay}>
+              <Ionicons name="cloud-upload" size={32} color={DARK.primary} />
+              <Text style={styles.dropText}>Drop files here</Text>
+            </View>
+          )}
           <ScrollView
             ref={scrollRef}
             style={styles.chatScroll}
             contentContainerStyle={{ padding: 8 }}
-            {...(isWeb ? {
-              onDragOver: (e: any) => { e.preventDefault(); e.stopPropagation(); },
-              onDrop: (e: any) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const files = e.dataTransfer?.files;
-                if (files?.length > 0 && fileInputRef.current) {
-                  // Create a DataTransfer to set files on the input
-                  const dt = new DataTransfer();
-                  for (let i = 0; i < files.length; i++) {
-                    dt.items.add(files[i]);
-                  }
-                  fileInputRef.current.files = dt.files;
-                  fileInputRef.current.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-              },
-            } : {})}
           >
             {chatMessages.map((msg) => (
               <View key={msg.id} style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.agentBubble]}>
@@ -2821,8 +2877,26 @@ const styles = StyleSheet.create({
   copyBtn: { padding: 6 },
 
   // Chat Column
-  chatCol: { backgroundColor: DARK.bg },
+  chatCol: { backgroundColor: DARK.bg, position: 'relative' },
   chatScroll: { flex: 1 },
+  dropOverlay: {
+    position: 'absolute',
+    top: 40,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(220, 38, 38, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+    borderRadius: 8,
+  },
+  dropText: {
+    color: DARK.primary,
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 8,
+  },
   bubble: { padding: 10, borderRadius: 10, marginBottom: 6, maxWidth: '90%' },
   userBubble: { backgroundColor: DARK.primary, alignSelf: 'flex-end' },
   agentBubble: { backgroundColor: DARK.surface, alignSelf: 'flex-start', borderWidth: 1, borderColor: DARK.border },
