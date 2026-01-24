@@ -2176,7 +2176,7 @@ ${result.explanation}`,
             </head>
             <body>
               <div class="header">
-                <div class="case-id">Elite Recovery Systems • Case File</div>
+                <div class="case-id">Elite Recovery System • Case File</div>
                 <h1>${(parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown') ? parsedData.subject.fullName : caseData?.name}</h1>
                 <div class="subtitle">Investigation Report • Generated ${new Date().toLocaleString()}</div>
               </div>
@@ -2236,7 +2236,7 @@ ${result.explanation}`,
                 </div>
 
                 <div class="footer">
-                  Elite Recovery Systems • Professional Bail Enforcement Intelligence<br>
+                  Elite Recovery System • Professional Bail Enforcement Intelligence<br>
                   Report ID: ${caseData?.id?.slice(0, 8).toUpperCase() || 'N/A'} • ${new Date().toISOString()}
                 </div>
               </div>

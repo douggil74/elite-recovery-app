@@ -543,7 +543,8 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
   };
 }
 
-function normalizeAddress(address: string): string {
+function normalizeAddress(address: string | null | undefined): string {
+  if (!address || typeof address !== 'string') return '';
   return address
     .toLowerCase()
     .replace(/[.,#]/g, '')
@@ -552,7 +553,8 @@ function normalizeAddress(address: string): string {
     .slice(0, 50);
 }
 
-function normalizePhone(phone: string): string {
+function normalizePhone(phone: string | null | undefined): string {
+  if (!phone || typeof phone !== 'string') return '';
   return phone.replace(/\D/g, '').slice(-10);
 }
 

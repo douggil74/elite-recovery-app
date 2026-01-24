@@ -776,7 +776,7 @@ export default function SettingsScreen() {
       </TouchableOpacity>
 
       <Text style={styles.footer}>
-        Elite Recovery Systems - For authorized use only
+        Elite Recovery System - For authorized use only
       </Text>
     </ScrollView>
   );
