@@ -55,17 +55,18 @@ export function useCases(): UseCasesReturn {
       // Fetch local cases
       let allCases = await getAllCases();
 
-      // If cloud sync is enabled, also pull from Firestore and merge
-      const cloudEnabled = await isSyncEnabled();
-      if (cloudEnabled) {
-        try {
+      // If cloud sync is enabled, also pull from Firestore (with timeout)
+      // Don't let sync block the UI - timeout after 3 seconds
+      try {
+        const syncPromise = (async () => {
+          const cloudEnabled = await isSyncEnabled();
+          if (!cloudEnabled) return;
+
           const cloudCases = await fetchSyncedCases();
           if (cloudCases.length > 0) {
-            // Merge cloud cases with local - cloud wins for conflicts
             const localIds = new Set(allCases.map(c => c.id));
             const newFromCloud = cloudCases.filter(c => !localIds.has(c.id));
 
-            // Save new cloud cases to local database
             for (const cloudCase of newFromCloud) {
               try {
                 await dbCreateCaseFromCloud(
@@ -82,15 +83,20 @@ export function useCases(): UseCasesReturn {
               }
             }
 
-            // Refresh local cases after merge
             if (newFromCloud.length > 0) {
               allCases = await getAllCases();
             }
           }
-        } catch (syncErr) {
-          console.warn('Cloud sync fetch failed:', syncErr);
-          // Continue with local cases
-        }
+        })();
+
+        // 3 second timeout for cloud sync
+        await Promise.race([
+          syncPromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Sync timeout')), 3000))
+        ]);
+      } catch (syncErr) {
+        console.warn('Cloud sync skipped:', syncErr);
+        // Continue with local cases
       }
 
       // Fetch stats and photos for each case
