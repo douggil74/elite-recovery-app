@@ -16,7 +16,7 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCase } from '@/hooks/useCase';
-import { deleteCase } from '@/lib/database';
+import { deleteCase, updateCase } from '@/lib/database';
 import { deleteCaseDirectory } from '@/lib/storage';
 import { confirm } from '@/lib/confirm';
 import { syncChat, syncPhoto, fetchSyncedChat, fetchSyncedPhoto, isSyncEnabled, deleteSyncedCase } from '@/lib/sync';
@@ -512,14 +512,25 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
   // AI Squad Orchestrator disabled - using backend proxy for chat instead
   // This eliminates duplicate "Investigation initialized" messages and removes API key requirement
 
-  // Auto-run OSINT search when we have a valid target name (not "Unknown")
+  // Check if a name is a valid subject name (not a placeholder) - defined early for use in effects
+  const isValidSubjectName = useCallback((name: string | undefined | null): boolean => {
+    if (!name || typeof name !== 'string') return false;
+    const trimmed = name.trim().toLowerCase();
+    const placeholders = ['?', 'unknown', 'subject', 'test', 'new', 'new case', ''];
+    return !placeholders.includes(trimmed) && trimmed.length >= 2;
+  }, []);
+
+  // Auto-run OSINT search when we have a valid target name (not "Unknown" or "?")
   useEffect(() => {
+    // Get best available name, skip placeholders like "?"
     const subjectName = parsedData?.subject?.fullName;
-    const validName = subjectName && subjectName !== 'Unknown' && subjectName !== 'unknown' ? subjectName : caseData?.name;
-    if (validName && validName !== 'Unknown' && !osintSearched && !isSearchingOSINT) {
+    const caseName = caseData?.name;
+    const validName = isValidSubjectName(subjectName) ? subjectName : (isValidSubjectName(caseName) ? caseName : null);
+
+    if (validName && !osintSearched && !isSearchingOSINT) {
       runOSINTSearch(validName);
     }
-  }, [parsedData?.subject?.fullName, caseData?.name, osintSearched]);
+  }, [parsedData?.subject?.fullName, caseData?.name, osintSearched, isValidSubjectName]);
 
   // Generate username variations from a name
   const generateUsernameVariations = (fullName: string): string[] => {
@@ -702,20 +713,20 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
   // IMPORTANT: primaryTarget is the LOCKED-IN fugitive we're searching for
   // It doesn't change even when analyzing documents about associates (mom, employer, etc.)
   const getSubjectName = useCallback(() => {
-    // Priority: PRIMARY TARGET (locked) > case name > roster data > parsed report > 'Subject'
+    // Priority: PRIMARY TARGET (locked) > valid case name > roster data > parsed report > 'Subject'
     // We check primaryTarget FIRST because it represents the actual fugitive
-    if (caseData?.primaryTarget?.fullName) {
+    if (caseData?.primaryTarget?.fullName && isValidSubjectName(caseData.primaryTarget.fullName)) {
       return caseData.primaryTarget.fullName;
     }
-    if (caseData?.name) {
+    // Skip placeholder names like "?" - check parsed data first
+    if (parsedData?.subject?.fullName && isValidSubjectName(parsedData.subject.fullName)) {
+      return parsedData.subject.fullName;
+    }
+    if (caseData?.name && isValidSubjectName(caseData.name)) {
       return caseData.name;
     }
-    if (caseData?.rosterData?.inmate?.name) {
+    if (caseData?.rosterData?.inmate?.name && isValidSubjectName(caseData.rosterData.inmate.name)) {
       return caseData.rosterData.inmate.name;
-    }
-    // Only use parsed report if no primary target is set (first document being analyzed)
-    if (parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown') {
-      return parsedData.subject.fullName;
     }
     return 'Subject';
   }, [parsedData, caseData]);
@@ -734,6 +745,31 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
       }]);
     }
   }, [caseData, latestReport, chatLoaded, chatMessages.length, getSubjectName]);
+
+  // Auto-update case name when documents reveal real name (if current name is placeholder)
+  useEffect(() => {
+    const updateCaseNameIfNeeded = async () => {
+      if (!caseData?.id) return;
+
+      // Check if current case name is a placeholder
+      if (isValidSubjectName(caseData.name)) return; // Already has valid name
+
+      // Check if parsed data has a real name
+      const parsedName = parsedData?.subject?.fullName;
+      if (parsedName && isValidSubjectName(parsedName)) {
+        console.log(`[AutoUpdate] Updating case name from "${caseData.name}" to "${parsedName}"`);
+        try {
+          await updateCase(caseData.id, { name: parsedName });
+          // Refresh case data to get updated name
+          refresh?.();
+        } catch (err) {
+          console.error('[AutoUpdate] Failed to update case name:', err);
+        }
+      }
+    };
+
+    updateCaseNameIfNeeded();
+  }, [caseData?.id, caseData?.name, parsedData?.subject?.fullName]);
 
   const scrollToBottom = () => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
 
