@@ -2,9 +2,39 @@ import OpenAI from 'openai';
 import { parseReportText } from './parser';
 import type { ParsedReport, AnalyzeResponse } from '@/types';
 import { sendChatMessage } from './ai-service';
+import { analyzeBailDocument, analyzeMultipleDocuments } from './bail-document-analyzer';
 
 // Backend URL
 const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
+
+/**
+ * Analyze report via backend proxy (for users without local API key)
+ */
+async function analyzeViaBackend(text: string): Promise<AnalyzeResponse> {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text.slice(0, 50000) }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Backend returned ${response.status}`);
+    }
+
+    const data = await response.json();
+    return {
+      success: true,
+      data: data.report,
+    };
+  } catch (error) {
+    console.error('Backend analysis error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Backend analysis failed',
+    };
+  }
+}
 
 // Token estimation: ~4 chars per token for English text
 const CHARS_PER_TOKEN = 4;
@@ -787,4 +817,96 @@ Focus on CROSS-REFERENCED locations where subject might be hiding based on famil
       error: error instanceof Error ? error.message : 'Multi-report analysis failed',
     };
   }
+}
+
+/**
+ * Analyze bail bond documents (bondsman paperwork, check-in logs, court records)
+ * This is optimized for bail recovery workflows with structured extraction
+ */
+export async function analyzeBailBondDocument(
+  text: string,
+  apiKey: string,
+  onProgress?: (progress: number, message: string) => void
+): Promise<AnalyzeResponse> {
+  try {
+    onProgress?.(0.1, 'Detecting document types...');
+
+    const result = await analyzeBailDocument(text, apiKey);
+
+    if (!result.success || !result.report) {
+      return {
+        success: false,
+        error: result.error || 'Bail document analysis failed',
+      };
+    }
+
+    onProgress?.(1.0, 'Analysis complete');
+
+    return {
+      success: true,
+      data: result.report,
+    };
+  } catch (error) {
+    console.error('Bail document analysis error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Analysis failed',
+    };
+  }
+}
+
+/**
+ * Detect if text looks like bail bond documentation
+ */
+export function isBailBondDocument(text: string): boolean {
+  const lowerText = text.toLowerCase();
+
+  // Look for bail bond specific keywords
+  const bailKeywords = [
+    'bail bond',
+    'bondsman',
+    'surety',
+    'power of attorney',
+    'defendant',
+    'premium',
+    'forfeiture',
+    'check-in',
+    'check in log',
+    'court date',
+    'indemnitor',
+    'collateral',
+    'bond amount',
+    'appearance bond',
+  ];
+
+  const matches = bailKeywords.filter(keyword => lowerText.includes(keyword));
+
+  // If 3+ bail keywords found, it's likely a bail document
+  return matches.length >= 3;
+}
+
+/**
+ * Smart analyzer that detects document type and uses appropriate analysis
+ */
+export async function smartAnalyze(
+  text: string,
+  apiKey: string,
+  onProgress?: (progress: number, message: string) => void
+): Promise<AnalyzeResponse> {
+  // Detect if this is bail bond paperwork
+  if (isBailBondDocument(text)) {
+    onProgress?.(0.05, 'Detected bail bond documentation...');
+    return analyzeBailBondDocument(text, apiKey, onProgress);
+  }
+
+  // Otherwise use standard skip-trace analysis
+  onProgress?.(0.05, 'Using skip-trace analysis...');
+
+  const needsChunking = text.length > CHUNK_SIZE;
+
+  if (needsChunking) {
+    return analyzeWithChunking(text, apiKey, onProgress);
+  }
+
+  return analyzeWithAI(text, apiKey);
 }

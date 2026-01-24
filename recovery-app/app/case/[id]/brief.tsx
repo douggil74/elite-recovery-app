@@ -5,6 +5,7 @@ import {
   StyleSheet,
   ScrollView,
   RefreshControl,
+  TouchableOpacity,
 } from 'react-native';
 import { useLocalSearchParams, useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -36,13 +37,13 @@ export default function BriefScreen() {
   if (!brief || !latestReport) {
     return (
       <View style={styles.emptyContainer}>
-        <Ionicons name="search" size={64} color={COLORS.textSecondary} />
-        <Text style={styles.emptyTitle}>No Analysis Yet</Text>
+        <Ionicons name="document-text" size={64} color={COLORS.textSecondary} />
+        <Text style={styles.emptyTitle}>No Intel Report</Text>
         <Text style={styles.emptyText}>
-          Upload a skip-trace report to get AI-powered location recommendations.
+          Upload bail bond paperwork or documents to generate a comprehensive intel report.
         </Text>
         <Button
-          title="Upload Report"
+          title="Upload Documents"
           onPress={() => router.push(`/case/${id}/upload`)}
           style={{ marginTop: 20 }}
         />
@@ -50,7 +51,23 @@ export default function BriefScreen() {
     );
   }
 
-  const { subject, likelyLocations, contactStrategy, redFlags, actionPlan, analysisNotes } = brief as any;
+  // Get all data from parsed report
+  const parsedData = latestReport?.parsedData;
+  const subject = parsedData?.subject || {};
+  const addresses = parsedData?.addresses || [];
+  const phones = parsedData?.phones || [];
+  const relatives = parsedData?.relatives || [];
+  const vehicles = parsedData?.vehicles || [];
+  const employment = parsedData?.employment || [];
+  const flags = parsedData?.flags || [];
+  const recommendations = parsedData?.recommendations || [];
+
+  // Get brief data for action plan
+  const { actionPlan, likelyLocations, contactStrategy } = brief as any;
+
+  // Get the PRIMARY TARGET name (locked-in fugitive, doesn't change with associate docs)
+  const primaryTargetName = caseData?.primaryTarget?.fullName || subject.fullName || caseData?.name || 'Unknown';
+  const primaryTargetDOB = caseData?.primaryTarget?.dob || subject.dob;
 
   return (
     <ScrollView
@@ -64,8 +81,14 @@ export default function BriefScreen() {
         />
       }
     >
-      {/* Red Flags at top */}
-      {redFlags && redFlags.length > 0 && redFlags.map((flag: any, idx: number) => (
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.reportTitle}>INTEL REPORT</Text>
+        <Text style={styles.reportSubtitle}>{primaryTargetName}</Text>
+      </View>
+
+      {/* Warnings/Red Flags at top */}
+      {flags.length > 0 && flags.map((flag: any, idx: number) => (
         <WarningBanner
           key={idx}
           title={flag.type?.toUpperCase() || 'WARNING'}
@@ -74,148 +97,359 @@ export default function BriefScreen() {
         />
       ))}
 
-      {/* Subject Identity */}
-      <Card style={styles.card}>
-        <Text style={styles.sectionTitle}>SUBJECT</Text>
-        <Text style={styles.subjectName}>{subject?.fullName || 'Unknown'}</Text>
-        {subject?.dob && (
-          <Text style={styles.subjectDetail}>DOB: {subject.dob}</Text>
-        )}
-        {subject?.aliases && subject.aliases.length > 0 && (
-          <Text style={styles.subjectDetail}>
-            AKA: {subject.aliases.join(', ')}
-          </Text>
-        )}
-        {subject?.description && (
-          <Text style={styles.subjectDescription}>{subject.description}</Text>
-        )}
-      </Card>
-
-      {/* Most Likely Locations - THE KEY OUTPUT */}
-      <Text style={styles.mainSectionTitle}>WHERE TO LOOK</Text>
-      {likelyLocations && likelyLocations.length > 0 ? (
-        likelyLocations.map((location: any, idx: number) => (
-          <Card key={idx} style={styles.locationCard}>
-            <View style={styles.locationHeader}>
-              <View style={styles.rankBadge}>
-                <Text style={styles.rankText}>#{location.rank || idx + 1}</Text>
-              </View>
-              <View style={styles.probabilityBadge}>
-                <Text style={styles.probabilityText}>{location.probability}%</Text>
-              </View>
-            </View>
-            <Text style={styles.locationAddress}>{location.address}</Text>
-            {location.type && (
-              <Text style={styles.locationType}>{location.type.replace('_', ' ')}</Text>
-            )}
-            <Text style={styles.locationReasoning}>{location.reasoning}</Text>
-            {location.tips && (
-              <View style={styles.tipContainer}>
-                <Ionicons name="bulb" size={14} color={COLORS.warning} />
-                <Text style={styles.tipText}>{location.tips}</Text>
-              </View>
-            )}
-          </Card>
-        ))
-      ) : (
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* SUBJECT PROFILE */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Ionicons name="person" size={20} color={COLORS.primary} />
+          <Text style={styles.sectionTitle}>SUBJECT PROFILE</Text>
+        </View>
         <Card style={styles.card}>
-          <Text style={styles.noDataText}>No locations found in report</Text>
+          <Text style={styles.subjectName}>{primaryTargetName}</Text>
+
+          <View style={styles.infoGrid}>
+            {primaryTargetDOB && (
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>DOB:</Text>
+                <Text style={styles.infoValue}>{primaryTargetDOB}</Text>
+              </View>
+            )}
+            {subject.partialSsn && (
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>SSN:</Text>
+                <Text style={styles.infoValue}>XXX-XX-{subject.partialSsn}</Text>
+              </View>
+            )}
+            {subject.personId && (
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>CID:</Text>
+                <Text style={styles.infoValue}>{subject.personId}</Text>
+              </View>
+            )}
+            {phones.length > 0 && (
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Phone:</Text>
+                <Text style={styles.infoValueMono}>{phones[0].number}</Text>
+              </View>
+            )}
+            {subject.aliases && subject.aliases.length > 0 && (
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>AKA:</Text>
+                <Text style={styles.infoValue}>{subject.aliases.join(', ')}</Text>
+              </View>
+            )}
+          </View>
         </Card>
+      </View>
+
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* CHARGES & BOND */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {recommendations.some((r: string) => r.includes('Bond') || r.includes('Charge')) && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="alert-circle" size={20} color={COLORS.danger} />
+            <Text style={styles.sectionTitle}>CHARGES & BOND</Text>
+          </View>
+          <Card style={styles.card}>
+            {recommendations
+              .filter((r: string) => r.includes('Bond') || r.includes('Charge'))
+              .map((rec: string, idx: number) => {
+                const isBond = rec.includes('Total Bond');
+                return (
+                  <View key={idx} style={[styles.chargeItem, isBond && styles.bondTotal]}>
+                    <Text style={[styles.chargeText, isBond && styles.bondTotalText]}>
+                      {rec}
+                    </Text>
+                  </View>
+                );
+              })}
+          </Card>
+        </View>
       )}
 
-      {/* Contact Strategy */}
-      {contactStrategy && (contactStrategy.phones?.length > 0 || contactStrategy.keyContacts?.length > 0) && (
-        <>
-          <Text style={styles.mainSectionTitle}>CONTACT STRATEGY</Text>
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* TOP LOCATIONS - RANKED */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {(likelyLocations?.length > 0 || addresses.length > 0) && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="location" size={20} color={COLORS.success} />
+            <Text style={styles.sectionTitle}>TOP LOCATIONS</Text>
+          </View>
 
-          {contactStrategy.phones?.length > 0 && (
-            <Card style={styles.card}>
-              <Text style={styles.subsectionTitle}>Phone Numbers</Text>
-              {contactStrategy.phones.map((phone: any, idx: number) => (
-                <View key={idx} style={styles.contactItem}>
-                  <View style={styles.contactMain}>
-                    <Text style={styles.phoneNumber}>{phone.number}</Text>
-                    <Text style={styles.phoneType}>{phone.type}</Text>
+          {likelyLocations?.length > 0 ? (
+            likelyLocations.slice(0, 5).map((loc: any, idx: number) => (
+              <Card key={idx} style={[styles.locationCard, idx === 0 && styles.topLocation]}>
+                <View style={styles.locationHeader}>
+                  <View style={[styles.rankBadge, idx === 0 && styles.rankBadgeTop]}>
+                    <Text style={styles.rankText}>#{idx + 1}</Text>
                   </View>
-                  {phone.notes && (
-                    <Text style={styles.contactNotes}>{phone.notes}</Text>
+                  {loc.probability && (
+                    <View style={styles.probabilityBadge}>
+                      <Text style={styles.probabilityText}>{loc.probability}%</Text>
+                    </View>
+                  )}
+                  {loc.type && (
+                    <Text style={styles.locationType}>
+                      {loc.type.replace(/_/g, ' ').toUpperCase()}
+                    </Text>
                   )}
                 </View>
-              ))}
-            </Card>
-          )}
-
-          {contactStrategy.keyContacts?.length > 0 && (
-            <Card style={styles.card}>
-              <Text style={styles.subsectionTitle}>Key People</Text>
-              {contactStrategy.keyContacts.map((contact: any, idx: number) => (
-                <View key={idx} style={styles.contactItem}>
-                  <View style={styles.contactMain}>
-                    <Text style={styles.contactName}>{contact.name}</Text>
-                    <Text style={styles.contactRelation}>{contact.relationship}</Text>
+                <Text style={styles.locationAddress}>{loc.address}</Text>
+                {loc.reasoning && (
+                  <Text style={styles.locationReason}>{loc.reasoning}</Text>
+                )}
+                {loc.tips && (
+                  <View style={styles.tipBox}>
+                    <Ionicons name="time" size={14} color={COLORS.warning} />
+                    <Text style={styles.tipText}>{loc.tips}</Text>
                   </View>
-                  {contact.phone && (
-                    <Text style={styles.contactPhone}>{contact.phone}</Text>
-                  )}
-                  {contact.address && (
-                    <Text style={styles.contactAddress}>{contact.address}</Text>
-                  )}
-                  {contact.approach && (
-                    <Text style={styles.contactApproach}>→ {contact.approach}</Text>
+                )}
+              </Card>
+            ))
+          ) : (
+            addresses.slice(0, 5).map((addr: any, idx: number) => (
+              <Card key={idx} style={styles.locationCard}>
+                <View style={styles.locationHeader}>
+                  <View style={styles.rankBadge}>
+                    <Text style={styles.rankText}>#{idx + 1}</Text>
+                  </View>
+                  {addr.confidence && (
+                    <View style={styles.probabilityBadge}>
+                      <Text style={styles.probabilityText}>
+                        {Math.round(addr.confidence * 100)}%
+                      </Text>
+                    </View>
                   )}
                 </View>
-              ))}
-            </Card>
+                <Text style={styles.locationAddress}>
+                  {addr.fullAddress || addr.address}
+                </Text>
+                {addr.reasons?.length > 0 && (
+                  <Text style={styles.locationReason}>{addr.reasons[0]}</Text>
+                )}
+              </Card>
+            ))
           )}
-        </>
+        </View>
       )}
 
-      {/* Action Plan */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* CONTACTS / REFERENCES */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {(relatives.length > 0 || contactStrategy?.keyContacts?.length > 0) && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="people" size={20} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>CONTACTS / REFERENCES</Text>
+          </View>
+          <Card style={styles.card}>
+            {(contactStrategy?.keyContacts || relatives).map((contact: any, idx: number) => (
+              <View key={idx} style={styles.contactItem}>
+                <View style={styles.contactHeader}>
+                  <Text style={styles.contactName}>{contact.name}</Text>
+                  <Text style={styles.contactRelation}>{contact.relationship}</Text>
+                </View>
+                {(contact.phone || contact.phones?.[0]) && (
+                  <View style={styles.contactDetail}>
+                    <Ionicons name="call" size={14} color={COLORS.success} />
+                    <Text style={styles.contactPhone}>
+                      {contact.phone || contact.phones?.[0]}
+                    </Text>
+                  </View>
+                )}
+                {(contact.address || contact.currentAddress) && (
+                  <View style={styles.contactDetail}>
+                    <Ionicons name="location" size={14} color={COLORS.textSecondary} />
+                    <Text style={styles.contactAddress}>
+                      {contact.address || contact.currentAddress}
+                    </Text>
+                  </View>
+                )}
+                {contact.approach && (
+                  <Text style={styles.contactApproach}>→ {contact.approach}</Text>
+                )}
+              </View>
+            ))}
+          </Card>
+        </View>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* VEHICLE */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {vehicles.length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="car" size={20} color={COLORS.warning} />
+            <Text style={styles.sectionTitle}>VEHICLE</Text>
+          </View>
+          <Card style={styles.card}>
+            {vehicles.map((v: any, idx: number) => (
+              <View key={idx} style={styles.vehicleItem}>
+                <Text style={styles.vehicleDesc}>
+                  {[v.year, v.make, v.model, v.color].filter(Boolean).join(' ') || v.description}
+                </Text>
+                {v.plate && (
+                  <View style={styles.plateContainer}>
+                    <Text style={styles.plateLabel}>PLATE:</Text>
+                    <Text style={styles.plateNumber}>{v.plate}</Text>
+                  </View>
+                )}
+                {v.vin && (
+                  <Text style={styles.vinText}>VIN: {v.vin}</Text>
+                )}
+              </View>
+            ))}
+          </Card>
+        </View>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* EMPLOYMENT */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {employment.length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="briefcase" size={20} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>EMPLOYMENT</Text>
+          </View>
+          <Card style={styles.card}>
+            {employment.map((emp: any, idx: number) => (
+              <View key={idx} style={styles.employmentItem}>
+                <View style={styles.employmentHeader}>
+                  <Text style={styles.employerName}>{emp.employer}</Text>
+                  {emp.isCurrent && (
+                    <View style={styles.currentBadge}>
+                      <Text style={styles.currentText}>CURRENT</Text>
+                    </View>
+                  )}
+                </View>
+                {emp.title && <Text style={styles.jobTitle}>{emp.title}</Text>}
+                {emp.address && (
+                  <View style={styles.employmentDetail}>
+                    <Ionicons name="location" size={14} color={COLORS.textSecondary} />
+                    <Text style={styles.employmentAddress}>{emp.address}</Text>
+                  </View>
+                )}
+                {emp.phone && (
+                  <View style={styles.employmentDetail}>
+                    <Ionicons name="call" size={14} color={COLORS.textSecondary} />
+                    <Text style={styles.employmentPhone}>{emp.phone}</Text>
+                  </View>
+                )}
+              </View>
+            ))}
+          </Card>
+        </View>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* PHONE NUMBERS */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {phones.length > 1 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="call" size={20} color={COLORS.success} />
+            <Text style={styles.sectionTitle}>ALL PHONE NUMBERS</Text>
+          </View>
+          <Card style={styles.card}>
+            {phones.map((phone: any, idx: number) => (
+              <View key={idx} style={styles.phoneItem}>
+                <Text style={styles.phoneNumber}>{phone.number}</Text>
+                <Text style={styles.phoneType}>{phone.type || 'unknown'}</Text>
+              </View>
+            ))}
+          </Card>
+        </View>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* KEY INTEL / CASE NOTES */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {recommendations.filter((r: string) => !r.includes('Bond') && !r.includes('Charge')).length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="bulb" size={20} color={COLORS.warning} />
+            <Text style={styles.sectionTitle}>KEY INTEL</Text>
+          </View>
+          <Card style={styles.card}>
+            {recommendations
+              .filter((r: string) => !r.includes('Bond') && !r.includes('Charge'))
+              .map((note: string, idx: number) => (
+                <View key={idx} style={styles.intelItem}>
+                  <Text style={styles.bulletPoint}>•</Text>
+                  <Text style={styles.intelText}>{note}</Text>
+                </View>
+              ))}
+          </Card>
+        </View>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* RECOMMENDED ACTION PLAN */}
+      {/* ══════════════════════════════════════════════════════════════ */}
       {actionPlan && actionPlan.length > 0 && (
-        <>
-          <Text style={styles.mainSectionTitle}>ACTION PLAN</Text>
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="checkmark-circle" size={20} color={COLORS.success} />
+            <Text style={styles.sectionTitle}>RECOMMENDED ACTION PLAN</Text>
+          </View>
           <Card style={styles.card}>
             {actionPlan.map((action: any, idx: number) => (
               <View key={idx} style={styles.actionItem}>
-                <View style={styles.actionStepBadge}>
-                  <Text style={styles.actionStepText}>{action.step}</Text>
+                <View style={[
+                  styles.actionNumber,
+                  action.priority === 'high' && styles.actionNumberHigh
+                ]}>
+                  <Text style={styles.actionNumberText}>{action.step || idx + 1}</Text>
                 </View>
                 <View style={styles.actionContent}>
                   <Text style={styles.actionText}>{action.action}</Text>
                   <View style={styles.actionMeta}>
-                    <Text style={[
-                      styles.actionCost,
-                      action.cost === 'free' && styles.costFree,
-                      action.cost === 'cheap' && styles.costCheap,
+                    <View style={[
+                      styles.actionTag,
+                      action.cost === 'free' && styles.tagFree,
+                      action.cost === 'cheap' && styles.tagCheap,
                     ]}>
-                      {action.cost}
-                    </Text>
-                    <Text style={[
-                      styles.actionPriority,
-                      action.priority === 'high' && styles.priorityHigh,
+                      <Text style={[
+                        styles.actionTagText,
+                        action.cost === 'free' && styles.tagTextFree,
+                        action.cost === 'cheap' && styles.tagTextCheap,
+                      ]}>
+                        {action.cost}
+                      </Text>
+                    </View>
+                    <View style={[
+                      styles.actionTag,
+                      action.priority === 'high' && styles.tagHigh,
                     ]}>
-                      {action.priority}
-                    </Text>
+                      <Text style={[
+                        styles.actionTagText,
+                        action.priority === 'high' && styles.tagTextHigh,
+                      ]}>
+                        {action.priority}
+                      </Text>
+                    </View>
                   </View>
                 </View>
               </View>
             ))}
           </Card>
-        </>
+        </View>
       )}
 
-      {/* Analysis Notes */}
-      {analysisNotes && (
-        <Card style={styles.card}>
-          <Text style={styles.subsectionTitle}>Additional Notes</Text>
-          <Text style={styles.notesText}>{analysisNotes}</Text>
-        </Card>
-      )}
-
-      <Text style={styles.footer}>
-        Analysis generated {new Date(brief.generatedAt).toLocaleString()}
-        {brief.method === 'ai' ? ' • AI Analysis' : ' • Basic Analysis'}
-      </Text>
+      {/* Footer */}
+      <View style={styles.footer}>
+        <Text style={styles.footerText}>
+          Report generated {new Date(brief.generatedAt).toLocaleString()}
+        </Text>
+        <Text style={styles.footerMethod}>
+          {parsedData?.parseMethod === 'ai' ? 'AI-Powered Analysis' : 'Standard Analysis'}
+        </Text>
+      </View>
     </ScrollView>
   );
 }
@@ -223,7 +457,7 @@ export default function BriefScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: '#0a0a0a',
   },
   content: {
     padding: 16,
@@ -234,80 +468,157 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,
+    backgroundColor: '#0a0a0a',
   },
   emptyTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: COLORS.text,
+    color: '#fafafa',
     marginTop: 16,
   },
   emptyText: {
     fontSize: 15,
-    color: COLORS.textSecondary,
+    color: '#71717a',
     textAlign: 'center',
     marginTop: 8,
     lineHeight: 22,
   },
-  card: {
-    marginBottom: 12,
+  // Header
+  header: {
+    marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 2,
+    borderBottomColor: COLORS.primary,
   },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-    letterSpacing: 1,
-    marginBottom: 6,
-  },
-  mainSectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
+  reportTitle: {
+    fontSize: 28,
+    fontWeight: '800',
     color: COLORS.primary,
-    letterSpacing: 1,
-    marginTop: 12,
-    marginBottom: 12,
+    letterSpacing: 2,
   },
-  subsectionTitle: {
-    fontSize: 13,
+  reportSubtitle: {
+    fontSize: 18,
     fontWeight: '600',
-    color: COLORS.textSecondary,
-    marginBottom: 12,
-  },
-  subjectName: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: COLORS.text,
-  },
-  subjectDetail: {
-    fontSize: 15,
-    color: COLORS.textSecondary,
+    color: '#fafafa',
     marginTop: 4,
   },
-  subjectDescription: {
-    fontSize: 14,
-    color: COLORS.text,
-    marginTop: 8,
-    fontStyle: 'italic',
+  // Sections
+  section: {
+    marginBottom: 20,
   },
-  locationCard: {
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fafafa',
+    letterSpacing: 1.5,
+  },
+  card: {
+    backgroundColor: '#18181b',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  // Subject Profile
+  subjectName: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#fafafa',
+    marginBottom: 16,
+  },
+  infoGrid: {
+    gap: 8,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  infoLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#71717a',
+    width: 70,
+  },
+  infoValue: {
+    fontSize: 15,
+    color: '#fafafa',
+    flex: 1,
+  },
+  infoValueMono: {
+    fontSize: 15,
+    color: '#22c55e',
+    fontFamily: 'monospace',
+    fontWeight: '600',
+    flex: 1,
+  },
+  // Charges
+  chargeItem: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+  },
+  chargeText: {
+    fontSize: 14,
+    color: '#fafafa',
+  },
+  bondTotal: {
+    backgroundColor: COLORS.danger + '15',
+    marginHorizontal: -16,
+    paddingHorizontal: 16,
+    marginBottom: -16,
+    marginTop: 8,
+    borderBottomWidth: 0,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+  },
+  bondTotalText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.danger,
+  },
+  // Locations
+  locationCard: {
+    backgroundColor: '#18181b',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#27272a',
     borderLeftWidth: 4,
     borderLeftColor: COLORS.primary,
+  },
+  topLocation: {
+    borderLeftColor: COLORS.success,
+    borderColor: COLORS.success + '40',
   },
   locationHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginBottom: 8,
+    marginBottom: 10,
+    flexWrap: 'wrap',
   },
   rankBadge: {
     backgroundColor: COLORS.primary,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 6,
   },
+  rankBadgeTop: {
+    backgroundColor: COLORS.success,
+  },
   rankText: {
     color: '#fff',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 14,
   },
   probabilityBadge: {
@@ -321,29 +632,27 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 14,
   },
+  locationType: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.primary,
+    letterSpacing: 0.5,
+  },
   locationAddress: {
     fontSize: 17,
     fontWeight: '600',
-    color: COLORS.text,
-    marginBottom: 4,
-  },
-  locationType: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.primary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    color: '#fafafa',
     marginBottom: 6,
   },
-  locationReasoning: {
+  locationReason: {
     fontSize: 14,
-    color: COLORS.textSecondary,
+    color: '#a1a1aa',
     lineHeight: 20,
   },
-  tipContainer: {
+  tipBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
     marginTop: 10,
     backgroundColor: COLORS.warning + '15',
     padding: 10,
@@ -351,78 +660,203 @@ const styles = StyleSheet.create({
   },
   tipText: {
     fontSize: 13,
-    color: COLORS.text,
+    color: COLORS.warning,
     flex: 1,
   },
+  // Contacts
   contactItem: {
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: '#27272a',
   },
-  contactMain: {
+  contactHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-  },
-  phoneNumber: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.text,
-    fontFamily: 'monospace',
-  },
-  phoneType: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-  },
-  contactNotes: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginTop: 4,
+    marginBottom: 8,
   },
   contactName: {
     fontSize: 16,
     fontWeight: '600',
-    color: COLORS.text,
+    color: '#fafafa',
   },
   contactRelation: {
     fontSize: 13,
+    fontWeight: '600',
     color: COLORS.primary,
-    fontWeight: '500',
+    backgroundColor: COLORS.primary + '20',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  contactDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
   },
   contactPhone: {
-    fontSize: 14,
-    color: COLORS.text,
-    marginTop: 4,
+    fontSize: 15,
+    color: COLORS.success,
     fontFamily: 'monospace',
+    fontWeight: '600',
   },
   contactAddress: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginTop: 2,
+    fontSize: 14,
+    color: '#a1a1aa',
+    flex: 1,
   },
   contactApproach: {
     fontSize: 13,
     color: COLORS.warning,
-    marginTop: 6,
+    marginTop: 8,
     fontStyle: 'italic',
   },
-  actionItem: {
+  // Vehicle
+  vehicleItem: {
+    paddingVertical: 8,
+  },
+  vehicleDesc: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#fafafa',
+    marginBottom: 8,
+  },
+  plateContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
+    alignItems: 'center',
+    backgroundColor: COLORS.warning + '20',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    gap: 8,
+  },
+  plateLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.warning,
+  },
+  plateNumber: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: COLORS.warning,
+    fontFamily: 'monospace',
+    letterSpacing: 2,
+  },
+  vinText: {
+    fontSize: 12,
+    color: '#71717a',
+    fontFamily: 'monospace',
+    marginTop: 8,
+  },
+  // Employment
+  employmentItem: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+  },
+  employmentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  employerName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fafafa',
+    flex: 1,
+  },
+  currentBadge: {
+    backgroundColor: COLORS.success + '20',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  currentText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.success,
+    letterSpacing: 0.5,
+  },
+  jobTitle: {
+    fontSize: 14,
+    color: '#a1a1aa',
+    marginBottom: 6,
+  },
+  employmentDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  employmentAddress: {
+    fontSize: 13,
+    color: '#a1a1aa',
+    flex: 1,
+  },
+  employmentPhone: {
+    fontSize: 14,
+    color: '#fafafa',
+    fontFamily: 'monospace',
+  },
+  // Phones
+  phoneItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: '#27272a',
   },
-  actionStepBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+  phoneNumber: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.success,
+    fontFamily: 'monospace',
+  },
+  phoneType: {
+    fontSize: 13,
+    color: '#71717a',
+  },
+  // Intel Notes
+  intelItem: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingVertical: 6,
+  },
+  bulletPoint: {
+    fontSize: 16,
+    color: COLORS.warning,
+    fontWeight: '700',
+  },
+  intelText: {
+    fontSize: 14,
+    color: '#fafafa',
+    flex: 1,
+    lineHeight: 20,
+  },
+  // Action Plan
+  actionItem: {
+    flexDirection: 'row',
+    gap: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+  },
+  actionNumber: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: COLORS.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  actionStepText: {
+  actionNumberHigh: {
+    backgroundColor: COLORS.danger,
+  },
+  actionNumberText: {
     color: '#fff',
     fontWeight: '700',
     fontSize: 14,
@@ -432,57 +866,60 @@ const styles = StyleSheet.create({
   },
   actionText: {
     fontSize: 15,
-    color: COLORS.text,
-    lineHeight: 21,
+    color: '#fafafa',
+    lineHeight: 22,
+    marginBottom: 8,
   },
   actionMeta: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 6,
+    gap: 8,
   },
-  actionCost: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    backgroundColor: COLORS.surface,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+  actionTag: {
+    backgroundColor: '#27272a',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 4,
   },
-  costFree: {
+  actionTagText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#71717a',
+    textTransform: 'uppercase',
+  },
+  tagFree: {
     backgroundColor: COLORS.success + '20',
+  },
+  tagTextFree: {
     color: COLORS.success,
   },
-  costCheap: {
+  tagCheap: {
     backgroundColor: COLORS.primary + '20',
+  },
+  tagTextCheap: {
     color: COLORS.primary,
   },
-  actionPriority: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    backgroundColor: COLORS.surface,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  priorityHigh: {
+  tagHigh: {
     backgroundColor: COLORS.danger + '20',
+  },
+  tagTextHigh: {
     color: COLORS.danger,
   },
-  notesText: {
-    fontSize: 14,
-    color: COLORS.text,
-    lineHeight: 20,
-  },
-  noDataText: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    padding: 20,
-  },
+  // Footer
   footer: {
-    textAlign: 'center',
+    marginTop: 24,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#27272a',
+    alignItems: 'center',
+  },
+  footerText: {
     fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 20,
+    color: '#52525b',
+  },
+  footerMethod: {
+    fontSize: 11,
+    color: COLORS.primary,
+    fontWeight: '600',
+    marginTop: 4,
   },
 });

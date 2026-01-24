@@ -7,7 +7,7 @@ import {
 } from '@/lib/database';
 import { audit } from '@/lib/audit';
 import { savePdfToCase, pickPdfDocument } from '@/lib/storage';
-import { analyzeReport, analyzeMultipleReportsWithAI, generateRecoveryBrief } from '@/lib/analyzer';
+import { analyzeReport, analyzeMultipleReportsWithAI, generateRecoveryBrief, smartAnalyze, isBailBondDocument } from '@/lib/analyzer';
 import { getSettings } from '@/lib/storage';
 import type { Case, Report, ParsedReport, RecoveryBrief } from '@/types';
 
@@ -17,9 +17,9 @@ export interface UseCaseReturn {
   isLoading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
-  updateCase: (updates: Partial<Pick<Case, 'name' | 'notes' | 'attestationAccepted'>>) => Promise<void>;
+  updateCase: (updates: Partial<Pick<Case, 'name' | 'notes' | 'attestationAccepted' | 'primaryTarget'>>) => Promise<void>;
   uploadPdf: () => Promise<{ success: boolean; report?: Report; error?: string }>;
-  analyzeText: (text: string) => Promise<{ success: boolean; data?: ParsedReport; error?: string }>;
+  analyzeText: (text: string) => Promise<{ success: boolean; data?: ParsedReport; error?: string; isAssociateDocument?: boolean }>;
   analyzeMultipleReports: (reports: { label: string; text: string; relationship: string }[]) => Promise<{ success: boolean; error?: string }>;
   getBrief: () => RecoveryBrief | null;
 }
@@ -63,7 +63,7 @@ export function useCase(caseId: string): UseCaseReturn {
   }, [refresh]);
 
   const updateCase = useCallback(
-    async (updates: Partial<Pick<Case, 'name' | 'notes' | 'attestationAccepted'>>) => {
+    async (updates: Partial<Pick<Case, 'name' | 'notes' | 'attestationAccepted' | 'primaryTarget'>>) => {
       if (!caseId) return;
 
       await dbUpdateCase(caseId, updates);
@@ -121,7 +121,7 @@ export function useCase(caseId: string): UseCaseReturn {
   const analyzeText = useCallback(
     async (
       text: string
-    ): Promise<{ success: boolean; data?: ParsedReport; error?: string }> => {
+    ): Promise<{ success: boolean; data?: ParsedReport; error?: string; isAssociateDocument?: boolean }> => {
       if (!caseId || !caseData) {
         return { success: false, error: 'No case selected' };
       }
@@ -131,11 +131,97 @@ export function useCase(caseId: string): UseCaseReturn {
       }
 
       try {
-        // Always use AI via backend - no local key needed
-        const result = await analyzeReport(text, {
-          useAI: true,
-          useBackend: true,  // Use our backend proxy
-        });
+        // Get API keys from settings
+        const settings = await getSettings();
+        const anthropicKey = settings.anthropicApiKey;
+        const openaiKey = settings.openaiApiKey;
+
+        console.log('Anthropic Key present:', !!anthropicKey);
+        console.log('OpenAI Key present:', !!openaiKey);
+        console.log('Primary target on case:', caseData.primaryTarget?.fullName || 'NOT SET');
+
+        let result: { success: boolean; data?: ParsedReport; error?: string; isAssociateDocument?: boolean };
+        let isAssociateDocument = false;
+
+        // Prefer Claude (Anthropic) for bail document analysis
+        if (anthropicKey && anthropicKey.startsWith('sk-ant-')) {
+          const docType = isBailBondDocument(text) ? 'bail bond' : 'skip-trace';
+          console.log(`Using Claude for ${docType} analysis`);
+
+          try {
+            // Import and use Claude analyzer directly
+            const { analyzeBailDocument } = await import('@/lib/bail-document-analyzer');
+
+            // Pass primary target context if we have one (for associate document detection)
+            const claudeResult = await analyzeBailDocument(
+              text,
+              anthropicKey,
+              caseData.primaryTarget || undefined
+            );
+
+            if (claudeResult.success && claudeResult.report) {
+              result = { success: true, data: claudeResult.report };
+              isAssociateDocument = claudeResult.isAssociateDocument || false;
+
+              // If this is the FIRST document (no primary target set), lock in the subject as primary target
+              if (!caseData.primaryTarget && claudeResult.report.subject?.fullName && claudeResult.report.subject.fullName !== 'Unknown') {
+                console.log('Setting primary target:', claudeResult.report.subject.fullName);
+                await dbUpdateCase(caseId, {
+                  primaryTarget: {
+                    fullName: claudeResult.report.subject.fullName,
+                    dob: claudeResult.report.subject.dob,
+                    aliases: claudeResult.report.subject.aliases,
+                  },
+                });
+              }
+            } else {
+              result = { success: false, error: claudeResult.error };
+            }
+          } catch (claudeError: any) {
+            console.error('Claude analyze error:', claudeError);
+            return {
+              success: false,
+              error: `Claude Error: ${claudeError?.message || 'Connection failed. Check your Anthropic API key in Settings.'}`
+            };
+          }
+        } else if (openaiKey && openaiKey.startsWith('sk-')) {
+          // Fallback to OpenAI
+          console.log('Using OpenAI for analysis');
+          try {
+            result = await smartAnalyze(text, openaiKey);
+            // OpenAI path doesn't have primary target support yet - set target from first doc
+            if (!caseData.primaryTarget && result.success && result.data?.subject?.fullName && result.data.subject.fullName !== 'Unknown') {
+              await dbUpdateCase(caseId, {
+                primaryTarget: {
+                  fullName: result.data.subject.fullName,
+                  dob: result.data.subject.dob,
+                  aliases: result.data.subject.aliases,
+                },
+              });
+            }
+          } catch (aiError: any) {
+            console.error('OpenAI error:', aiError);
+            return {
+              success: false,
+              error: `OpenAI Error: ${aiError?.message || 'Connection failed.'}`
+            };
+          }
+        } else {
+          // No valid API key - try backend proxy
+          console.log('No valid API key, using backend proxy');
+          try {
+            result = await analyzeReport(text, {
+              useAI: true,
+              useBackend: true,
+            });
+          } catch (backendError: any) {
+            console.error('Backend error:', backendError);
+            return {
+              success: false,
+              error: `No API key configured. Add your Anthropic or OpenAI API key in Settings.`
+            };
+          }
+        }
 
         if (!result.success || !result.data) {
           return { success: false, error: result.error || 'Analysis failed' };
@@ -148,12 +234,12 @@ export function useCase(caseId: string): UseCaseReturn {
         await audit('report_parsed', {
           caseId,
           caseName: caseData.name,
-          additionalInfo: `Method: ${result.data.parseMethod}`,
+          additionalInfo: `Method: ${result.data.parseMethod}${isAssociateDocument ? ' (Associate Document)' : ''}`,
         });
 
         await refresh();
 
-        return { success: true, data: result.data };
+        return { success: true, data: result.data, isAssociateDocument };
       } catch (err) {
         return {
           success: false,

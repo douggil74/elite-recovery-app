@@ -184,6 +184,57 @@ const compressImage = (dataUrl: string, maxWidth = 400, quality = 0.7): Promise<
   });
 };
 
+// Deduce relationship based on context clues (detective reasoning)
+const deduceRelationship = (
+  associateSubject: any,
+  primaryTarget: any,
+  sharedVehicles: any[]
+): string => {
+  // Check for shared vehicle - indicates close relationship
+  const hasSharedVehicle = sharedVehicles && sharedVehicles.length > 0;
+
+  // Try to calculate age difference from DOBs
+  let ageDiff = 0;
+  if (associateSubject?.dob && primaryTarget?.dob) {
+    try {
+      const assocYear = parseInt(associateSubject.dob.split('/').pop() || '0');
+      const targetYear = parseInt(primaryTarget.dob?.split('/').pop() || '0');
+      if (assocYear > 1900 && targetYear > 1900) {
+        ageDiff = assocYear - targetYear; // Negative = associate is older
+      }
+    } catch (e) {}
+  }
+
+  // Deduce relationship based on clues
+  if (ageDiff < -15) {
+    // Associate is 15+ years older
+    if (hasSharedVehicle) {
+      return 'parent (co-owned vehicle)';
+    }
+    return 'likely parent';
+  }
+
+  if (ageDiff > 15) {
+    // Associate is 15+ years younger
+    return 'likely child';
+  }
+
+  if (Math.abs(ageDiff) <= 10) {
+    // Similar age
+    if (hasSharedVehicle) {
+      return 'spouse/partner (co-owned vehicle)';
+    }
+    return 'sibling or partner';
+  }
+
+  // Default based on shared vehicle
+  if (hasSharedVehicle) {
+    return 'family (co-owned vehicle)';
+  }
+
+  return 'associate';
+};
+
 export default function CaseDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -228,7 +279,15 @@ export default function CaseDetailScreen() {
   const parsedData = latestReport?.parsedData;
   const addresses = parsedData?.addresses || [];
   const phones = parsedData?.phones || [];
-  const relatives = parsedData?.relatives || [];
+  const baseRelatives = parsedData?.relatives || [];
+
+  // Discovered associates from analyzing associate documents (stored separately)
+  const [discoveredAssociates, setDiscoveredAssociates] = useState<any[]>([]);
+
+  // Merge base relatives with discovered associates for display
+  const relatives = [...baseRelatives, ...discoveredAssociates].filter(
+    (rel, idx, arr) => arr.findIndex(r => r.name?.toLowerCase() === rel.name?.toLowerCase()) === idx
+  );
 
   // Load saved data
   useEffect(() => {
@@ -258,6 +317,14 @@ export default function CaseDetailScreen() {
         if (localPhotoIntel) {
           try {
             setAllPhotoIntel(JSON.parse(localPhotoIntel));
+          } catch (e) {}
+        }
+
+        // Load discovered associates
+        const localAssociates = await AsyncStorage.getItem(`case_associates_${id}`);
+        if (localAssociates) {
+          try {
+            setDiscoveredAssociates(JSON.parse(localAssociates));
           } catch (e) {}
         }
 
@@ -306,6 +373,13 @@ export default function CaseDetailScreen() {
       AsyncStorage.setItem(`case_all_photo_intel_${id}`, JSON.stringify(allPhotoIntel));
     }
   }, [id, allPhotoIntel]);
+
+  // Save discovered associates
+  useEffect(() => {
+    if (id && discoveredAssociates.length > 0) {
+      AsyncStorage.setItem(`case_associates_${id}`, JSON.stringify(discoveredAssociates));
+    }
+  }, [id, discoveredAssociates]);
 
   useFocusEffect(useCallback(() => { refresh(); }, [refresh]));
 
@@ -907,8 +981,27 @@ ${result.explanation}`,
 
           // Check if this is an associate document (not the primary target)
           if (result.isAssociateDocument) {
-            const primaryName = caseData?.primaryTarget?.fullName || 'the fugitive';
+            const primaryName = getSubjectName();
             intelReport += `📋 **ASSOCIATE INTEL** (for locating ${primaryName})\n`;
+
+            // ADD this person as a discovered associate
+            if (subject.fullName && subject.fullName !== 'Unknown') {
+              const newAssociate = {
+                name: subject.fullName,
+                relationship: deduceRelationship(subject, caseData?.primaryTarget, vehicles),
+                phones: phones.length > 0 ? [phones[0].number] : undefined,
+                currentAddress: addresses.length > 0 ? addresses[0].fullAddress : undefined,
+                source: 'document_analysis',
+              };
+
+              setDiscoveredAssociates(prev => {
+                // Don't add duplicates
+                if (prev.some(a => a.name?.toLowerCase() === newAssociate.name.toLowerCase())) {
+                  return prev;
+                }
+                return [...prev, newAssociate];
+              });
+            }
             intelReport += `👤 This document is about **${subject.fullName || 'Unknown'}**, who may have info on ${primaryName}.\n\n`;
           } else {
             intelReport += `📋 **INTEL REPORT EXTRACTED**\n\n`;

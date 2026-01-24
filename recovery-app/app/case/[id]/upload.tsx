@@ -126,15 +126,15 @@ export default function UploadScreen() {
 
       {/* Description */}
       <View style={styles.descCard}>
-        <Text style={styles.descTitle}>Skip Trace Analysis</Text>
+        <Text style={styles.descTitle}>Document Analysis</Text>
         <Text style={styles.descText}>
-          Upload skip trace reports (PDF or text). AI will analyze addresses,
-          phones, relatives, and patterns to rank likely locations.
+          Upload bail bond paperwork, skip-trace reports, or any case documents.
+          AI will automatically detect the document type and extract all intel.
         </Text>
         <View style={styles.tipBox}>
           <Ionicons name="bulb" size={16} color={DARK.warning} />
           <Text style={styles.tipText}>
-            Pro tip: Upload multiple reports (subject + family) for cross-reference analysis
+            Works with: bondsman paperwork, check-in logs, court records, references, skip-traces
           </Text>
         </View>
       </View>
@@ -148,18 +148,22 @@ export default function UploadScreen() {
 
       {/* Supported formats */}
       <View style={styles.formatsCard}>
-        <Text style={styles.formatsTitle}>SUPPORTED</Text>
+        <Text style={styles.formatsTitle}>SUPPORTED DOCUMENTS</Text>
         <View style={styles.formatRow}>
           <Ionicons name="checkmark-circle" size={16} color={DARK.success} />
-          <Text style={styles.formatText}>PDF files (auto-extracted)</Text>
+          <Text style={styles.formatText}>Bail bond paperwork (auto-analyzed)</Text>
+        </View>
+        <View style={styles.formatRow}>
+          <Ionicons name="checkmark-circle" size={16} color={DARK.success} />
+          <Text style={styles.formatText}>PDF files (including scanned/OCR)</Text>
+        </View>
+        <View style={styles.formatRow}>
+          <Ionicons name="checkmark-circle" size={16} color={DARK.success} />
+          <Text style={styles.formatText}>Skip-trace reports</Text>
         </View>
         <View style={styles.formatRow}>
           <Ionicons name="checkmark-circle" size={16} color={DARK.success} />
           <Text style={styles.formatText}>Text files (.txt)</Text>
-        </View>
-        <View style={styles.formatRow}>
-          <Ionicons name="warning" size={16} color={DARK.warning} />
-          <Text style={styles.formatText}>Images (paste text manually)</Text>
         </View>
       </View>
     </ScrollView>

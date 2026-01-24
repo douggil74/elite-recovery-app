@@ -47,6 +47,8 @@ export const DEFAULT_SETTINGS = {
   autoDeleteDays: null,
   maskFieldsByDefault: true,
   osintBackendUrl: null as string | null, // Custom OSINT backend URL (defaults to production)
+  anthropicApiKey: undefined as string | undefined, // Claude API key (preferred)
+  openaiApiKey: undefined as string | undefined,    // OpenAI API key (fallback)
 };
 
 // OSINT Backend Configuration

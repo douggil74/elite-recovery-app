@@ -230,18 +230,38 @@ export async function extractTextFromPdf(data: ArrayBuffer | Uint8Array): Promis
 
       try {
         const ocrTexts: string[] = [];
-        const maxPages = Math.min(pdf.numPages, 10); // Limit to 10 pages for speed
+        const maxPages = Math.min(pdf.numPages, 5); // Limit to 5 pages for speed
 
-        for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-          console.log(`OCR processing page ${pageNum}/${maxPages}...`);
-          const imageData = await renderPageToImage(pdfjs, pdf, pageNum);
-          const pageText = await ocrWithOpenAI(imageData, pageNum);
-          if (pageText.trim()) {
-            ocrTexts.push(`--- Page ${pageNum} ---\n${pageText}`);
+        // Process pages in parallel (2 at a time) for speed
+        for (let i = 1; i <= maxPages; i += 2) {
+          const promises = [];
+
+          for (let j = i; j <= Math.min(i + 1, maxPages); j++) {
+            console.log(`OCR processing page ${j}/${maxPages}...`);
+            promises.push(
+              (async () => {
+                try {
+                  const imageData = await renderPageToImage(pdfjs, pdf, j);
+                  const pageText = await ocrWithOpenAI(imageData, j);
+                  return { page: j, text: pageText };
+                } catch (e) {
+                  console.error(`OCR failed for page ${j}:`, e);
+                  return { page: j, text: '' };
+                }
+              })()
+            );
           }
+
+          const results = await Promise.all(promises);
+          results.forEach(r => {
+            if (r.text.trim()) {
+              ocrTexts.push(`--- Page ${r.page} ---\n${r.text}`);
+            }
+          });
         }
 
         const ocrFullText = ocrTexts.join('\n\n');
+        console.log(`OCR complete: ${ocrFullText.length} characters extracted`);
 
         if (ocrFullText.length > 50) {
           return {

@@ -27,6 +27,12 @@ export interface Case {
   createdAt: string;
   updatedAt: string;
   autoDeleteAt?: string;
+  // PRIMARY TARGET - locked in from first document analysis
+  primaryTarget?: {
+    fullName: string;
+    dob?: string;
+    aliases?: string[];
+  };
   // Jail roster data
   mugshotUrl?: string;
   bookingNumber?: string;
@@ -239,7 +245,9 @@ export interface AppSettings {
   storageMode: 'local' | 'cloud';
   autoDeleteDays: number | null; // null = never
   maskFieldsByDefault: boolean;
-  openaiApiKey?: string;
+  // AI API Keys
+  anthropicApiKey?: string; // Claude API key (preferred)
+  openaiApiKey?: string;    // OpenAI API key (fallback)
   // Firebase cloud sync
   firebaseConfig?: string; // JSON string of FirebaseConfig
   userId?: string; // User ID for multi-device sync
