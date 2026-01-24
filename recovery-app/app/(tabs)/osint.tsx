@@ -177,11 +177,29 @@ const generateSearchLinks = (query: string, type: string) => {
   return links;
 };
 
+// Backend API URL
+const OSINT_API = 'https://elite-recovery-osint.fly.dev';
+
+// Types for backend results
+interface OSINTResult {
+  type: 'email' | 'username' | 'name';
+  query: string;
+  accounts: { service: string; url?: string; status: string }[];
+  totalFound: number;
+  executionTime: number;
+  errors: string[];
+}
+
 export default function OSINTScreen() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchType, setSearchType] = useState<'name' | 'email' | 'phone' | 'username' | 'address'>('name');
   const [searchResults, setSearchResults] = useState<{ category: string; items: { name: string; url: string; icon: string }[] }[]>([]);
+
+  // Backend OSINT results
+  const [osintResult, setOsintResult] = useState<OSINTResult | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   // Photo Analysis State
   const [uploadedPhoto, setUploadedPhoto] = useState<string | null>(null);
@@ -203,10 +221,80 @@ export default function OSINTScreen() {
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (!searchQuery.trim()) return;
+
+    // Generate fallback links
     const links = generateSearchLinks(searchQuery.trim(), searchType);
     setSearchResults(links);
+
+    // For email and username, also call backend APIs for actual results
+    if (searchType === 'email' || searchType === 'username') {
+      setIsSearching(true);
+      setSearchError(null);
+      setOsintResult(null);
+
+      try {
+        if (searchType === 'email') {
+          // Use Holehe for email search
+          const response = await fetch(`${OSINT_API}/api/holehe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: searchQuery.trim() }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            setOsintResult({
+              type: 'email',
+              query: searchQuery.trim(),
+              accounts: (data.registered_on || []).map((item: any) => ({
+                service: item.service,
+                status: item.status,
+                url: item.service.includes('.') ? `https://${item.service}` : undefined,
+              })),
+              totalFound: data.registered_on?.length || 0,
+              executionTime: data.execution_time || 0,
+              errors: [],
+            });
+          } else {
+            setSearchError('Email search failed');
+          }
+        } else if (searchType === 'username') {
+          // Use Sherlock for username search
+          const response = await fetch(`${OSINT_API}/api/sherlock`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: searchQuery.trim(), timeout: 60 }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            setOsintResult({
+              type: 'username',
+              query: searchQuery.trim(),
+              accounts: (data.found || []).map((item: any) => ({
+                service: item.site || item.name,
+                url: item.url,
+                status: 'found',
+              })),
+              totalFound: data.found?.length || 0,
+              executionTime: data.execution_time || 0,
+              errors: data.errors || [],
+            });
+          } else {
+            setSearchError('Username search failed');
+          }
+        }
+      } catch (error: any) {
+        setSearchError(error.message || 'Search failed');
+      } finally {
+        setIsSearching(false);
+      }
+    } else {
+      // Clear backend results for other search types
+      setOsintResult(null);
+    }
   };
 
   const openUrl = (url: string) => {
@@ -396,10 +484,82 @@ export default function OSINTScreen() {
         </View>
 
         {/* Search Button */}
-        <TouchableOpacity style={styles.searchBtn} onPress={handleSearch}>
-          <Ionicons name="search" size={20} color="#fff" />
-          <Text style={styles.searchBtnText}>Generate Search Links</Text>
+        <TouchableOpacity
+          style={[styles.searchBtn, isSearching && styles.btnDisabled]}
+          onPress={handleSearch}
+          disabled={isSearching}
+        >
+          {isSearching ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="search" size={20} color="#fff" />
+              <Text style={styles.searchBtnText}>
+                {searchType === 'email' || searchType === 'username' ? 'Search Accounts' : 'Generate Search Links'}
+              </Text>
+            </>
+          )}
         </TouchableOpacity>
+
+        {/* Backend OSINT Results */}
+        {osintResult && (
+          <View style={styles.osintResultsContainer}>
+            <View style={styles.osintResultsHeader}>
+              <Ionicons name="checkmark-circle" size={20} color={THEME.success} />
+              <Text style={styles.osintResultsTitle}>
+                {osintResult.totalFound} Account{osintResult.totalFound !== 1 ? 's' : ''} Found
+              </Text>
+              <Text style={styles.osintResultsTime}>
+                {osintResult.executionTime.toFixed(1)}s
+              </Text>
+            </View>
+
+            {osintResult.accounts.length > 0 ? (
+              <View style={styles.accountsList}>
+                {osintResult.accounts.slice(0, 20).map((account, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={styles.accountItem}
+                    onPress={() => account.url && openUrl(account.url)}
+                    disabled={!account.url}
+                  >
+                    <Ionicons
+                      name={account.url ? 'link' : 'checkmark'}
+                      size={14}
+                      color={account.url ? THEME.info : THEME.success}
+                    />
+                    <Text style={[styles.accountName, account.url && styles.accountNameClickable]}>
+                      {account.service}
+                    </Text>
+                    {account.url && (
+                      <Ionicons name="open-outline" size={12} color={THEME.textMuted} />
+                    )}
+                  </TouchableOpacity>
+                ))}
+                {osintResult.accounts.length > 20 && (
+                  <Text style={styles.moreAccounts}>
+                    +{osintResult.accounts.length - 20} more accounts
+                  </Text>
+                )}
+              </View>
+            ) : (
+              <Text style={styles.noAccountsText}>No accounts found for this {osintResult.type}</Text>
+            )}
+
+            {osintResult.errors.length > 0 && (
+              <Text style={styles.osintErrors}>
+                {osintResult.errors.length} error(s) during search
+              </Text>
+            )}
+          </View>
+        )}
+
+        {searchError && (
+          <View style={styles.errorBox}>
+            <Ionicons name="warning" size={16} color={THEME.danger} />
+            <Text style={styles.errorText}>{searchError}</Text>
+          </View>
+        )}
 
         {/* Photo Analysis Section */}
         <View style={styles.photoSection}>
@@ -1683,5 +1843,70 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
     paddingVertical: 8,
+  },
+  // Backend OSINT Results Styles
+  osintResultsContainer: {
+    backgroundColor: THEME.surface,
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: THEME.success + '40',
+  },
+  osintResultsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  osintResultsTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: THEME.success,
+    flex: 1,
+  },
+  osintResultsTime: {
+    fontSize: 11,
+    color: THEME.textMuted,
+  },
+  accountsList: {
+    gap: 6,
+  },
+  accountItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: THEME.bg,
+    padding: 10,
+    borderRadius: 8,
+    gap: 8,
+  },
+  accountName: {
+    fontSize: 13,
+    color: THEME.text,
+    flex: 1,
+  },
+  accountNameClickable: {
+    color: THEME.info,
+    textDecorationLine: 'underline',
+  },
+  moreAccounts: {
+    fontSize: 12,
+    color: THEME.textMuted,
+    textAlign: 'center',
+    marginTop: 8,
+    fontStyle: 'italic',
+  },
+  noAccountsText: {
+    fontSize: 13,
+    color: THEME.textMuted,
+    textAlign: 'center',
+    paddingVertical: 12,
+  },
+  osintErrors: {
+    fontSize: 11,
+    color: THEME.warning,
+    marginTop: 8,
+    textAlign: 'center',
   },
 });
