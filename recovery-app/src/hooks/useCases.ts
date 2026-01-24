@@ -18,6 +18,7 @@ export interface CaseWithStats extends Case {
   status: CaseStatus;
   addressCount: number;
   phoneCount: number;
+  mugshotUrl?: string;
 }
 
 export interface UseCasesReturn {
@@ -53,11 +54,14 @@ export function useCases(): UseCasesReturn {
       // Fetch all cases
       const allCases = await getAllCases();
 
-      // Fetch stats for each case
+      // Fetch stats and photos for each case
       const casesWithStats: CaseWithStats[] = await Promise.all(
         allCases.map(async (c) => {
           try {
-            const reports = await getReportsForCase(c.id);
+            const [reports, mugshotUrl] = await Promise.all([
+              getReportsForCase(c.id),
+              AsyncStorage.getItem(`case_photo_${c.id}`),
+            ]);
             const latestReport = reports[0];
             const addressCount = latestReport?.parsedData?.addresses?.length || 0;
             const phoneCount = latestReport?.parsedData?.phones?.length || 0;
@@ -67,7 +71,13 @@ export function useCases(): UseCasesReturn {
               status = addressCount > 0 || phoneCount > 0 ? 'has_data' : 'new';
             }
 
-            return { ...c, status, addressCount, phoneCount };
+            return {
+              ...c,
+              status,
+              addressCount,
+              phoneCount,
+              mugshotUrl: mugshotUrl || undefined,
+            };
           } catch {
             return { ...c, status: 'new' as CaseStatus, addressCount: 0, phoneCount: 0 };
           }
