@@ -1165,12 +1165,27 @@ ${result.explanation}`,
     setIsSending(true);
     scrollToBottom();
 
-    // COMMAND DETECTION: "add X as associate" or "add associate X"
-    const addAssociateMatch = userTextLower.match(/add\s+(.+?)\s+as\s+(associate|relative|contact|friend|family)/i) ||
-                              userTextLower.match(/add\s+(associate|relative|contact)\s+(.+)/i);
+    // COMMAND DETECTION: Any variation of "add [name] as associate/to network/etc"
+    // Catches: "add raydell", "add raydell as associate", "add raydell to the network", etc.
+    const addPatterns = [
+      /add\s+(.+?)\s+(?:as\s+)?(?:an?\s+)?(?:associate|relative|contact|friend|family|to\s+(?:the\s+)?(?:network|graph|associates|contacts))/i,
+      /add\s+(?:associate|relative|contact)\s+(.+)/i,
+      /^add\s+([a-z]+(?:\s+[a-z]+)?)\s*$/i, // Simple "add raydell" or "add raydell smith"
+    ];
+
+    let addAssociateMatch = null;
+    for (const pattern of addPatterns) {
+      addAssociateMatch = userTextLower.match(pattern);
+      if (addAssociateMatch) break;
+    }
+
     if (addAssociateMatch) {
-      const name = addAssociateMatch[1].replace(/(associate|relative|contact|friend|family)/gi, '').trim();
-      const normalizedName = normalizeName(name) || name;
+      // Extract name - could be in group 1 or 2 depending on pattern
+      let name = (addAssociateMatch[1] || addAssociateMatch[2] || '').trim();
+      // Clean up common words
+      name = name.replace(/\b(as|an?|associate|relative|contact|friend|family|to|the|network|graph)\b/gi, '').trim();
+
+      const normalizedName = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
 
       if (normalizedName.length > 1) {
         const newAssociate = {
@@ -1179,17 +1194,32 @@ ${result.explanation}`,
           source: 'manual_add',
         };
 
+        // Actually add to state
         setDiscoveredAssociates(prev => {
-          if (prev.some(a => normalizeName(a.name)?.toLowerCase() === normalizedName.toLowerCase())) {
+          const exists = prev.some(a =>
+            (a.name || '').toLowerCase() === normalizedName.toLowerCase()
+          );
+          if (exists) {
             return prev;
           }
+          console.log('[TRACE Command] Adding associate:', normalizedName);
           return [...prev, newAssociate];
+        });
+
+        // Save to AsyncStorage immediately
+        AsyncStorage.getItem(`case_associates_${id}`).then(existing => {
+          const list = existing ? JSON.parse(existing) : [];
+          if (!list.some((a: any) => (a.name || '').toLowerCase() === normalizedName.toLowerCase())) {
+            list.push(newAssociate);
+            AsyncStorage.setItem(`case_associates_${id}`, JSON.stringify(list));
+            console.log('[TRACE Command] Saved to storage:', list);
+          }
         });
 
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
           role: 'agent',
-          content: `✓ Added **${normalizedName}** as associate.\n\nWhat's their relationship to ${getSubjectName()}? (friend, family, employer, co-signer, etc.)`,
+          content: `✅ **${normalizedName}** added to Network.\n\nRelationship to ${getSubjectName()}? _(type: brother, mother, friend, employer, etc.)_`,
           timestamp: new Date(),
         }]);
         setIsSending(false);
