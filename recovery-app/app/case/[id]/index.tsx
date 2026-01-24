@@ -184,6 +184,24 @@ const compressImage = (dataUrl: string, maxWidth = 400, quality = 0.7): Promise<
   });
 };
 
+// Normalize name from "LAST, First Middle" to "First Middle Last" for OSINT searches
+const normalizeName = (name: string | undefined | null): string => {
+  if (!name || typeof name !== 'string') return '';
+
+  // Check if name is in "LAST, First" format
+  if (name.includes(',')) {
+    const parts = name.split(',').map(p => p.trim());
+    if (parts.length >= 2) {
+      // "KNOTEN, Sandra L" -> "Sandra L Knoten"
+      const lastName = parts[0];
+      const firstMiddle = parts.slice(1).join(' ');
+      return `${firstMiddle} ${lastName}`.trim();
+    }
+  }
+
+  return name.trim();
+};
+
 // Deduce relationship based on context clues (detective reasoning)
 const deduceRelationship = (
   associateSubject: any,
@@ -195,14 +213,18 @@ const deduceRelationship = (
 
   // Try to calculate age difference from DOBs
   let ageDiff = 0;
-  if (associateSubject?.dob && primaryTarget?.dob) {
-    try {
-      const assocYear = parseInt(associateSubject.dob.split('/').pop() || '0');
-      const targetYear = parseInt(primaryTarget.dob?.split('/').pop() || '0');
+  try {
+    const assocDob = associateSubject?.dob;
+    const targetDob = primaryTarget?.dob;
+    if (assocDob && targetDob && typeof assocDob === 'string' && typeof targetDob === 'string') {
+      const assocYear = parseInt(assocDob.split('/').pop() || '0');
+      const targetYear = parseInt(targetDob.split('/').pop() || '0');
       if (assocYear > 1900 && targetYear > 1900) {
         ageDiff = assocYear - targetYear; // Negative = associate is older
       }
-    } catch (e) {}
+    }
+  } catch (e) {
+    // Ignore parsing errors
   }
 
   // Deduce relationship based on clues
@@ -219,7 +241,7 @@ const deduceRelationship = (
     return 'likely child';
   }
 
-  if (Math.abs(ageDiff) <= 10) {
+  if (Math.abs(ageDiff) <= 10 && ageDiff !== 0) {
     // Similar age
     if (hasSharedVehicle) {
       return 'spouse/partner (co-owned vehicle)';
@@ -2088,10 +2110,11 @@ ${result.explanation}`,
 
                 {/* Connection lines container */}
                 <View style={styles.linkConnections}>
-                  {/* Relatives/Associates */}
-                  {(parsedData?.relatives || []).slice(0, 4).map((rel: any, idx: number) => {
+                  {/* Relatives/Associates - use merged list */}
+                  {relatives.slice(0, 4).map((rel: any, idx: number) => {
                     const nodeId = `rel-${idx}`;
                     const isSelected = selectedLinkNode === nodeId;
+                    const displayName = normalizeName(rel.name) || 'Unknown';
                     return (
                       <TouchableOpacity
                         key={nodeId}
@@ -2107,7 +2130,7 @@ ${result.explanation}`,
                         <View style={styles.linkLine} />
                         <View style={[styles.linkBubble, { backgroundColor: '#3b82f620', borderColor: '#3b82f6' }, isSelected && styles.linkBubbleSelected]}>
                           <Ionicons name="people" size={isSelected ? 16 : 12} color="#3b82f6" />
-                          <Text style={[styles.linkLabel, isSelected && styles.linkLabelSelected]} numberOfLines={isSelected ? 3 : 1}>{rel.name}</Text>
+                          <Text style={[styles.linkLabel, isSelected && styles.linkLabelSelected]} numberOfLines={isSelected ? 3 : 1}>{displayName}</Text>
                           <Text style={styles.linkType}>{rel.relationship || 'associate'}</Text>
                           {rel.phones?.[0] && <Text style={styles.linkPhone}>{rel.phones[0]}</Text>}
                           {isSelected && rel.currentAddress && <Text style={styles.linkAddress}>{rel.currentAddress}</Text>}
@@ -2315,9 +2338,9 @@ ${result.explanation}`,
               <TouchableOpacity
                 style={styles.osintRunBtn}
                 onPress={() => {
-                  const name = (parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown')
-                    ? parsedData.subject.fullName
-                    : caseData?.name;
+                  // Use getSubjectName() and normalize for OSINT
+                  const rawName = getSubjectName();
+                  const name = normalizeName(rawName);
                   if (name) {
                     setOsintSearched(false);
                     runOSINTSearch(name);
@@ -2396,47 +2419,53 @@ ${result.explanation}`,
             {relatives.length > 0 && (
               <>
                 <Text style={styles.osintSectionTitle}>Network ({relatives.length})</Text>
-                {relatives.slice(0, 5).map((r: any, idx: number) => (
-                  <View key={idx} style={styles.networkCard}>
-                    <View style={styles.networkHeader}>
-                      <Ionicons name="person" size={14} color={DARK.textSecondary} />
-                      <Text style={styles.relName}>{r.name}</Text>
-                      <Text style={styles.relRel}>{r.relationship}</Text>
+                {relatives.slice(0, 5).map((r: any, idx: number) => {
+                  // Normalize name for OSINT (convert "LAST, First" to "First Last")
+                  const displayName = normalizeName(r.name) || 'Unknown';
+                  const searchName = displayName.toLowerCase().replace(/\s+/g, '');
+
+                  return (
+                    <View key={idx} style={styles.networkCard}>
+                      <View style={styles.networkHeader}>
+                        <Ionicons name="person" size={14} color={DARK.textSecondary} />
+                        <Text style={styles.relName}>{displayName}</Text>
+                        <Text style={styles.relRel}>{r.relationship || 'associate'}</Text>
+                      </View>
+                      {/* Social search links for this associate */}
+                      <View style={styles.networkSocials}>
+                        <TouchableOpacity
+                          style={styles.networkSocialBtn}
+                          onPress={() => openUrl(`https://www.facebook.com/search/people/?q=${encodeURIComponent(displayName)}`)}
+                        >
+                          <Ionicons name="logo-facebook" size={14} color="#1877f2" />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.networkSocialBtn}
+                          onPress={() => openUrl(`https://www.instagram.com/${searchName}`)}
+                        >
+                          <Ionicons name="logo-instagram" size={14} color="#e4405f" />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.networkSocialBtn}
+                          onPress={() => openUrl(`https://www.tiktok.com/@${searchName}`)}
+                        >
+                          <Ionicons name="logo-tiktok" size={14} color={DARK.text} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.networkSocialBtn}
+                          onPress={() => openUrl(`https://www.truepeoplesearch.com/results?name=${encodeURIComponent(displayName)}`)}
+                        >
+                          <Ionicons name="search" size={14} color={DARK.primary} />
+                        </TouchableOpacity>
+                      </View>
+                      {r.phones?.[0] && (
+                        <TouchableOpacity onPress={() => Linking.openURL(`tel:${r.phones[0]}`)}>
+                          <Text style={styles.networkPhone}>{r.phones[0]}</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
-                    {/* Social search links for this associate */}
-                    <View style={styles.networkSocials}>
-                      <TouchableOpacity
-                        style={styles.networkSocialBtn}
-                        onPress={() => openUrl(`https://www.facebook.com/search/people/?q=${encodeURIComponent(r.name)}`)}
-                      >
-                        <Ionicons name="logo-facebook" size={14} color="#1877f2" />
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.networkSocialBtn}
-                        onPress={() => openUrl(`https://www.instagram.com/${r.name.toLowerCase().replace(/\s+/g, '')}`)}
-                      >
-                        <Ionicons name="logo-instagram" size={14} color="#e4405f" />
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.networkSocialBtn}
-                        onPress={() => openUrl(`https://www.tiktok.com/@${r.name.toLowerCase().replace(/\s+/g, '')}`)}
-                      >
-                        <Ionicons name="logo-tiktok" size={14} color={DARK.text} />
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.networkSocialBtn}
-                        onPress={() => openUrl(`https://www.truepeoplesearch.com/results?name=${encodeURIComponent(r.name)}`)}
-                      >
-                        <Ionicons name="search" size={14} color={DARK.primary} />
-                      </TouchableOpacity>
-                    </View>
-                    {r.phones?.[0] && (
-                      <TouchableOpacity onPress={() => Linking.openURL(`tel:${r.phones[0]}`)}>
-                        <Text style={styles.networkPhone}>{r.phones[0]}</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                ))}
+                  );
+                })}
               </>
             )}
           </ScrollView>
