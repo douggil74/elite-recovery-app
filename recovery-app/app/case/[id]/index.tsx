@@ -1002,29 +1002,47 @@ ${result.explanation}`,
           let intelReport = '';
 
           // Check if this is an associate document (not the primary target)
-          if (result.isAssociateDocument) {
-            const primaryName = getSubjectName();
+          const primaryName = getSubjectName();
+          const normalizedSubject = normalizeName(subject.fullName);
+          const normalizedPrimary = normalizeName(primaryName);
+
+          // Determine if this document is about someone other than the primary target
+          const isAboutAssociate = result.isAssociateDocument ||
+            (normalizedSubject &&
+             normalizedSubject !== 'Unknown' &&
+             normalizedPrimary &&
+             !normalizedSubject.toLowerCase().includes(normalizedPrimary.split(' ')[0]?.toLowerCase() || '') &&
+             !normalizedPrimary.toLowerCase().includes(normalizedSubject.split(' ')[0]?.toLowerCase() || ''));
+
+          if (isAboutAssociate) {
             intelReport += `📋 **ASSOCIATE INTEL** (for locating ${primaryName})\n`;
 
             // ADD this person as a discovered associate
-            if (subject.fullName && subject.fullName !== 'Unknown') {
+            if (normalizedSubject && normalizedSubject !== 'Unknown') {
               const newAssociate = {
-                name: subject.fullName,
+                name: normalizedSubject,
                 relationship: deduceRelationship(subject, caseData?.primaryTarget, vehicles),
                 phones: phones.length > 0 ? [phones[0].number] : undefined,
                 currentAddress: addresses.length > 0 ? addresses[0].fullAddress : undefined,
                 source: 'document_analysis',
               };
 
+              console.log('[Associate] Adding discovered associate:', newAssociate);
+
               setDiscoveredAssociates(prev => {
                 // Don't add duplicates
-                if (prev.some(a => a.name?.toLowerCase() === newAssociate.name.toLowerCase())) {
+                const exists = prev.some(a =>
+                  normalizeName(a.name)?.toLowerCase() === normalizedSubject.toLowerCase()
+                );
+                if (exists) {
+                  console.log('[Associate] Already exists, skipping');
                   return prev;
                 }
+                console.log('[Associate] Added to list');
                 return [...prev, newAssociate];
               });
             }
-            intelReport += `👤 This document is about **${subject.fullName || 'Unknown'}**, who may have info on ${primaryName}.\n\n`;
+            intelReport += `👤 This document is about **${normalizedSubject || 'Unknown'}**, who may have info on ${primaryName}.\n\n`;
           } else {
             intelReport += `📋 **INTEL REPORT EXTRACTED**\n\n`;
           }
