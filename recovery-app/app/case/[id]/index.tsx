@@ -960,13 +960,38 @@ ${result.explanation}`,
               return; // Don't save as subject photo
             }
 
-            // Otherwise, save as subject photo
-            console.log('[PhotoUpload] Saving subject photo:', currentFileName);
-            setSubjectPhoto(dataUrl);
-            try { await AsyncStorage.setItem(`case_photo_${id}`, dataUrl); } catch {}
-            setUploadedFiles(prev => [...prev, { id: uniqueId(), name: currentFileName, type: 'image', uploadedAt: new Date() }]);
-            setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `📸 Subject photo set: ${currentFileName}\n\n🔍 Analyzing photo for investigative leads...`, timestamp: new Date() }]);
-            scrollToBottom();
+            // If we already have a subject photo, this might be an associate photo
+            if (subjectPhoto) {
+              console.log('[PhotoUpload] Subject photo exists - treating as potential associate photo');
+
+              // Store temporarily and ask for details
+              const tempAssociateId = uniqueId();
+              await AsyncStorage.setItem(`case_temp_associate_photo_${id}`, JSON.stringify({
+                id: tempAssociateId,
+                photoUrl: dataUrl,
+                fileName: currentFileName,
+              }));
+
+              setUploadedFiles(prev => [...prev, { id: tempAssociateId, name: currentFileName, type: 'image', uploadedAt: new Date() }]);
+              setChatMessages(prev => [...prev, {
+                id: uniqueId(),
+                role: 'agent',
+                content: `📸 **NEW PHOTO RECEIVED**\n\nIs this someone connected to ${getSubjectName()}?\n\n**Who is this?** _(Type their name, e.g., "John Smith")_`,
+                timestamp: new Date(),
+              }]);
+              scrollToBottom();
+
+              // Mark that we're waiting for associate name
+              await AsyncStorage.setItem(`case_waiting_associate_name_${id}`, 'true');
+            } else {
+              // No subject photo yet - save as subject photo
+              console.log('[PhotoUpload] Saving subject photo:', currentFileName);
+              setSubjectPhoto(dataUrl);
+              try { await AsyncStorage.setItem(`case_photo_${id}`, dataUrl); } catch {}
+              setUploadedFiles(prev => [...prev, { id: uniqueId(), name: currentFileName, type: 'image', uploadedAt: new Date() }]);
+              setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `📸 Subject photo set: ${currentFileName}\n\n🔍 Analyzing photo for investigative leads...`, timestamp: new Date() }]);
+              scrollToBottom();
+            }
 
             // Run photo intelligence analysis with filename
             console.log('[PhotoUpload] Running photo intelligence for:', currentFileName);
@@ -1185,6 +1210,88 @@ ${result.explanation}`,
     setInputText('');
     setIsSending(true);
     scrollToBottom();
+
+    // CHECK: Are we waiting for an associate name after photo drop?
+    const waitingForAssocName = await AsyncStorage.getItem(`case_waiting_associate_name_${id}`);
+    if (waitingForAssocName === 'true' && userText.length > 1 && userText.length < 50 && !userText.includes(' as ')) {
+      // User is providing the name for the dropped photo
+      const tempPhotoData = await AsyncStorage.getItem(`case_temp_associate_photo_${id}`);
+      if (tempPhotoData) {
+        const { photoUrl, fileName } = JSON.parse(tempPhotoData);
+        const associateName = userText.charAt(0).toUpperCase() + userText.slice(1);
+
+        // Save associate with photo
+        const newAssociate = {
+          name: associateName,
+          relationship: 'unknown',
+          photoUrl,
+          source: 'photo_drop',
+        };
+
+        setDiscoveredAssociates(prev => [...prev, newAssociate]);
+
+        // Save to AsyncStorage
+        const existingAssocs = await AsyncStorage.getItem(`case_associates_${id}`);
+        const assocList = existingAssocs ? JSON.parse(existingAssocs) : [];
+        assocList.push(newAssociate);
+        await AsyncStorage.setItem(`case_associates_${id}`, JSON.stringify(assocList));
+
+        // Clear temp state
+        await AsyncStorage.removeItem(`case_temp_associate_photo_${id}`);
+        await AsyncStorage.removeItem(`case_waiting_associate_name_${id}`);
+
+        setChatMessages(prev => [...prev, {
+          id: uniqueId(),
+          role: 'agent',
+          content: `✅ **${associateName}** added with photo.\n\n**Relationship to ${getSubjectName()}?**\n_(friend, brother, mother, employer, etc.)_`,
+          timestamp: new Date(),
+        }]);
+
+        // Now wait for relationship
+        await AsyncStorage.setItem(`case_waiting_associate_rel_${id}`, associateName);
+
+        setIsSending(false);
+        scrollToBottom();
+        chatInputRef.current?.focus();
+        return;
+      }
+    }
+
+    // CHECK: Are we waiting for a relationship after naming an associate?
+    const waitingForRel = await AsyncStorage.getItem(`case_waiting_associate_rel_${id}`);
+    if (waitingForRel && userTextLower.match(/^(friend|family|mother|father|sister|brother|spouse|wife|husband|girlfriend|boyfriend|employer|coworker|co-signer|cosigner|roommate|neighbor|aunt|uncle|cousin|grandma|grandmother|grandpa|grandfather|unknown|associate)$/i)) {
+      const relationship = userTextLower;
+
+      // Update the associate
+      setDiscoveredAssociates(prev => {
+        return prev.map(a =>
+          a.name === waitingForRel ? { ...a, relationship } : a
+        );
+      });
+
+      // Update in AsyncStorage
+      const existingAssocs = await AsyncStorage.getItem(`case_associates_${id}`);
+      if (existingAssocs) {
+        const assocList = JSON.parse(existingAssocs);
+        const updated = assocList.map((a: any) =>
+          a.name === waitingForRel ? { ...a, relationship } : a
+        );
+        await AsyncStorage.setItem(`case_associates_${id}`, JSON.stringify(updated));
+      }
+
+      await AsyncStorage.removeItem(`case_waiting_associate_rel_${id}`);
+
+      setChatMessages(prev => [...prev, {
+        id: uniqueId(),
+        role: 'agent',
+        content: `✅ **${waitingForRel}** - ${relationship}\n\nAdded to Network. Drop another photo or continue investigating.`,
+        timestamp: new Date(),
+      }]);
+
+      setIsSending(false);
+      scrollToBottom();
+      return;
+    }
 
     // COMMAND DETECTION: Any variation of "add [name] as associate/to network/etc"
     // Catches: "add raydell", "add raydell as associate", "add raydell to the network", etc.
@@ -2152,7 +2259,28 @@ ${result.explanation}`,
               <Ionicons name="copy-outline" size={14} color={DARK.textMuted} />
             </TouchableOpacity>
           </View>
-          <ScrollView ref={scrollRef} style={styles.chatScroll} contentContainerStyle={{ padding: 8 }}>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.chatScroll}
+            contentContainerStyle={{ padding: 8 }}
+            {...(isWeb ? {
+              onDragOver: (e: any) => { e.preventDefault(); e.stopPropagation(); },
+              onDrop: (e: any) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const files = e.dataTransfer?.files;
+                if (files?.length > 0 && fileInputRef.current) {
+                  // Create a DataTransfer to set files on the input
+                  const dt = new DataTransfer();
+                  for (let i = 0; i < files.length; i++) {
+                    dt.items.add(files[i]);
+                  }
+                  fileInputRef.current.files = dt.files;
+                  fileInputRef.current.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+              },
+            } : {})}
+          >
             {chatMessages.map((msg) => (
               <View key={msg.id} style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.agentBubble]}>
                 <Text style={[styles.bubbleText, msg.role === 'user' && { color: '#fff' }]}>{msg.content}</Text>
