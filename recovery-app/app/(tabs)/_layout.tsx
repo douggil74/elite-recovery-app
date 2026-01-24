@@ -42,19 +42,10 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Cases',
+          title: 'TRACE',
           headerShown: false,
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="briefcase-outline" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="osint"
-        options={{
-          title: 'OSINT',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="search-outline" size={size} color={color} />
+            <Ionicons name="radio-outline" size={size} color={color} />
           ),
         }}
       />
@@ -68,11 +59,11 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="audit"
+        name="osint"
         options={{
-          title: 'Audit',
+          title: 'OSINT',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="shield-checkmark-outline" size={size} color={color} />
+            <Ionicons name="search-outline" size={size} color={color} />
           ),
         }}
       />
@@ -83,6 +74,12 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="settings-outline" size={size} color={color} />
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="audit"
+        options={{
+          href: null, // Hide from tab bar - accessible from Settings
         }}
       />
     </Tabs>

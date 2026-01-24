@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '@/constants';
 import type { Case } from '@/types';
 
-export type CaseStatus = 'new' | 'has_data' | 'active' | 'located';
+export type CaseStatus = 'open' | 'active' | 'closed' | 'void' | 'new' | 'has_data' | 'located';
 
 interface CaseCardProps {
   caseData: Case;
@@ -16,10 +16,14 @@ interface CaseCardProps {
 }
 
 const STATUS_CONFIG: Record<CaseStatus, { label: string; color: string; bg: string }> = {
-  new: { label: 'New', color: '#71717a', bg: '#71717a20' },
-  has_data: { label: 'Ready', color: '#dc2626', bg: '#dc262620' },
-  active: { label: 'Active', color: '#f59e0b', bg: '#f59e0b20' },
-  located: { label: 'Located', color: '#22c55e', bg: '#22c55e20' },
+  open: { label: 'OPEN', color: '#3b82f6', bg: '#3b82f620' },
+  active: { label: 'ACTIVE', color: '#f59e0b', bg: '#f59e0b20' },
+  closed: { label: 'CLOSED', color: '#22c55e', bg: '#22c55e20' },
+  void: { label: 'VOID', color: '#ef4444', bg: '#ef444420' },
+  // Legacy status mappings
+  new: { label: 'OPEN', color: '#3b82f6', bg: '#3b82f620' },
+  has_data: { label: 'ACTIVE', color: '#f59e0b', bg: '#f59e0b20' },
+  located: { label: 'CLOSED', color: '#22c55e', bg: '#22c55e20' },
 };
 
 const getFtaColor = (score: number): string => {

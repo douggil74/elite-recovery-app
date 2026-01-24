@@ -49,6 +49,7 @@ import {
   investigatePerson,
   type InvestigationResult,
 } from '@/lib/python-osint';
+import { buildTracePrompt } from '@/prompts';
 
 const DARK = {
   bg: '#000000',
@@ -82,6 +83,7 @@ interface UploadedFile {
   name: string;
   type: 'pdf' | 'image' | 'text' | 'doc';
   uploadedAt: Date;
+  extractedText?: string; // Store the raw text for follow-up questions
 }
 
 interface SocialProfile {
@@ -210,6 +212,7 @@ export default function CaseDetailScreen() {
   const [allPhotoIntel, setAllPhotoIntel] = useState<PhotoIntelligence[]>([]);  // Store ALL photo analysis results
   const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
   const [tacticalAdvice, setTacticalAdvice] = useState<string[]>([]);
+  const [selectedLinkNode, setSelectedLinkNode] = useState<string | null>(null); // For link analysis interactivity
   const [pythonBackendAvailable, setPythonBackendAvailable] = useState(false);
   const [imageSearchUrls, setImageSearchUrls] = useState<{
     google_lens?: string;
@@ -219,6 +222,7 @@ export default function CaseDetailScreen() {
   } | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<TextInput>(null);
 
   const latestReport = reports[0];
   const parsedData = latestReport?.parsedData;
@@ -578,16 +582,23 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
   };
 
   // Get the best available subject name (used throughout the component)
+  // IMPORTANT: primaryTarget is the LOCKED-IN fugitive we're searching for
+  // It doesn't change even when analyzing documents about associates (mom, employer, etc.)
   const getSubjectName = useCallback(() => {
-    // Priority: parsed report > case name > roster data > 'Subject'
-    if (parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown') {
-      return parsedData.subject.fullName;
+    // Priority: PRIMARY TARGET (locked) > case name > roster data > parsed report > 'Subject'
+    // We check primaryTarget FIRST because it represents the actual fugitive
+    if (caseData?.primaryTarget?.fullName) {
+      return caseData.primaryTarget.fullName;
     }
     if (caseData?.name) {
       return caseData.name;
     }
     if (caseData?.rosterData?.inmate?.name) {
       return caseData.rosterData.inmate.name;
+    }
+    // Only use parsed report if no primary target is set (first document being analyzed)
+    if (parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown') {
+      return parsedData.subject.fullName;
     }
     return 'Subject';
   }, [parsedData, caseData]);
@@ -850,30 +861,161 @@ ${result.explanation}`,
       }
 
       const docType: 'pdf' | 'doc' | 'text' = fileName.endsWith('.pdf') ? 'pdf' : fileName.endsWith('.doc') ? 'doc' : 'text';
-      setUploadedFiles(prev => [...prev, { id: uniqueId() + i, name: file.name, type: docType, uploadedAt: new Date() }]);
+      const fileId = uniqueId() + i;
+      setUploadedFiles(prev => [...prev, { id: fileId, name: file.name, type: docType, uploadedAt: new Date() }]);
       setChatMessages(prev => [...prev, { id: uniqueId(), role: 'user', content: `📄 ${file.name}`, timestamp: new Date() }]);
       scrollToBottom();
 
       try {
+        setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `🔄 Extracting text from ${file.name}...`, timestamp: new Date() }]);
+        scrollToBottom();
+
         const extractResult = await processUploadedFile(file);
+
+        if (extractResult.usedOcr) {
+          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `📷 PDF is scanned - using OCR to extract text...`, timestamp: new Date() }]);
+          scrollToBottom();
+        }
         if (!extractResult.success || !extractResult.text) {
-          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: extractResult.error || 'Could not read file.', timestamp: new Date() }]);
+          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `❌ ${extractResult.error || 'Could not read file.'}`, timestamp: new Date() }]);
           continue;
         }
+
+        // STORE the extracted text for follow-up questions
+        setUploadedFiles(prev => prev.map(f =>
+          f.id === fileId ? { ...f, extractedText: extractResult.text } : f
+        ));
+
+        setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `📝 Extracted ${extractResult.text.length.toLocaleString()} characters. Analyzing with AI...`, timestamp: new Date() }]);
+        scrollToBottom();
 
         // Analyze document text directly
         const result = await analyzeText(extractResult.text);
         if (result.success && result.data) {
+          const d = result.data;
+          const subject = d.subject || {};
+          const addresses = d.addresses || [];
+          const phones = d.phones || [];
+          const relatives = d.relatives || [];
+          const vehicles = d.vehicles || [];
+          const employment = d.employment || [];
+          const flags = d.flags || [];
+          const recommendations = d.recommendations || [];
+
+          // Build comprehensive intel report for chat
+          let intelReport = '';
+
+          // Check if this is an associate document (not the primary target)
+          if (result.isAssociateDocument) {
+            const primaryName = caseData?.primaryTarget?.fullName || 'the fugitive';
+            intelReport += `📋 **ASSOCIATE INTEL** (for locating ${primaryName})\n`;
+            intelReport += `👤 This document is about **${subject.fullName || 'Unknown'}**, who may have info on ${primaryName}.\n\n`;
+          } else {
+            intelReport += `📋 **INTEL REPORT EXTRACTED**\n\n`;
+          }
+
+          // Subject Profile
+          intelReport += `👤 **${result.isAssociateDocument ? 'ASSOCIATE' : 'SUBJECT'} PROFILE**\n`;
+          intelReport += `• **Name:** ${subject.fullName || 'Unknown'}\n`;
+          if (subject.dob) intelReport += `• **DOB:** ${subject.dob}\n`;
+          if (subject.partialSsn) intelReport += `• **SSN:** XXX-XX-${subject.partialSsn}\n`;
+          if (phones.length > 0) intelReport += `• **Phone:** ${phones[0].number}\n`;
+          if (subject.aliases?.length > 0) intelReport += `• **AKA:** ${subject.aliases.join(', ')}\n`;
+          intelReport += `\n`;
+
+          // Charges/Bond from recommendations
+          const bondInfo = recommendations.filter((r: string) => r.includes('Bond') || r.includes('Charge'));
+          if (bondInfo.length > 0) {
+            intelReport += `⚖️ **CHARGES & BOND**\n`;
+            bondInfo.forEach((info: string) => { intelReport += `• ${info}\n`; });
+            intelReport += `\n`;
+          }
+
+          // Top Addresses
+          if (addresses.length > 0) {
+            intelReport += `📍 **TOP LOCATIONS (${addresses.length} total)**\n`;
+            addresses.slice(0, 5).forEach((addr: any, i: number) => {
+              const confidence = addr.confidence ? ` (${Math.round(addr.confidence * 100)}%)` : '';
+              intelReport += `${i + 1}. ${addr.fullAddress || addr.address}${confidence}\n`;
+              if (addr.reasons?.[0]) intelReport += `   → ${addr.reasons[0]}\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // Contacts/References
+          if (relatives.length > 0) {
+            intelReport += `👥 **CONTACTS/REFERENCES (${relatives.length})**\n`;
+            relatives.slice(0, 5).forEach((rel: any) => {
+              intelReport += `• **${rel.name}** (${rel.relationship})`;
+              if (rel.phones?.[0]) intelReport += ` - ${rel.phones[0]}`;
+              intelReport += `\n`;
+              if (rel.currentAddress) intelReport += `  📍 ${rel.currentAddress}\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // Vehicles
+          if (vehicles.length > 0) {
+            intelReport += `🚗 **VEHICLES**\n`;
+            vehicles.forEach((v: any) => {
+              const desc = [v.year, v.make, v.model, v.color].filter(Boolean).join(' ') || v.description || 'Unknown';
+              intelReport += `• ${desc}`;
+              if (v.plate) intelReport += ` | **PLATE: ${v.plate}**`;
+              intelReport += `\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // Employment
+          if (employment.length > 0) {
+            intelReport += `💼 **EMPLOYMENT**\n`;
+            employment.forEach((emp: any) => {
+              intelReport += `• **${emp.employer}**`;
+              if (emp.isCurrent) intelReport += ` (CURRENT)`;
+              intelReport += `\n`;
+              if (emp.address) intelReport += `  📍 ${emp.address}\n`;
+              if (emp.phone) intelReport += `  📞 ${emp.phone}\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // All phones
+          if (phones.length > 1) {
+            intelReport += `📞 **ALL PHONE NUMBERS**\n`;
+            phones.forEach((p: any) => {
+              intelReport += `• ${p.number} (${p.type || 'unknown'})\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // Warnings/Flags
+          if (flags.length > 0) {
+            intelReport += `⚠️ **WARNINGS**\n`;
+            flags.forEach((f: any) => {
+              intelReport += `• ${f.message}\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // Key Intel
+          const keyIntel = recommendations.filter((r: string) => !r.includes('Bond') && !r.includes('Charge'));
+          if (keyIntel.length > 0) {
+            intelReport += `💡 **KEY INTEL**\n`;
+            keyIntel.forEach((note: string) => { intelReport += `• ${note}\n`; });
+          }
+
           setChatMessages(prev => [...prev, {
             id: uniqueId(),
             role: 'agent',
-            content: `✅ ${result.data.addresses?.length || 0} addresses, ${result.data.phones?.length || 0} phones. Top: ${result.data.addresses?.[0]?.fullAddress || 'unknown'}`,
+            content: intelReport,
             timestamp: new Date(),
           }]);
           await refresh();
+        } else {
+          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `⚠️ Analysis failed: ${result.error || 'Unknown error'}`, timestamp: new Date() }]);
         }
       } catch (err: any) {
-        setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `Error: ${err?.message || 'Unknown'}`, timestamp: new Date() }]);
+        setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `❌ Error processing file: ${err?.message || 'Unknown error'}`, timestamp: new Date() }]);
       }
     }
 
@@ -889,6 +1031,108 @@ ${result.explanation}`,
     setInputText('');
     setIsSending(true);
     scrollToBottom();
+
+    // INTUITIVE URL DETECTION - Auto-scrape arrest records, jail rosters, etc.
+    const urlMatch = userText.match(/https?:\/\/[^\s]+/i);
+    if (urlMatch) {
+      const url = urlMatch[0];
+      const isArrestUrl = url.includes('arrests.org') || url.includes('revize.com') ||
+                          url.includes('jail') || url.includes('inmate') || url.includes('booking');
+
+      if (isArrestUrl) {
+        setChatMessages(prev => [...prev, {
+          id: uniqueId(),
+          role: 'agent',
+          content: `🔍 Scraping arrest record from URL...`,
+          timestamp: new Date(),
+        }]);
+        scrollToBottom();
+
+        try {
+          const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
+          const res = await fetch(`${BACKEND_URL}/api/jail-roster`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data.inmate) {
+              const inmate = data.inmate;
+              const charges = data.charges || [];
+
+              // Build intel report from scraped data
+              let report = `📋 **ARREST RECORD EXTRACTED**\n\n`;
+              report += `👤 **SUBJECT**\n`;
+              report += `• **Name:** ${inmate.name || 'Unknown'}\n`;
+              if (inmate.age) report += `• **Age:** ${inmate.age}\n`;
+              if (inmate.dob) report += `• **DOB:** ${inmate.dob}\n`;
+              if (inmate.race) report += `• **Race:** ${inmate.race}\n`;
+              if (inmate.sex) report += `• **Sex:** ${inmate.sex}\n`;
+              if (inmate.height) report += `• **Height:** ${inmate.height}\n`;
+              if (inmate.weight) report += `• **Weight:** ${inmate.weight}\n`;
+              if (inmate.address) report += `• **Address:** ${inmate.address}\n`;
+
+              if (charges.length > 0) {
+                report += `\n⚖️ **CHARGES**\n`;
+                charges.forEach((c: any) => {
+                  report += `• ${c.charge || c.description || 'Unknown charge'}`;
+                  if (c.bond_amount) report += ` | Bond: ${c.bond_amount}`;
+                  report += `\n`;
+                });
+              }
+
+              if (data.photo_url) {
+                report += `\n📷 Mugshot available`;
+                // Set as subject photo
+                setSubjectPhoto(data.photo_url);
+                await AsyncStorage.setItem(`case_photo_${id}`, data.photo_url);
+              }
+
+              setChatMessages(prev => [...prev, {
+                id: uniqueId(),
+                role: 'agent',
+                content: report,
+                timestamp: new Date(),
+              }]);
+
+              // Also analyze the text data with Claude to add to case
+              const textToAnalyze = `Name: ${inmate.name}\nDOB: ${inmate.dob || 'Unknown'}\nAge: ${inmate.age || 'Unknown'}\nAddress: ${inmate.address || 'Unknown'}\nCharges: ${charges.map((c: any) => c.charge || c.description).join(', ')}`;
+              if (textToAnalyze.length > 50) {
+                await analyzeText(textToAnalyze);
+                await refresh();
+              }
+            } else {
+              setChatMessages(prev => [...prev, {
+                id: uniqueId(),
+                role: 'agent',
+                content: `⚠️ Could not extract data from that URL. The site may have anti-bot protection.`,
+                timestamp: new Date(),
+              }]);
+            }
+          } else {
+            setChatMessages(prev => [...prev, {
+              id: uniqueId(),
+              role: 'agent',
+              content: `⚠️ Scrape failed. Try the Import from Jail Roster feature instead.`,
+              timestamp: new Date(),
+            }]);
+          }
+        } catch (err: any) {
+          setChatMessages(prev => [...prev, {
+            id: uniqueId(),
+            role: 'agent',
+            content: `❌ Error: ${err?.message || 'Failed to scrape URL'}`,
+            timestamp: new Date(),
+          }]);
+        }
+
+        setIsSending(false);
+        scrollToBottom();
+        return;
+      }
+    }
 
     // Detect OSINT commands - be aggressive about detecting search intent
     const osintKeywords = [
@@ -1013,21 +1257,41 @@ ${result.explanation}`,
       }
       if (uploadedFiles.length > 0) {
         contextParts.push(`Files uploaded: ${uploadedFiles.map(f => f.name).join(', ')}`);
+        // Include extracted document text for follow-up questions
+        const docsWithText = uploadedFiles.filter(f => f.extractedText);
+        if (docsWithText.length > 0) {
+          contextParts.push(`\n--- DOCUMENT CONTENTS ---`);
+          docsWithText.forEach(f => {
+            // Include up to 15000 chars per doc for context (enough for detailed questions)
+            const textPreview = f.extractedText!.slice(0, 15000);
+            contextParts.push(`\n[${f.name}]:\n${textPreview}${f.extractedText!.length > 15000 ? '\n...(truncated)' : ''}`);
+          });
+          contextParts.push(`--- END DOCUMENTS ---\n`);
+        }
       }
       if (displayAddresses.length > 0) {
         contextParts.push(`Known addresses: ${displayAddresses.slice(0, 3).map(a => a.fullAddress).join('; ')}`);
       }
 
-      // Use backend proxy for chat
-      const systemPrompt = `You are an AI assistant for a bail recovery (fugitive recovery) investigation system. Help the agent locate the subject.
+      // Build TRACE detective partner prompt
+      const docsWithText = uploadedFiles.filter(f => f.extractedText);
+      const documentContents = docsWithText.length > 0
+        ? docsWithText.map(f => `[${f.name}]:\n${f.extractedText!.slice(0, 15000)}${f.extractedText!.length > 15000 ? '\n...(truncated)' : ''}`).join('\n\n')
+        : undefined;
 
-CURRENT CASE CONTEXT:
-${contextParts.join('\n')}
+      const photoIntelSummary = photoIntel
+        ? `${photoIntel.addresses.length} addresses, ${photoIntel.vehicles.length} vehicles${photoIntel.exifData?.gps ? ', GPS coordinates found' : ''}`
+        : undefined;
 
-Recent chat messages the user can see:
-${chatMessages.slice(-5).map(m => `${m.role}: ${m.content.slice(0, 200)}`).join('\n')}
-
-IMPORTANT: The user CAN see photos and analysis results in the chat. If they mention a photo, acknowledge that you can see the analysis results. Be helpful and specific to their case.`;
+      const systemPrompt = buildTracePrompt({
+        subjectName,
+        hasPhoto: !!subjectPhoto,
+        photoIntel: photoIntelSummary,
+        uploadedFiles: uploadedFiles.map(f => f.name),
+        knownAddresses: displayAddresses.slice(0, 5).map(a => a.fullAddress),
+        documentContents,
+        recentMessages: chatMessages.slice(-5).map(m => `${m.role}: ${m.content.slice(0, 200)}`).join('\n'),
+      });
 
       const response = await fetch('https://elite-recovery-osint.onrender.com/api/ai/chat', {
         method: 'POST',
@@ -1037,8 +1301,8 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userText },
           ],
-          model: 'gpt-4o-mini',
-          max_tokens: 1000,
+          model: 'gpt-4o',
+          max_tokens: 1500,
         }),
       });
 
@@ -1064,6 +1328,8 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
     }
     setIsSending(false);
     scrollToBottom();
+    // Refocus the chat input
+    setTimeout(() => chatInputRef.current?.focus(), 100);
   };
 
   const updateSocialStatus = (platform: string, status: 'found' | 'not_found') => {
@@ -1078,13 +1344,157 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
     try {
       // Open print dialog with report (no orchestrator needed)
       if (isWeb) {
+        // === SUBJECT PROFILE WITH PHOTO ===
+        const subject = parsedData?.subject;
+        const rosterInmate = caseData?.rosterData?.inmate;
+        // Calculate age from DOB
+        const calcAge = (dob: string | undefined) => {
+          if (!dob) return null;
+          const birthDate = new Date(dob);
+          if (isNaN(birthDate.getTime())) return null;
+          const today = new Date();
+          let age = today.getFullYear() - birthDate.getFullYear();
+          const m = today.getMonth() - birthDate.getMonth();
+          if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+          return age;
+        };
+        const subjectDob = subject?.dob || rosterInmate?.dob;
+        const subjectAge = rosterInmate?.age || calcAge(subjectDob);
+        const subjectHeight = rosterInmate?.height;
+        const subjectWeight = rosterInmate?.weight;
+        const subjectHtml = `
+          <h2>👤 Subject Profile</h2>
+          <div class="profile-card-with-photo">
+            ${subjectPhoto ? `<div class="subject-photo"><img src="${subjectPhoto}" alt="Subject" /></div>` : '<div class="subject-photo-placeholder">NO PHOTO</div>'}
+            <div class="profile-details">
+              <div class="profile-name">${subject?.fullName || caseData?.name || 'Unknown'}</div>
+              ${subject?.aliases?.length ? `<div class="profile-aliases">AKA: ${subject.aliases.join(', ')}</div>` : ''}
+              <div class="profile-grid-compact">
+                ${subjectDob ? `<div class="profile-item"><span class="label">DOB:</span> <span class="value">${subjectDob}</span></div>` : ''}
+                ${subjectAge ? `<div class="profile-item"><span class="label">Age:</span> <span class="value">${subjectAge}</span></div>` : ''}
+                ${subjectHeight ? `<div class="profile-item"><span class="label">Height:</span> <span class="value">${subjectHeight}</span></div>` : ''}
+                ${subjectWeight ? `<div class="profile-item"><span class="label">Weight:</span> <span class="value">${subjectWeight}</span></div>` : ''}
+                ${rosterInmate?.race ? `<div class="profile-item"><span class="label">Race:</span> <span class="value">${rosterInmate.race}</span></div>` : ''}
+                ${rosterInmate?.sex ? `<div class="profile-item"><span class="label">Sex:</span> <span class="value">${rosterInmate.sex}</span></div>` : ''}
+              </div>
+              <div class="profile-grid-compact" style="margin-top: 8px;">
+                ${subject?.partialSsn ? `<div class="profile-item"><span class="label">SSN:</span> <span class="value">XXX-XX-${subject.partialSsn}</span></div>` : ''}
+                ${subject?.personId ? `<div class="profile-item"><span class="label">ID:</span> <span class="value">${subject.personId}</span></div>` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+
+        // === CHARGES & BOND ===
+        const chargesAndBond = parsedData?.recommendations?.filter(r =>
+          r.toLowerCase().includes('bond') ||
+          r.toLowerCase().includes('charge') ||
+          r.toLowerCase().includes('case:')
+        ) || [];
+        const bondHtml = chargesAndBond.length > 0 ? `
+          <h2>⚖️ Charges & Bond</h2>
+          <div class="section">
+            ${chargesAndBond.map(item => `<div class="charge-item">${item}</div>`).join('')}
+          </div>
+        ` : '';
+
+        // === PHONES ===
+        const phones = parsedData?.phones || [];
+        const phonesHtml = phones.length > 0 ? `
+          <h2>📞 Phone Numbers</h2>
+          <div class="section">
+            ${phones.map(p => `
+              <div class="contact-item">
+                <span class="phone-number">${p.number}</span>
+                ${p.type ? `<span class="phone-type">${p.type}</span>` : ''}
+                ${p.carrier ? `<span class="phone-carrier">${p.carrier}</span>` : ''}
+                ${p.isActive ? `<span class="phone-active">Active</span>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        ` : '';
+
+        // === CONTACTS/RELATIVES ===
+        const relatives = parsedData?.relatives || [];
+        const contactsHtml = relatives.length > 0 ? `
+          <h2>👥 Contacts & References</h2>
+          <div class="section">
+            ${relatives.map(r => `
+              <div class="relative-card">
+                <div class="relative-name">${r.name} ${r.relationship ? `<span class="relationship">(${r.relationship})</span>` : ''}</div>
+                ${r.phones?.length ? `<div class="relative-phone">📱 ${r.phones.join(', ')}</div>` : ''}
+                ${r.currentAddress ? `<div class="relative-address">📍 ${r.currentAddress}</div>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        ` : '';
+
+        // === VEHICLES ===
+        const vehicles = parsedData?.vehicles || [];
+        const vehiclesHtml = vehicles.length > 0 ? `
+          <h2>🚗 Vehicles</h2>
+          <div class="section">
+            ${vehicles.map(v => `
+              <div class="vehicle-card">
+                <div class="vehicle-info">${[v.year, v.color, v.make, v.model].filter(Boolean).join(' ')}</div>
+                ${v.plate ? `<div class="vehicle-plate">Plate: <strong>${v.plate}</strong>${v.state ? ` (${v.state})` : ''}</div>` : ''}
+                ${v.vin ? `<div class="vehicle-vin">VIN: ${v.vin}</div>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        ` : '';
+
+        // === EMPLOYMENT ===
+        const employment = parsedData?.employment || [];
+        const employmentHtml = employment.length > 0 ? `
+          <h2>💼 Employment</h2>
+          <div class="section">
+            ${employment.map(e => `
+              <div class="employment-card">
+                <div class="employer-name">${e.employer || 'Unknown Employer'}${e.isCurrent ? ' <span class="current-tag">CURRENT</span>' : ''}</div>
+                ${e.title ? `<div class="job-title">${e.title}</div>` : ''}
+                ${e.address ? `<div class="employer-address">📍 ${e.address}</div>` : ''}
+                ${e.phone ? `<div class="employer-phone">📞 ${e.phone}</div>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        ` : '';
+
+        // === WARNINGS/FLAGS ===
+        const flags = parsedData?.flags || [];
+        const warningsHtml = flags.length > 0 ? `
+          <h2>⚠️ Warnings & Safety Notes</h2>
+          <div class="section">
+            ${flags.map(f => `
+              <div class="warning-item warning-${f.severity}">
+                <span class="warning-icon">${f.severity === 'high' ? '🔴' : f.severity === 'medium' ? '🟡' : '🔵'}</span>
+                ${f.message}
+              </div>
+            `).join('')}
+          </div>
+        ` : '';
+
+        // === CASE NOTES ===
+        const caseNotes = parsedData?.recommendations?.filter(r =>
+          !r.toLowerCase().includes('bond') &&
+          !r.toLowerCase().includes('charge') &&
+          !r.toLowerCase().includes('case:')
+        ) || [];
+        const notesHtml = caseNotes.length > 0 ? `
+          <h2>📝 Case Notes</h2>
+          <div class="section">
+            ${caseNotes.map(note => `<div class="case-note">${note}</div>`).join('')}
+          </div>
+        ` : '';
+
         const locationsHtml = displayAddresses.slice(0, 8).map((loc: any, i: number) => `
           <div class="location">
             <div>
               <strong style="color: #dc2626;">#${i + 1}</strong>
-              <span style="margin-left: 10px;">${loc.address || loc.fullAddress}</span>
+              <span style="margin-left: 10px;">${loc.fullAddress || loc.address}${loc.city && loc.state ? '' : ''}</span>
+              ${loc.reasons?.length ? `<div class="location-reasons">${loc.reasons.slice(0, 2).join(' • ')}</div>` : ''}
             </div>
-            ${loc.probability ? `<span class="probability">${loc.probability}% confidence</span>` : ''}
+            ${loc.confidence ? `<span class="probability">${Math.round(loc.confidence * 100)}% confidence</span>` : loc.probability ? `<span class="probability">${loc.probability}% confidence</span>` : ''}
           </div>
         `).join('') || '<p style="color: #9ca3af; font-style: italic;">No locations identified yet. Upload skip trace documents or photos containing addresses.</p>';
 
@@ -1241,6 +1651,54 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
                 .confidential { background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 15px 20px; margin-top: 30px; display: flex; align-items: center; gap: 12px; }
                 .confidential-icon { font-size: 20px; }
                 .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 11px; text-align: center; }
+                /* Profile styles with photo */
+                .profile-card-with-photo { display: flex; gap: 20px; background: #f9fafb; border-radius: 8px; padding: 15px 20px; border: 1px solid #e5e7eb; }
+                .subject-photo { flex-shrink: 0; }
+                .subject-photo img { width: 120px; height: 150px; object-fit: cover; border-radius: 6px; border: 2px solid #dc2626; }
+                .subject-photo-placeholder { width: 120px; height: 150px; background: #e5e7eb; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #6b7280; font-weight: 600; }
+                .profile-details { flex: 1; }
+                .profile-name { font-size: 20px; font-weight: 700; color: #18181b; margin-bottom: 4px; }
+                .profile-aliases { font-size: 12px; color: #6b7280; font-style: italic; margin-bottom: 10px; }
+                .profile-grid-compact { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+                .profile-card { background: #f9fafb; border-radius: 8px; padding: 15px 20px; border: 1px solid #e5e7eb; }
+                .profile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+                .profile-item { font-size: 13px; }
+                .profile-item .label { color: #6b7280; }
+                .profile-item .value { font-weight: 600; color: #18181b; margin-left: 6px; }
+                /* Charges/Bond styles */
+                .charge-item { padding: 10px 15px; margin: 6px 0; background: #fef2f2; border-left: 4px solid #dc2626; border-radius: 0 6px 6px 0; font-size: 13px; color: #991b1b; }
+                /* Phone styles */
+                .contact-item { padding: 10px 15px; margin: 6px 0; background: #f9fafb; border-radius: 6px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+                .phone-number { font-weight: 600; font-size: 14px; font-family: monospace; }
+                .phone-type, .phone-carrier { background: #e5e7eb; color: #374151; padding: 2px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase; }
+                .phone-active { background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+                /* Relative/Contact styles */
+                .relative-card { padding: 12px 15px; margin: 8px 0; background: #f9fafb; border-left: 4px solid #3b82f6; border-radius: 0 6px 6px 0; }
+                .relative-name { font-weight: 600; font-size: 14px; color: #18181b; }
+                .relationship { font-weight: 400; color: #6b7280; font-size: 12px; }
+                .relative-phone, .relative-address { font-size: 12px; color: #374151; margin-top: 4px; }
+                /* Vehicle styles */
+                .vehicle-card { padding: 12px 15px; margin: 8px 0; background: #f0f9ff; border-left: 4px solid #0ea5e9; border-radius: 0 6px 6px 0; }
+                .vehicle-info { font-weight: 600; font-size: 14px; color: #0c4a6e; }
+                .vehicle-plate { font-size: 13px; color: #18181b; margin-top: 4px; }
+                .vehicle-plate strong { font-family: monospace; background: #fef3c7; padding: 2px 6px; border-radius: 4px; }
+                .vehicle-vin { font-size: 11px; color: #6b7280; font-family: monospace; }
+                /* Employment styles */
+                .employment-card { padding: 12px 15px; margin: 8px 0; background: #f0fdf4; border-left: 4px solid #22c55e; border-radius: 0 6px 6px 0; }
+                .employer-name { font-weight: 600; font-size: 14px; color: #166534; }
+                .current-tag { background: #22c55e; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px; }
+                .job-title { font-size: 12px; color: #374151; font-style: italic; }
+                .employer-address, .employer-phone { font-size: 12px; color: #374151; margin-top: 4px; }
+                /* Warning styles */
+                .warning-item { padding: 12px 15px; margin: 8px 0; border-radius: 6px; display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
+                .warning-high { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+                .warning-medium { background: #fef3c7; border: 1px solid #fcd34d; color: #92400e; }
+                .warning-low { background: #f0f9ff; border: 1px solid #bae6fd; color: #0c4a6e; }
+                .warning-icon { font-size: 16px; }
+                /* Case notes styles */
+                .case-note { padding: 10px 15px; margin: 6px 0; background: #f9fafb; border-radius: 6px; font-size: 13px; color: #374151; }
+                /* Location reasons */
+                .location-reasons { font-size: 11px; color: #6b7280; margin-top: 4px; }
                 @media print {
                   body { margin: 0; }
                   .header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -1255,22 +1713,18 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
               </div>
 
               <div class="content">
-                <div class="meta-grid">
+                <div class="meta-grid" style="grid-template-columns: repeat(3, 1fr);">
                   <div class="meta-card">
                     <div class="value">${uploadedFiles.length}</div>
                     <div class="label">Files Analyzed</div>
-                  </div>
-                  <div class="meta-card">
-                    <div class="value">${photosWithData}/${totalPhotos}</div>
-                    <div class="label">Photos w/ Intel</div>
                   </div>
                   <div class="meta-card">
                     <div class="value">${displayAddresses.length}</div>
                     <div class="label">Locations</div>
                   </div>
                   <div class="meta-card">
-                    <div class="value">${socialFound}/${socialTotal}</div>
-                    <div class="label">Profiles Found</div>
+                    <div class="value">${(parsedData?.relatives?.length || 0) + (parsedData?.phones?.length || 0)}</div>
+                    <div class="label">Contacts</div>
                   </div>
                 </div>
 
@@ -1283,13 +1737,26 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
                   </div>
                 ` : ''}
 
+                ${subjectHtml}
+
+                ${warningsHtml}
+
+                ${bondHtml}
+
                 <h2>📍 Priority Locations</h2>
                 <div class="section">${locationsHtml}</div>
 
-                <h2>📱 Digital Footprint</h2>
-                <div class="section">${socialsHtml}</div>
+                ${phonesHtml}
+
+                ${contactsHtml}
+
+                ${vehiclesHtml}
+
+                ${employmentHtml}
 
                 ${photoIntelHtml}
+
+                ${notesHtml}
 
                 <div class="confidential">
                   <span class="confidential-icon">⚠️</span>
@@ -1376,7 +1843,7 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
           {subjectPhoto ? <Image source={{ uri: subjectPhoto }} style={styles.photoImg} /> : <Ionicons name="person" size={20} color={DARK.textMuted} />}
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.caseName} numberOfLines={1}>{(parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown') ? parsedData.subject.fullName : (caseData.name || 'Unnamed Subject')}</Text>
+          <Text style={styles.caseName} numberOfLines={1}>{getSubjectName()}</Text>
           <Text style={styles.caseMeta}>{displayAddresses.length} locations • {phones.length} phones • {uploadedFiles.length} files</Text>
         </View>
         <TouchableOpacity onPress={generateFullReport} disabled={isGeneratingReport} style={[styles.reportBtn, isGeneratingReport && { opacity: 0.5 }]}>
@@ -1403,7 +1870,10 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
           isMobile && { height: 300 }
         ]}>
           <View style={styles.colTitleRow}>
-            <Text style={styles.colTitleText}>💬 CHAT</Text>
+            <View>
+              <Text style={styles.colTitleText}>🔴 TRACE</Text>
+              <Text style={styles.colSubtitle}>Tactical Recovery Analysis Engine</Text>
+            </View>
             <TouchableOpacity
               onPress={() => {
                 const text = chatMessages.map(m => `[${m.role}] ${m.content}`).join('\n\n');
@@ -1432,12 +1902,16 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
               <Ionicons name="attach" size={20} color={DARK.textSecondary} />
             </TouchableOpacity>
             <TextInput
+              ref={chatInputRef}
               style={styles.input}
               placeholder="Message..."
               placeholderTextColor={DARK.textMuted}
               value={inputText}
               onChangeText={setInputText}
               onSubmitEditing={sendMessage}
+              blurOnSubmit={false}
+              returnKeyType="send"
+              autoFocus={true}
             />
             <TouchableOpacity onPress={sendMessage} disabled={!inputText.trim()} style={[styles.sendBtn, !inputText.trim() && { opacity: 0.4 }]}>
               <Ionicons name="send" size={16} color="#fff" />
@@ -1452,49 +1926,190 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
           isWeb && !isMobile && { flex: 1.5 },
           isMobile && { height: 400 }
         ]}>
-          <Text style={styles.colTitle}>🎯 INTEL</Text>
+          <Text style={styles.colTitle}>🎯 CASE INTELLIGENCE</Text>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8 }}>
-            {/* Subject Info */}
-            {parsedData?.subject && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>👤 SUBJECT</Text>
-                <View style={styles.intelCard}>
-                  <Text style={styles.intelName}>{(parsedData.subject.fullName && parsedData.subject.fullName !== 'Unknown') ? parsedData.subject.fullName : caseData?.name}</Text>
-                  {parsedData.subject.dateOfBirth && <Text style={styles.intelDetail}>DOB: {parsedData.subject.dateOfBirth}</Text>}
-                  {parsedData.subject.ssn && <Text style={styles.intelDetail}>SSN: ***-**-{parsedData.subject.ssn.slice(-4)}</Text>}
-                </View>
+            {/* PRIMARY TARGET Info */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>🎯 PRIMARY TARGET</Text>
+              <View style={styles.intelCard}>
+                <Text style={styles.intelName}>{getSubjectName()}</Text>
+                {parsedData?.subject?.dateOfBirth && <Text style={styles.intelDetail}>DOB: {parsedData.subject.dateOfBirth}</Text>}
+                {parsedData?.subject?.ssn && <Text style={styles.intelDetail}>SSN: ***-**-{parsedData.subject.ssn.slice(-4)}</Text>}
+                {parsedData?.subject?.aliases?.length > 0 && <Text style={styles.intelDetail}>AKA: {parsedData.subject.aliases.join(', ')}</Text>}
               </View>
-            )}
+            </View>
 
             {/* Locations with Map */}
             {displayAddresses.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>📍 LOCATIONS ({displayAddresses.length})</Text>
-                {/* Main Map */}
-                <TouchableOpacity onPress={() => openMaps(displayAddresses[0].fullAddress)} style={styles.mainMap}>
+                {/* Compact Map */}
+                <TouchableOpacity onPress={() => openMaps(displayAddresses[0].fullAddress)} style={styles.compactMap}>
                   {isWeb ? (
                     <iframe
-                      src={`https://www.google.com/maps?q=${encodeURIComponent(displayAddresses[0].fullAddress)}&output=embed&z=16`}
-                      style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8 }}
+                      src={`https://www.google.com/maps?q=${encodeURIComponent(displayAddresses[0].fullAddress)}&output=embed&z=14`}
+                      style={{ width: '100%', height: '100%', border: 'none', borderRadius: 6 }}
                       loading="lazy"
                     />
                   ) : (
-                    <View style={styles.mapPlaceholder}><Ionicons name="map" size={40} color={DARK.primary} /></View>
+                    <View style={styles.mapPlaceholder}><Ionicons name="map" size={24} color={DARK.primary} /></View>
                   )}
                 </TouchableOpacity>
-                <Text style={styles.topAddr}>{displayAddresses[0].fullAddress}</Text>
-                {displayAddresses[0].probability && <Text style={styles.topProb}>{displayAddresses[0].probability}% confidence</Text>}
 
-                {/* Other locations */}
-                {displayAddresses.slice(1, 6).map((addr: any, idx: number) => (
-                  <TouchableOpacity key={idx} style={styles.locRow} onPress={() => openMaps(addr.fullAddress)}>
-                    <View style={styles.rankBadge}><Text style={styles.rankText}>{idx + 2}</Text></View>
-                    <Text style={styles.locAddr} numberOfLines={1}>{addr.fullAddress}</Text>
-                    {addr.probability && <Text style={styles.locProb}>{addr.probability}%</Text>}
+                {/* All locations with descriptions */}
+                {displayAddresses.slice(0, 8).map((addr: any, idx: number) => (
+                  <TouchableOpacity key={idx} style={styles.locRowEnhanced} onPress={() => openMaps(addr.fullAddress || addr.address)}>
+                    <View style={styles.rankBadge}><Text style={styles.rankText}>{idx + 1}</Text></View>
+                    <View style={styles.locDetails}>
+                      <Text style={styles.locAddr} numberOfLines={1}>{addr.fullAddress || addr.address}</Text>
+                      <Text style={styles.locSource}>
+                        {addr.reasons?.[0] || addr.type || (addr.isCurrent ? '📍 Current residence' : 'From case documents')}
+                      </Text>
+                    </View>
+                    {(addr.confidence || addr.probability) && (
+                      <Text style={styles.locProb}>{addr.probability || Math.round((addr.confidence || 0) * 100)}%</Text>
+                    )}
                   </TouchableOpacity>
                 ))}
               </View>
             )}
+
+            {/* LINK ANALYSIS / RELATIONSHIP MAP */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>🔗 LINK ANALYSIS</Text>
+              <View style={styles.linkMap}>
+                {/* PRIMARY TARGET in center - NEVER changes */}
+                <View style={styles.linkCenter}>
+                  {subjectPhoto ? (
+                    <Image source={{ uri: subjectPhoto }} style={styles.linkPhoto} />
+                  ) : (
+                    <View style={styles.linkPhotoPlaceholder}>
+                      <Ionicons name="person" size={24} color={DARK.textMuted} />
+                    </View>
+                  )}
+                  <Text style={styles.linkName} numberOfLines={1}>
+                    {getSubjectName()}
+                  </Text>
+                  <Text style={styles.linkTargetBadge}>PRIMARY TARGET</Text>
+                </View>
+
+                {/* Connection lines container */}
+                <View style={styles.linkConnections}>
+                  {/* Relatives/Associates */}
+                  {(parsedData?.relatives || []).slice(0, 4).map((rel: any, idx: number) => {
+                    const nodeId = `rel-${idx}`;
+                    const isSelected = selectedLinkNode === nodeId;
+                    return (
+                      <TouchableOpacity
+                        key={nodeId}
+                        style={styles.linkNode}
+                        onPress={() => {
+                          if (isSelected && rel.phones?.[0]) {
+                            Linking.openURL(`tel:${rel.phones[0]}`);
+                          } else {
+                            setSelectedLinkNode(isSelected ? null : nodeId);
+                          }
+                        }}
+                      >
+                        <View style={styles.linkLine} />
+                        <View style={[styles.linkBubble, { backgroundColor: '#3b82f620', borderColor: '#3b82f6' }, isSelected && styles.linkBubbleSelected]}>
+                          <Ionicons name="people" size={isSelected ? 16 : 12} color="#3b82f6" />
+                          <Text style={[styles.linkLabel, isSelected && styles.linkLabelSelected]} numberOfLines={isSelected ? 3 : 1}>{rel.name}</Text>
+                          <Text style={styles.linkType}>{rel.relationship || 'associate'}</Text>
+                          {rel.phones?.[0] && <Text style={styles.linkPhone}>{rel.phones[0]}</Text>}
+                          {isSelected && rel.currentAddress && <Text style={styles.linkAddress}>{rel.currentAddress}</Text>}
+                          {isSelected && <Text style={styles.linkTapHint}>Tap to call</Text>}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+
+                  {/* Employment */}
+                  {(parsedData?.employment || []).slice(0, 2).map((emp: any, idx: number) => {
+                    const nodeId = `emp-${idx}`;
+                    const isSelected = selectedLinkNode === nodeId;
+                    return (
+                      <TouchableOpacity
+                        key={nodeId}
+                        style={styles.linkNode}
+                        onPress={() => {
+                          if (isSelected && emp.address) {
+                            openMaps(emp.address);
+                          } else {
+                            setSelectedLinkNode(isSelected ? null : nodeId);
+                          }
+                        }}
+                      >
+                        <View style={styles.linkLine} />
+                        <View style={[styles.linkBubble, { backgroundColor: '#22c55e20', borderColor: '#22c55e' }, isSelected && styles.linkBubbleSelected]}>
+                          <Ionicons name="briefcase" size={isSelected ? 16 : 12} color="#22c55e" />
+                          <Text style={[styles.linkLabel, isSelected && styles.linkLabelSelected]} numberOfLines={isSelected ? 3 : 1}>{emp.employer}</Text>
+                          <Text style={styles.linkType}>{emp.title || 'employer'}</Text>
+                          {isSelected && emp.address && <Text style={styles.linkAddress}>{emp.address}</Text>}
+                          {isSelected && emp.phone && <Text style={styles.linkPhone}>{emp.phone}</Text>}
+                          {isSelected && <Text style={styles.linkTapHint}>Tap for maps</Text>}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+
+                  {/* Vehicles */}
+                  {(parsedData?.vehicles || []).slice(0, 2).map((v: any, idx: number) => {
+                    const nodeId = `veh-${idx}`;
+                    const isSelected = selectedLinkNode === nodeId;
+                    return (
+                      <TouchableOpacity
+                        key={nodeId}
+                        style={styles.linkNode}
+                        onPress={() => setSelectedLinkNode(isSelected ? null : nodeId)}
+                      >
+                        <View style={styles.linkLine} />
+                        <View style={[styles.linkBubble, { backgroundColor: '#f59e0b20', borderColor: '#f59e0b' }, isSelected && styles.linkBubbleSelected]}>
+                          <Ionicons name="car" size={isSelected ? 16 : 12} color="#f59e0b" />
+                          <Text style={[styles.linkLabel, isSelected && styles.linkLabelSelected]} numberOfLines={isSelected ? 3 : 1}>{v.year} {v.make} {v.model}</Text>
+                          {v.plate && <Text style={[styles.linkType, { fontWeight: '700' }]}>{v.plate}</Text>}
+                          {isSelected && v.color && <Text style={styles.linkPhone}>Color: {v.color}</Text>}
+                          {isSelected && v.vin && <Text style={styles.linkPhone}>VIN: {v.vin}</Text>}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+
+                  {/* Top addresses */}
+                  {displayAddresses.slice(0, 3).map((addr: any, idx: number) => {
+                    const nodeId = `addr-${idx}`;
+                    const isSelected = selectedLinkNode === nodeId;
+                    return (
+                      <TouchableOpacity
+                        key={nodeId}
+                        style={styles.linkNode}
+                        onPress={() => {
+                          if (isSelected) {
+                            openMaps(addr.fullAddress || addr.address);
+                          } else {
+                            setSelectedLinkNode(isSelected ? null : nodeId);
+                          }
+                        }}
+                      >
+                        <View style={styles.linkLine} />
+                        <View style={[styles.linkBubble, { backgroundColor: '#dc262620', borderColor: '#dc2626' }, isSelected && styles.linkBubbleSelected]}>
+                          <Ionicons name="location" size={isSelected ? 16 : 12} color="#dc2626" />
+                          <Text style={[styles.linkLabel, isSelected && styles.linkLabelSelected]} numberOfLines={isSelected ? 3 : 1}>
+                            {isSelected ? (addr.fullAddress || addr.address) : (addr.city || addr.fullAddress?.split(',')[0] || 'Location')}
+                          </Text>
+                          <Text style={styles.linkType}>{addr.reasons?.[0]?.slice(0, 25) || addr.type || 'address'}</Text>
+                          {isSelected && <Text style={styles.linkTapHint}>Tap for maps</Text>}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {parsedData?.relatives?.length === 0 && parsedData?.employment?.length === 0 && displayAddresses.length === 0 && (
+                  <Text style={styles.linkEmpty}>Upload documents to build relationship map</Text>
+                )}
+              </View>
+            </View>
 
             {/* Phones */}
             {phones.length > 0 && (
@@ -1581,13 +2196,13 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
           isWeb && !isMobile && { flex: 1 },
           isMobile && { flex: 1 }
         ]}>
-          <Text style={styles.colTitle}>🔍 SEARCH</Text>
+          <Text style={styles.colTitle}>🔍 OSINT TOOLS</Text>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8 }}>
-            {/* Subject Photo */}
+            {/* Subject Photo - PRIMARY TARGET */}
             {subjectPhoto && (
               <View style={styles.subjectSection}>
                 <Image source={{ uri: subjectPhoto }} style={styles.subjectImg} />
-                <Text style={styles.subjectName}>{parsedData?.subject?.fullName || caseData.name}</Text>
+                <Text style={styles.subjectName}>{getSubjectName()}</Text>
                 {facialFeatures && (
                   <Text style={styles.faceReadyBadge}>✓ Face ready for matching</Text>
                 )}
@@ -1684,14 +2299,49 @@ IMPORTANT: The user CAN see photos and analysis results in the chat. If they men
               </>
             )}
 
-            {/* Network */}
+            {/* Network - Associates with clickable social search */}
             {relatives.length > 0 && (
               <>
-                <Text style={styles.osintSectionTitle}>Network</Text>
-                {relatives.slice(0, 3).map((r: any, idx: number) => (
-                  <View key={idx} style={styles.relRow}>
-                    <Text style={styles.relName}>{r.name}</Text>
-                    <Text style={styles.relRel}>{r.relationship}</Text>
+                <Text style={styles.osintSectionTitle}>Network ({relatives.length})</Text>
+                {relatives.slice(0, 5).map((r: any, idx: number) => (
+                  <View key={idx} style={styles.networkCard}>
+                    <View style={styles.networkHeader}>
+                      <Ionicons name="person" size={14} color={DARK.textSecondary} />
+                      <Text style={styles.relName}>{r.name}</Text>
+                      <Text style={styles.relRel}>{r.relationship}</Text>
+                    </View>
+                    {/* Social search links for this associate */}
+                    <View style={styles.networkSocials}>
+                      <TouchableOpacity
+                        style={styles.networkSocialBtn}
+                        onPress={() => openUrl(`https://www.facebook.com/search/people/?q=${encodeURIComponent(r.name)}`)}
+                      >
+                        <Ionicons name="logo-facebook" size={14} color="#1877f2" />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.networkSocialBtn}
+                        onPress={() => openUrl(`https://www.instagram.com/${r.name.toLowerCase().replace(/\s+/g, '')}`)}
+                      >
+                        <Ionicons name="logo-instagram" size={14} color="#e4405f" />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.networkSocialBtn}
+                        onPress={() => openUrl(`https://www.tiktok.com/@${r.name.toLowerCase().replace(/\s+/g, '')}`)}
+                      >
+                        <Ionicons name="logo-tiktok" size={14} color={DARK.text} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.networkSocialBtn}
+                        onPress={() => openUrl(`https://www.truepeoplesearch.com/results?name=${encodeURIComponent(r.name)}`)}
+                      >
+                        <Ionicons name="search" size={14} color={DARK.primary} />
+                      </TouchableOpacity>
+                    </View>
+                    {r.phones?.[0] && (
+                      <TouchableOpacity onPress={() => Linking.openURL(`tel:${r.phones[0]}`)}>
+                        <Text style={styles.networkPhone}>{r.phones[0]}</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 ))}
               </>
@@ -1730,7 +2380,8 @@ const styles = StyleSheet.create({
   col: { borderRightWidth: 1, borderRightColor: DARK.border },
   colTitle: { fontSize: 10, fontWeight: '700', color: DARK.textMuted, letterSpacing: 1, padding: 8, backgroundColor: DARK.surface, borderBottomWidth: 1, borderBottomColor: DARK.border },
   colTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: DARK.surface, borderBottomWidth: 1, borderBottomColor: DARK.border, paddingHorizontal: 8, paddingVertical: 6 },
-  colTitleText: { fontSize: 10, fontWeight: '700', color: DARK.textMuted, letterSpacing: 1 },
+  colTitleText: { fontSize: 11, fontWeight: '800', color: DARK.primary, letterSpacing: 1 },
+  colSubtitle: { fontSize: 8, color: DARK.textMuted, letterSpacing: 0.5, marginTop: 1 },
   copyBtn: { padding: 6 },
 
   // Chat Column
@@ -1748,14 +2399,38 @@ const styles = StyleSheet.create({
   // Map Column
   mapCol: { backgroundColor: DARK.surface },
   mainMap: { width: '100%', height: 180, borderRadius: 8, overflow: 'hidden', backgroundColor: DARK.surfaceHover, marginBottom: 8 },
+  compactMap: { width: '100%', height: 120, borderRadius: 6, overflow: 'hidden', backgroundColor: DARK.surfaceHover, marginBottom: 10 },
   mapPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   topAddr: { fontSize: 15, fontWeight: '600', color: DARK.text },
   topProb: { fontSize: 14, color: DARK.success, fontWeight: '600', marginBottom: 12 },
   locRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: DARK.border, gap: 8 },
-  rankBadge: { width: 22, height: 22, borderRadius: 11, backgroundColor: DARK.surfaceHover, alignItems: 'center', justifyContent: 'center' },
-  rankText: { fontSize: 12, fontWeight: '700', color: DARK.text },
-  locAddr: { flex: 1, fontSize: 13, color: DARK.text },
-  locProb: { fontSize: 12, color: DARK.success },
+  locRowEnhanced: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: DARK.border, gap: 8, backgroundColor: DARK.bg, borderRadius: 6, marginBottom: 4 },
+  locDetails: { flex: 1 },
+  locSource: { fontSize: 11, color: DARK.textMuted, marginTop: 2 },
+  rankBadge: { width: 22, height: 22, borderRadius: 11, backgroundColor: DARK.primary, alignItems: 'center', justifyContent: 'center' },
+  rankText: { fontSize: 11, fontWeight: '700', color: '#fff' },
+  locAddr: { fontSize: 13, color: DARK.text, fontWeight: '500' },
+  locProb: { fontSize: 12, color: DARK.success, fontWeight: '600' },
+
+  // Link Analysis / Relationship Map
+  linkMap: { backgroundColor: DARK.bg, borderRadius: 10, padding: 16, borderWidth: 1, borderColor: DARK.border, minHeight: 200 },
+  linkCenter: { alignItems: 'center', marginBottom: 16 },
+  linkPhoto: { width: 60, height: 72, borderRadius: 6, borderWidth: 2, borderColor: DARK.primary },
+  linkPhotoPlaceholder: { width: 60, height: 72, borderRadius: 6, backgroundColor: DARK.surfaceHover, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: DARK.border },
+  linkName: { fontSize: 14, fontWeight: '700', color: DARK.text, marginTop: 6, maxWidth: 120, textAlign: 'center' },
+  linkTargetBadge: { fontSize: 9, fontWeight: '700', color: DARK.primary, letterSpacing: 1, marginTop: 2 },
+  linkConnections: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 },
+  linkNode: { alignItems: 'center', marginBottom: 8 },
+  linkLine: { width: 2, height: 12, backgroundColor: DARK.border, marginBottom: 4 },
+  linkBubble: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, alignItems: 'center', minWidth: 80, maxWidth: 110 },
+  linkLabel: { fontSize: 11, fontWeight: '600', color: DARK.text, marginTop: 4, textAlign: 'center' },
+  linkType: { fontSize: 9, color: DARK.textMuted, textTransform: 'uppercase', marginTop: 2 },
+  linkPhone: { fontSize: 10, color: DARK.textSecondary, marginTop: 2 },
+  linkEmpty: { fontSize: 12, color: DARK.textMuted, textAlign: 'center', fontStyle: 'italic', paddingVertical: 20 },
+  linkBubbleSelected: { transform: [{ scale: 1.15 }], maxWidth: 150, minWidth: 120, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 6, elevation: 8, borderWidth: 2 },
+  linkLabelSelected: { fontSize: 12, fontWeight: '700' },
+  linkAddress: { fontSize: 9, color: DARK.textSecondary, marginTop: 4, textAlign: 'center' },
+  linkTapHint: { fontSize: 8, color: DARK.primary, marginTop: 4, fontWeight: '600', textTransform: 'uppercase' },
   section: { marginTop: 16 },
   sectionTitle: { fontSize: 12, fontWeight: '600', color: DARK.textMuted, marginBottom: 8 },
   phoneRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
@@ -1823,8 +2498,13 @@ const styles = StyleSheet.create({
   notFoundBtn: { backgroundColor: DARK.danger + '30' },
   socialBtnText: { fontSize: 12, fontWeight: '600', color: DARK.text },
   relRow: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: DARK.border },
-  relName: { fontSize: 14, color: DARK.text },
-  relRel: { fontSize: 12, color: DARK.textMuted },
+  relName: { fontSize: 13, color: DARK.text, flex: 1 },
+  relRel: { fontSize: 11, color: DARK.textMuted, marginLeft: 4 },
+  networkCard: { backgroundColor: DARK.surfaceHover, borderRadius: 8, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: DARK.border },
+  networkHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  networkSocials: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  networkSocialBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: DARK.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: DARK.border },
+  networkPhone: { fontSize: 12, color: DARK.success, marginTop: 6 },
   // Simplified styles
   faceReadyBadge: { fontSize: 12, color: DARK.success, backgroundColor: DARK.success + '20', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
   quickLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },

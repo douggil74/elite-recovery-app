@@ -92,6 +92,84 @@ interface SearchResult {
   source?: string;
 }
 
+// Name parsing utilities for proper Facebook search
+interface ParsedName {
+  first: string;
+  middle: string;
+  last: string;
+  suffix: string;
+  full: string;
+}
+
+const SUFFIXES = ['jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv', 'v', '2nd', '3rd', '4th'];
+
+function parseName(fullName: string): ParsedName {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+
+  if (parts.length === 0) {
+    return { first: '', middle: '', last: '', suffix: '', full: fullName };
+  }
+
+  // Check if last part is a suffix
+  let suffix = '';
+  if (parts.length > 1 && SUFFIXES.includes(parts[parts.length - 1].toLowerCase())) {
+    suffix = parts.pop()!;
+  }
+
+  // Now parse first, middle, last
+  let first = '';
+  let middle = '';
+  let last = '';
+
+  if (parts.length === 1) {
+    first = parts[0];
+  } else if (parts.length === 2) {
+    first = parts[0];
+    last = parts[1];
+  } else {
+    first = parts[0];
+    last = parts[parts.length - 1];
+    middle = parts.slice(1, -1).join(' ');
+  }
+
+  return { first, middle, last, suffix, full: fullName };
+}
+
+function generateFacebookVariants(name: ParsedName): { label: string; query: string }[] {
+  const variants: { label: string; query: string }[] = [];
+  const { first, middle, last, suffix } = name;
+
+  if (!first) return variants;
+
+  // Standard format: First Last (always first)
+  if (last) {
+    const base = `${first} ${last}`;
+    variants.push({ label: 'First Last', query: base });
+
+    // With suffix if present
+    if (suffix) {
+      variants.push({ label: 'First Last Suffix', query: `${base} ${suffix}` });
+    }
+
+    // With middle name
+    if (middle) {
+      variants.push({ label: 'First Middle Last', query: `${first} ${middle} ${last}` });
+      if (suffix) {
+        variants.push({ label: 'Full Name + Suffix', query: `${first} ${middle} ${last} ${suffix}` });
+      }
+    }
+  } else {
+    // Just first name
+    variants.push({ label: 'Name', query: first });
+  }
+
+  return variants;
+}
+
+function buildFacebookSearchUrl(query: string): string {
+  return `https://www.facebook.com/search/people/?q=${encodeURIComponent(query)}`;
+}
+
 export default function OSINTScreen() {
   const router = useRouter();
   const { createCase } = useCases();
@@ -576,6 +654,32 @@ export default function OSINTScreen() {
               </View>
             )}
 
+            {/* Facebook Name Variants - only show for name searches */}
+            {searchType === 'name' && searchQuery.trim() && (
+              <View style={styles.fbVariantsSection}>
+                <View style={styles.fbVariantsHeader}>
+                  <Ionicons name="logo-facebook" size={18} color="#1877f2" />
+                  <Text style={styles.fbVariantsTitle}>FACEBOOK SEARCH VARIANTS</Text>
+                </View>
+                <Text style={styles.fbVariantsHint}>
+                  Facebook requires "First Last Jr" format. Try these variants:
+                </Text>
+                <View style={styles.fbVariantsGrid}>
+                  {generateFacebookVariants(parseName(searchQuery)).map((variant, idx) => (
+                    <TouchableOpacity
+                      key={idx}
+                      style={styles.fbVariantBtn}
+                      onPress={() => openUrl(buildFacebookSearchUrl(variant.query))}
+                    >
+                      <Text style={styles.fbVariantLabel}>{variant.label}</Text>
+                      <Text style={styles.fbVariantQuery}>{variant.query}</Text>
+                      <Ionicons name="open-outline" size={14} color="#1877f2" />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+
             {/* Results List */}
             <View style={styles.resultsList}>
               <Text style={styles.resultsTitle}>
@@ -640,6 +744,34 @@ export default function OSINTScreen() {
                   </>
                 )}
               </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Facebook Quick Search - show when name is entered and not searching */}
+        {!hasResults && !isSearching && searchType === 'name' && searchQuery.trim().length > 2 && (
+          <View style={[styles.quickActions, { marginBottom: 16 }]}>
+            <View style={styles.fbVariantsSection}>
+              <View style={styles.fbVariantsHeader}>
+                <Ionicons name="logo-facebook" size={18} color="#1877f2" />
+                <Text style={styles.fbVariantsTitle}>QUICK FACEBOOK SEARCH</Text>
+              </View>
+              <Text style={styles.fbVariantsHint}>
+                Facebook requires "First Last Jr" format. Tap a variant to search:
+              </Text>
+              <View style={styles.fbVariantsGrid}>
+                {generateFacebookVariants(parseName(searchQuery)).map((variant, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={styles.fbVariantBtn}
+                    onPress={() => openUrl(buildFacebookSearchUrl(variant.query))}
+                  >
+                    <Text style={styles.fbVariantLabel}>{variant.label}</Text>
+                    <Text style={styles.fbVariantQuery}>{variant.query}</Text>
+                    <Ionicons name="open-outline" size={14} color="#1877f2" />
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
           </View>
         )}
@@ -925,6 +1057,55 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: THEME.success,
     fontWeight: '600',
+  },
+  fbVariantsSection: {
+    backgroundColor: THEME.surface,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1877f240',
+  },
+  fbVariantsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  fbVariantsTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1877f2',
+    letterSpacing: 1,
+  },
+  fbVariantsHint: {
+    fontSize: 11,
+    color: THEME.textSecondary,
+    marginBottom: 12,
+  },
+  fbVariantsGrid: {
+    gap: 8,
+  },
+  fbVariantBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: THEME.bg,
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    gap: 10,
+  },
+  fbVariantLabel: {
+    fontSize: 11,
+    color: THEME.textMuted,
+    width: 90,
+  },
+  fbVariantQuery: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: THEME.text,
   },
   resultsList: {
     marginBottom: 16,

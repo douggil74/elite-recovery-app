@@ -42,6 +42,12 @@ export default function SettingsScreen() {
   const [newPasscode, setNewPasscode] = useState('');
   const [showPasscodeSetup, setShowPasscodeSetup] = useState(false);
 
+  // API Key state
+  const [anthropicKey, setAnthropicKey] = useState('');
+  const [openaiKey, setOpenaiKey] = useState('');
+  const [showApiKeys, setShowApiKeys] = useState(false);
+  const [savingKeys, setSavingKeys] = useState(false);
+
   // AI Backend status
   const [aiStatus, setAiStatus] = useState<{
     available: boolean | null;
@@ -70,7 +76,14 @@ export default function SettingsScreen() {
     loadStorageUsage();
     testDatabaseConnections();
     checkAIStatus();
-  }, []);
+    // Load saved API keys
+    if (settings.anthropicApiKey) {
+      setAnthropicKey(settings.anthropicApiKey);
+    }
+    if (settings.openaiApiKey) {
+      setOpenaiKey(settings.openaiApiKey);
+    }
+  }, [settings.anthropicApiKey, settings.openaiApiKey]);
 
   const checkAIStatus = async () => {
     setAiStatus(prev => ({ ...prev, checking: true }));
@@ -211,6 +224,29 @@ export default function SettingsScreen() {
     lock();
   };
 
+  const handleSaveApiKeys = async () => {
+    setSavingKeys(true);
+    try {
+      await updateSettings({
+        anthropicApiKey: anthropicKey.trim() || undefined,
+        openaiApiKey: openaiKey.trim() || undefined,
+      });
+      setShowApiKeys(false);
+      showAlert('Success', 'API keys saved successfully');
+      checkAIStatus(); // Refresh AI status
+    } catch (error) {
+      showAlert('Error', 'Failed to save API keys');
+    } finally {
+      setSavingKeys(false);
+    }
+  };
+
+  const maskApiKey = (key: string | undefined) => {
+    if (!key) return 'Not configured';
+    if (key.length <= 12) return '••••••••';
+    return key.slice(0, 8) + '••••••••' + key.slice(-4);
+  };
+
   const autoDeleteOptions = [
     { label: 'Never', value: null },
     { label: '7 days', value: 7 },
@@ -334,6 +370,109 @@ export default function SettingsScreen() {
             </View>
             <Ionicons name="lock-closed" size={20} color={COLORS.primary} />
           </TouchableOpacity>
+        )}
+      </View>
+
+      {/* API Keys Section */}
+      <Text style={styles.sectionTitle}>API Keys</Text>
+      <View style={styles.section}>
+        <TouchableOpacity
+          style={styles.settingRow}
+          onPress={() => setShowApiKeys(!showApiKeys)}
+        >
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>Claude API Key (Anthropic)</Text>
+            <Text style={styles.settingDescription}>
+              {maskApiKey(settings.anthropicApiKey)}
+            </Text>
+          </View>
+          <View style={[styles.statusBadge, {
+            backgroundColor: settings.anthropicApiKey ? COLORS.success + '20' : COLORS.warning + '20'
+          }]}>
+            <Ionicons
+              name={settings.anthropicApiKey ? 'checkmark-circle' : 'alert-circle'}
+              size={16}
+              color={settings.anthropicApiKey ? COLORS.success : COLORS.warning}
+            />
+            <Text style={[styles.statusText, {
+              color: settings.anthropicApiKey ? COLORS.success : COLORS.warning
+            }]}>
+              {settings.anthropicApiKey ? 'Set' : 'Not Set'}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        <View style={[styles.settingRow, styles.settingRowBorder]}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>OpenAI API Key</Text>
+            <Text style={styles.settingDescription}>
+              {maskApiKey(settings.openaiApiKey)}
+            </Text>
+          </View>
+          <View style={[styles.statusBadge, {
+            backgroundColor: settings.openaiApiKey ? COLORS.success + '20' : COLORS.textSecondary + '20'
+          }]}>
+            <Ionicons
+              name={settings.openaiApiKey ? 'checkmark-circle' : 'ellipse-outline'}
+              size={16}
+              color={settings.openaiApiKey ? COLORS.success : COLORS.textSecondary}
+            />
+            <Text style={[styles.statusText, {
+              color: settings.openaiApiKey ? COLORS.success : COLORS.textSecondary
+            }]}>
+              {settings.openaiApiKey ? 'Set' : 'Optional'}
+            </Text>
+          </View>
+        </View>
+
+        {showApiKeys && (
+          <View style={styles.apiKeySetup}>
+            <Text style={[styles.settingDescription, { marginBottom: 12 }]}>
+              Claude (Anthropic) is preferred for bail document analysis. OpenAI is used for OCR fallback.
+            </Text>
+            <TextInput
+              style={styles.apiKeyInput}
+              value={anthropicKey}
+              onChangeText={setAnthropicKey}
+              placeholder="sk-ant-api03-..."
+              placeholderTextColor={COLORS.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+            />
+            <Text style={styles.apiKeyHint}>Get your key at console.anthropic.com</Text>
+
+            <TextInput
+              style={styles.apiKeyInput}
+              value={openaiKey}
+              onChangeText={setOpenaiKey}
+              placeholder="sk-proj-... (optional)"
+              placeholderTextColor={COLORS.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+            />
+            <Text style={styles.apiKeyHint}>Get your key at platform.openai.com</Text>
+
+            <View style={styles.passcodeButtons}>
+              <Button
+                title="Cancel"
+                variant="secondary"
+                size="small"
+                onPress={() => {
+                  setShowApiKeys(false);
+                  setAnthropicKey(settings.anthropicApiKey || '');
+                  setOpenaiKey(settings.openaiApiKey || '');
+                }}
+              />
+              <Button
+                title={savingKeys ? 'Saving...' : 'Save Keys'}
+                size="small"
+                onPress={handleSaveApiKeys}
+                disabled={savingKeys}
+              />
+            </View>
+          </View>
         )}
       </View>
 
@@ -611,6 +750,17 @@ export default function SettingsScreen() {
         <Ionicons name="information-circle-outline" size={20} color={COLORS.primary} />
         <Text style={styles.aboutLinkText}>About This App</Text>
         <Text style={styles.aboutLinkSubtext}>Features, databases, AI models & support</Text>
+        <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
+      </TouchableOpacity>
+
+      {/* Audit Log */}
+      <TouchableOpacity
+        style={[styles.aboutLink, { borderColor: COLORS.success + '40', marginTop: 8 }]}
+        onPress={() => router.push('/(tabs)/audit')}
+      >
+        <Ionicons name="shield-checkmark-outline" size={20} color={COLORS.success} />
+        <Text style={styles.aboutLinkText}>Audit Log</Text>
+        <Text style={styles.aboutLinkSubtext}>Activity history & compliance</Text>
         <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
       </TouchableOpacity>
 

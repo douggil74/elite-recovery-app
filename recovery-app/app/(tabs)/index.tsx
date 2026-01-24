@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,12 +6,23 @@ import {
   FlatList,
   RefreshControl,
   TouchableOpacity,
+  Platform,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { CaseCard } from '@/components';
 import { useCases } from '@/hooks/useCases';
 import { confirm } from '@/lib/confirm';
+
+// Load Black Ops One font for web
+if (Platform.OS === 'web' && typeof document !== 'undefined') {
+  const link = document.createElement('link');
+  link.href = 'https://fonts.googleapis.com/css2?family=Black+Ops+One&display=swap';
+  link.rel = 'stylesheet';
+  if (!document.head.querySelector('link[href*="Black+Ops+One"]')) {
+    document.head.appendChild(link);
+  }
+}
 
 // Dark Red Theme
 const THEME = {
@@ -68,45 +79,39 @@ export default function CasesScreen() {
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
       <View style={styles.emptyIcon}>
-        <Ionicons name="eye-outline" size={48} color={THEME.primary} />
+        <Ionicons name="folder-open-outline" size={48} color={THEME.primary} />
       </View>
-      <Text style={styles.emptyTitle}>No Active Cases</Text>
+      <Text style={styles.emptyTitle}>No Cases</Text>
       <Text style={styles.emptyText}>
-        Add your first recovery case to begin AI-powered skip trace analysis.
+        Create your first case to begin tracking a subject.
       </Text>
       <TouchableOpacity style={styles.emptyButton} onPress={handleNewCase}>
         <Ionicons name="add" size={20} color="#fff" />
         <Text style={styles.emptyButtonText}>New Case</Text>
       </TouchableOpacity>
-
-      <View style={styles.orDivider}>
-        <View style={styles.orLine} />
-        <Text style={styles.orText}>OR</Text>
-        <View style={styles.orLine} />
-      </View>
-
-      <TouchableOpacity
-        style={[styles.emptyButton, styles.importButton]}
-        onPress={() => router.push('/import-roster')}
-      >
-        <Ionicons name="download" size={20} color="#fff" />
-        <Text style={styles.emptyButtonText}>Import from Jail Roster</Text>
-      </TouchableOpacity>
-      <Text style={styles.importHint}>
-        Paste a jail booking URL to auto-fill case data
-      </Text>
     </View>
   );
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* TRACE Header - Centered Branding */}
+      <View style={styles.brandHeader}>
+        <Text style={styles.brandTitle}>TRACE</Text>
+        <Text style={styles.brandAcronym}>
+          <Text style={styles.acronymLetter}>T</Text>actical{' '}
+          <Text style={styles.acronymLetter}>R</Text>ecovery{' '}
+          <Text style={styles.acronymLetter}>A</Text>nalysis &{' '}
+          <Text style={styles.acronymLetter}>C</Text>apture{' '}
+          <Text style={styles.acronymLetter}>E</Text>ngine
+        </Text>
+      </View>
+
+      {/* Sub Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>ELITE RECOVERY SYSTEMS</Text>
           <Text style={styles.subtitle}>
             {totalCases === 0
-              ? '25+ OSINT tools · AI-powered recovery'
+              ? 'AI-powered fugitive recovery intelligence'
               : `${totalCases} case${totalCases !== 1 ? 's' : ''} · ${totalAddresses} locations`}
           </Text>
         </View>
@@ -162,6 +167,7 @@ export default function CasesScreen() {
             phoneCount={item.phoneCount}
           />
         )}
+        style={styles.listWrapper}
         contentContainerStyle={[
           styles.listContent,
           cases.length === 0 && styles.listContentEmpty,
@@ -174,20 +180,6 @@ export default function CasesScreen() {
           />
         }
         ListEmptyComponent={!isLoading ? renderEmptyState : null}
-        ListFooterComponent={cases.length > 0 ? (
-          <View style={styles.footerContainer}>
-            <TouchableOpacity
-              style={styles.importFooterButton}
-              onPress={() => router.push('/import-roster')}
-            >
-              <Ionicons name="download" size={18} color={THEME.primary} />
-              <Text style={styles.importFooterText}>Import from Jail Roster</Text>
-            </TouchableOpacity>
-            <Text style={styles.importFooterHint}>
-              Paste a jail booking link to auto-fill case info
-            </Text>
-          </View>
-        ) : null}
         showsVerticalScrollIndicator={false}
       />
     </View>
@@ -203,7 +195,7 @@ const styles = StyleSheet.create({
   innerContainer: {
     flex: 1,
     width: '100%',
-    maxWidth: 600,
+    maxWidth: 800,
   },
   header: {
     flexDirection: 'row',
@@ -213,18 +205,40 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 12,
     width: '100%',
-    maxWidth: 600,
+    maxWidth: 800,
   },
-  greeting: {
-    fontSize: 22,
+  brandHeader: {
+    alignItems: 'center',
+    paddingTop: 24,
+    paddingBottom: 12,
+    width: '100%',
+    borderBottomWidth: 2,
+    borderBottomColor: THEME.primary,
+  },
+  brandTitle: {
+    fontSize: 48,
+    fontWeight: '400',
+    color: THEME.primary,
+    letterSpacing: 8,
+    textShadowColor: THEME.primary,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 25,
+    fontFamily: '"Black Ops One", monospace',
+  },
+  brandAcronym: {
+    fontSize: 9,
+    color: THEME.textMuted,
+    letterSpacing: 1.5,
+    marginTop: 6,
+    textTransform: 'uppercase',
+  },
+  acronymLetter: {
+    color: THEME.primary,
     fontWeight: '800',
-    color: THEME.text,
-    letterSpacing: 1,
   },
   subtitle: {
-    fontSize: 14,
+    fontSize: 13,
     color: THEME.textSecondary,
-    marginTop: 2,
   },
   addButton: {
     width: 44,
@@ -245,7 +259,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     width: '100%',
-    maxWidth: 560,
+    maxWidth: 760,
+    alignSelf: 'center',
     borderColor: THEME.border,
   },
   statItem: {
@@ -269,8 +284,12 @@ const styles = StyleSheet.create({
     height: 30,
     backgroundColor: THEME.border,
   },
+  listWrapper: {
+    width: '100%',
+    maxWidth: 800,
+  },
   listContent: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingBottom: 100,
   },
   listContentEmpty: {
@@ -308,11 +327,13 @@ const styles = StyleSheet.create({
   emptyButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
     backgroundColor: THEME.primary,
     paddingHorizontal: 24,
     paddingVertical: 14,
     borderRadius: 12,
+    minWidth: 240,
   },
   emptyButtonText: {
     fontSize: 16,
