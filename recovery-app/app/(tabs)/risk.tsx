@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { calculateRiskScore, RiskScoreResult, RiskScoreInput } from '@/lib/osint-service';
+import { calculateRiskScore, RiskScoreResult, RiskScoreInput, searchCriminalHistory, ArrestsSearchResult } from '@/lib/osint-service';
 import { useCases } from '@/hooks/useCases';
 
 // Dark Red Theme
@@ -53,7 +53,9 @@ export default function RiskScreen() {
   const { createCase } = useCases();
   const [isLoading, setIsLoading] = useState(false);
   const [isCreatingCase, setIsCreatingCase] = useState(false);
+  const [isSearchingHistory, setIsSearchingHistory] = useState(false);
   const [result, setResult] = useState<RiskScoreResult | null>(null);
+  const [criminalHistory, setCriminalHistory] = useState<ArrestsSearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [prefillApplied, setPrefillApplied] = useState(false);
 
@@ -183,34 +185,43 @@ export default function RiskScreen() {
     setMonthlyIncome('');
     setCharges('');
     setResult(null);
+    setCriminalHistory(null);
     setError(null);
   };
 
-  const createCaseWithOSINT = async () => {
-    if (!name.trim() || !result) return;
-    setIsCreatingCase(true);
+  const searchHistory = async () => {
+    if (!name.trim()) {
+      setError('Enter a name first to search criminal history');
+      return;
+    }
+
+    setIsSearchingHistory(true);
+    setError(null);
+
     try {
-      const newCase = await createCase(
-        name.trim(),
-        'fta_recovery',
-        undefined,
-        undefined,
-        result.score,
-        result.risk_level
-      );
-      // Navigate to case detail with OSINT auto-run
-      router.push({
-        pathname: `/case/${newCase.id}`,
-        params: { autoRunOSINT: 'true' }
-      });
-    } catch (err) {
-      setError('Failed to create case');
+      const historyResult = await searchCriminalHistory(name.trim());
+      setCriminalHistory(historyResult);
+
+      // Auto-fill prior FTAs if found
+      if (historyResult.fta_count > 0) {
+        setPriorFTAs(String(historyResult.fta_count));
+      }
+
+      // Update prior convictions based on total arrests
+      if (historyResult.total_results > 0) {
+        const currentConvictions = parseInt(priorConvictions) || 0;
+        if (historyResult.total_results > currentConvictions) {
+          setPriorConvictions(String(historyResult.total_results));
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to search criminal history');
     } finally {
-      setIsCreatingCase(false);
+      setIsSearchingHistory(false);
     }
   };
 
-  const createCaseWithDocs = async () => {
+  const addToCaseLog = async () => {
     if (!name.trim() || !result) return;
     setIsCreatingCase(true);
     try {
@@ -218,11 +229,11 @@ export default function RiskScreen() {
         name.trim(),
         'fta_recovery',
         undefined,
-        undefined,
+        `FTA Score: ${result.score} (${result.risk_level})\n${result.recommendation}`,
         result.score,
         result.risk_level
       );
-      // Navigate to case detail for document upload
+      // Navigate to case detail
       router.push(`/case/${newCase.id}`);
     } catch (err) {
       setError('Failed to create case');
@@ -328,49 +339,30 @@ export default function RiskScreen() {
         </View>
 
         {/* Action Buttons */}
-        <Text style={styles.nextStepsTitle}>NEXT STEPS</Text>
+        <View style={styles.actionButtonsRow}>
+          <TouchableOpacity
+            style={[styles.addCaseButton, isCreatingCase && styles.btnDisabled]}
+            onPress={addToCaseLog}
+            disabled={isCreatingCase}
+          >
+            {isCreatingCase ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <>
+                <Ionicons name="add-circle" size={20} color="#fff" />
+                <Text style={styles.addCaseButtonText}>Add to Case Log</Text>
+              </>
+            )}
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.actionButton, styles.osintButton]}
-          onPress={createCaseWithOSINT}
-          disabled={isCreatingCase}
-        >
-          {isCreatingCase ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <>
-              <Ionicons name="search" size={20} color="#fff" />
-              <View style={styles.actionButtonTextContainer}>
-                <Text style={styles.actionButtonText}>Run OSINT Search</Text>
-                <Text style={styles.actionButtonSubtext}>Create case & search social media</Text>
-              </View>
-            </>
-          )}
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.newAssessmentButton} onPress={resetForm}>
+            <Ionicons name="refresh" size={18} color={THEME.textSecondary} />
+          </TouchableOpacity>
+        </View>
 
-        <TouchableOpacity
-          style={[styles.actionButton, styles.docsButton]}
-          onPress={createCaseWithDocs}
-          disabled={isCreatingCase}
-        >
-          {isCreatingCase ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <>
-              <Ionicons name="document-text" size={20} color="#fff" />
-              <View style={styles.actionButtonTextContainer}>
-                <Text style={styles.actionButtonText}>Upload Documents</Text>
-                <Text style={styles.actionButtonSubtext}>Create case & upload docs for refined score</Text>
-              </View>
-            </>
-          )}
-        </TouchableOpacity>
-
-        {/* New Assessment Button */}
-        <TouchableOpacity style={styles.newAssessmentButton} onPress={resetForm}>
-          <Ionicons name="refresh" size={18} color={THEME.text} />
-          <Text style={styles.newAssessmentText}>New Assessment</Text>
-        </TouchableOpacity>
+        <Text style={styles.actionHint}>
+          Save to case log to track this person, run OSINT, upload documents, etc.
+        </Text>
       </View>
     );
   };
@@ -380,17 +372,7 @@ export default function RiskScreen() {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>FTA RISK SCORE</Text>
-            <Text style={styles.headerSubtitle}>
-              Assess failure-to-appear risk before posting bond
-            </Text>
-          </View>
-        </View>
-
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         {/* Score Legend */}
         <View style={styles.legendContainer}>
           <Text style={styles.legendTitle}>SCORE LEGEND</Text>
@@ -546,6 +528,116 @@ export default function RiskScreen() {
               </View>
             </View>
 
+            {/* Search Criminal History Button */}
+            <TouchableOpacity
+              style={[styles.historySearchButton, isSearchingHistory && styles.btnDisabled]}
+              onPress={searchHistory}
+              disabled={isSearchingHistory}
+            >
+              {isSearchingHistory ? (
+                <ActivityIndicator color={THEME.primary} size="small" />
+              ) : (
+                <>
+                  <Ionicons name="search" size={18} color={THEME.primary} />
+                  <Text style={styles.historySearchButtonText}>Search Criminal History</Text>
+                </>
+              )}
+            </TouchableOpacity>
+            <Text style={styles.historySearchHint}>
+              Searches Louisiana arrest records for prior FTAs, warrants, and charges
+            </Text>
+
+            {/* Criminal History Results */}
+            {criminalHistory && (
+              <View style={styles.historyResultsContainer}>
+                <View style={styles.historyHeader}>
+                  <Ionicons name="document-text" size={18} color={THEME.warning} />
+                  <Text style={styles.historyTitle}>Criminal History Found</Text>
+                </View>
+
+                {/* Summary Stats */}
+                <View style={styles.historyStats}>
+                  <View style={styles.historyStat}>
+                    <Text style={[styles.historyStatValue, { color: criminalHistory.total_results > 0 ? THEME.danger : THEME.success }]}>
+                      {criminalHistory.total_results}
+                    </Text>
+                    <Text style={styles.historyStatLabel}>Arrests</Text>
+                  </View>
+                  <View style={styles.historyStat}>
+                    <Text style={[styles.historyStatValue, { color: criminalHistory.fta_count > 0 ? THEME.danger : THEME.success }]}>
+                      {criminalHistory.fta_count}
+                    </Text>
+                    <Text style={styles.historyStatLabel}>FTAs</Text>
+                  </View>
+                  <View style={styles.historyStat}>
+                    <Text style={[styles.historyStatValue, { color: criminalHistory.warrant_count > 0 ? THEME.danger : THEME.success }]}>
+                      {criminalHistory.warrant_count}
+                    </Text>
+                    <Text style={styles.historyStatLabel}>Warrants</Text>
+                  </View>
+                </View>
+
+                {/* Arrest List */}
+                {criminalHistory.arrests_found.length > 0 && (
+                  <View style={styles.arrestsList}>
+                    {criminalHistory.arrests_found.map((arrest, idx) => (
+                      <View key={idx} style={styles.arrestItem}>
+                        <View style={styles.arrestHeader}>
+                          <Text style={styles.arrestName}>{arrest.name}</Text>
+                          {arrest.booking_date && (
+                            <Text style={styles.arrestDate}>{arrest.booking_date}</Text>
+                          )}
+                        </View>
+                        {arrest.charges.length > 0 && (
+                          <View style={styles.chargesList}>
+                            {arrest.charges.slice(0, 5).map((charge, cidx) => (
+                              <View key={cidx} style={styles.chargeItem}>
+                                <Text style={[
+                                  styles.chargeText,
+                                  charge.toLowerCase().includes('fta') || charge.toLowerCase().includes('failure to appear')
+                                    ? { color: THEME.danger }
+                                    : {}
+                                ]}>
+                                  {charge}
+                                </Text>
+                              </View>
+                            ))}
+                            {arrest.charges.length > 5 && (
+                              <Text style={styles.moreCharges}>+{arrest.charges.length - 5} more charges</Text>
+                            )}
+                          </View>
+                        )}
+                        {(arrest.has_fta || arrest.has_warrant) && (
+                          <View style={styles.arrestFlags}>
+                            {arrest.has_fta && (
+                              <View style={styles.ftaFlag}>
+                                <Ionicons name="warning" size={12} color={THEME.danger} />
+                                <Text style={styles.ftaFlagText}>FTA</Text>
+                              </View>
+                            )}
+                            {arrest.has_warrant && (
+                              <View style={styles.warrantFlag}>
+                                <Ionicons name="alert-circle" size={12} color={THEME.warning} />
+                                <Text style={styles.warrantFlagText}>WARRANT</Text>
+                              </View>
+                            )}
+                          </View>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {criminalHistory.errors.length > 0 && (
+                  <Text style={styles.historyError}>{criminalHistory.errors[0]}</Text>
+                )}
+
+                <Text style={styles.historyExecTime}>
+                  Searched in {criminalHistory.execution_time.toFixed(1)}s
+                </Text>
+              </View>
+            )}
+
             {/* Months in Jail */}
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>Months in Jail (total)</Text>
@@ -699,21 +791,9 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 600,
   },
-  header: {
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: THEME.text,
-    letterSpacing: 1,
-    letterSpacing: 2,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: THEME.textSecondary,
-    marginTop: 2,
+  scrollContent: {
+    paddingTop: 8,
+    paddingBottom: 40,
   },
   legendContainer: {
     marginHorizontal: 16,
@@ -1042,59 +1122,50 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  newAssessmentButton: {
+  actionButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 16,
+  },
+  addCaseButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: THEME.surfaceLight,
+    backgroundColor: THEME.primary,
     paddingVertical: 14,
+    borderRadius: 12,
+  },
+  addCaseButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  newAssessmentButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: THEME.surfaceLight,
+    padding: 14,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: THEME.border,
-    marginBottom: 40,
-    marginTop: 12,
   },
   newAssessmentText: {
     fontSize: 15,
     fontWeight: '600',
     color: THEME.text,
   },
-  nextStepsTitle: {
+  actionHint: {
     fontSize: 12,
-    fontWeight: '700',
     color: THEME.textMuted,
-    letterSpacing: 1,
-    marginBottom: 12,
-    marginTop: 8,
+    textAlign: 'center',
+    marginTop: 10,
+    marginBottom: 40,
   },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 18,
-    borderRadius: 12,
-    marginBottom: 10,
-  },
-  osintButton: {
-    backgroundColor: THEME.primary,
-  },
-  docsButton: {
-    backgroundColor: '#1e40af',
-  },
-  actionButtonTextContainer: {
-    flex: 1,
-  },
-  actionButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  actionButtonSubtext: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.7)',
-    marginTop: 2,
+  btnDisabled: {
+    opacity: 0.6,
   },
   importRosterBtn: {
     flexDirection: 'row',
@@ -1136,5 +1207,157 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: THEME.success,
+  },
+  // Criminal History Search Styles
+  historySearchButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: THEME.primaryMuted,
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: THEME.primary + '50',
+  },
+  historySearchButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: THEME.primary,
+  },
+  historySearchHint: {
+    fontSize: 11,
+    color: THEME.textMuted,
+    textAlign: 'center',
+    marginTop: 6,
+    marginBottom: 16,
+  },
+  historyResultsContainer: {
+    backgroundColor: THEME.surface,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: THEME.warning + '40',
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  historyTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: THEME.warning,
+  },
+  historyStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    backgroundColor: THEME.bg,
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  historyStat: {
+    alignItems: 'center',
+  },
+  historyStatValue: {
+    fontSize: 24,
+    fontWeight: '700',
+  },
+  historyStatLabel: {
+    fontSize: 11,
+    color: THEME.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  arrestsList: {
+    marginTop: 8,
+  },
+  arrestItem: {
+    backgroundColor: THEME.bg,
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: THEME.warning,
+  },
+  arrestHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  arrestName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: THEME.text,
+    flex: 1,
+  },
+  arrestDate: {
+    fontSize: 12,
+    color: THEME.textMuted,
+  },
+  chargesList: {
+    marginTop: 6,
+  },
+  chargeItem: {
+    paddingVertical: 2,
+  },
+  chargeText: {
+    fontSize: 12,
+    color: THEME.textSecondary,
+  },
+  moreCharges: {
+    fontSize: 11,
+    color: THEME.textMuted,
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  arrestFlags: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  ftaFlag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: THEME.danger + '20',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  ftaFlagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.danger,
+  },
+  warrantFlag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: THEME.warning + '20',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  warrantFlagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.warning,
+  },
+  historyError: {
+    fontSize: 12,
+    color: THEME.danger,
+    marginTop: 8,
+  },
+  historyExecTime: {
+    fontSize: 10,
+    color: THEME.textMuted,
+    textAlign: 'right',
+    marginTop: 8,
   },
 });

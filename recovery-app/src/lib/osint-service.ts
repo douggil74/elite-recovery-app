@@ -1118,6 +1118,52 @@ export async function calculateRiskScore(input: RiskScoreInput): Promise<RiskSco
 
 
 // ============================================================================
+// CRIMINAL HISTORY / ARRESTS SEARCH
+// ============================================================================
+
+export interface ArrestRecord {
+  name: string;
+  booking_date: string | null;
+  charges: string[];
+  mugshot_url: string | null;
+  age: string | null;
+  details_url: string | null;
+  has_fta: boolean;
+  has_warrant: boolean;
+  parish: string | null;
+}
+
+export interface ArrestsSearchResult {
+  query: string;
+  searched_at: string;
+  arrests_found: ArrestRecord[];
+  total_results: number;
+  fta_count: number;
+  warrant_count: number;
+  search_url: string;
+  errors: string[];
+  execution_time: number;
+}
+
+/**
+ * Search Louisiana arrests.org for criminal history
+ * Returns prior arrests, FTAs, warrants, and charges
+ */
+export async function searchCriminalHistory(
+  name: string,
+  parish: string = 'st-tammany'
+): Promise<ArrestsSearchResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/arrests-search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parish }),
+  });
+  if (!response.ok) throw new Error(`Arrests search error: ${response.statusText}`);
+  return response.json();
+}
+
+
+// ============================================================================
 // DOCUMENT & METADATA
 // ============================================================================
 
