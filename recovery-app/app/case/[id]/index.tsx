@@ -604,18 +604,39 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
           status: 'unknown' as const,
         })));
 
-        // Single summary message with photo verification warning
+        // Single summary message with actionable OSINT instructions
         const found = investigation.confirmed_profiles.length;
-        let resultMessage = found > 0
-          ? `✅ Found ${found} profiles for "${fullName}" in ${investigation.execution_time.toFixed(1)}s.\n\n${investigation.confirmed_profiles.slice(0, 5).map(p => `• ${p.platform}: ${p.url}`).join('\n')}${found > 5 ? `\n• +${found - 5} more` : ''}`
-          : `No profiles found for "${fullName}". Try the search links in the right panel.`;
+        let resultMessage = '';
 
-        // Add photo verification warning if we have mugshot
-        if (found > 0 && hasMugshot) {
-          const demographicInfo = demographics
-            ? `\n\n📋 **Subject Demographics:** ${demographics.race || 'Unknown'} ${demographics.sex || 'Unknown'}, Age ${demographics.age || 'Unknown'}`
-            : '';
-          resultMessage += `${demographicInfo}\n\n⚠️ **VERIFY PHOTOS MANUALLY:** Compare each social profile photo to the mugshot. Names can match but people may differ in race, gender, or age. Only pursue profiles where the photo matches the subject.`;
+        if (found > 0) {
+          resultMessage = `✅ **${found} PROFILES FOUND** for "${fullName}"\n\n`;
+          resultMessage += investigation.confirmed_profiles.slice(0, 5).map(p =>
+            `• **${p.platform}**: ${p.url}`
+          ).join('\n');
+          if (found > 5) resultMessage += `\n• +${found - 5} more`;
+
+          resultMessage += `\n\n📋 **OSINT CHECKLIST:**`;
+          resultMessage += `\n1. Open each profile and compare photo to mugshot`;
+          resultMessage += `\n2. Check for current location in bio/posts`;
+          resultMessage += `\n3. Note friends/family who comment often`;
+          resultMessage += `\n4. Look for check-ins or tagged locations`;
+          resultMessage += `\n5. Screenshot anything useful`;
+
+          if (hasMugshot) {
+            const demographicInfo = demographics
+              ? `\n\n👤 **Match Against:** ${demographics.race || ''} ${demographics.sex || ''}, Age ${demographics.age || 'Unknown'}`
+              : '';
+            resultMessage += demographicInfo;
+          }
+
+          resultMessage += `\n\n💡 **Found intel?** Tell me: "add [name] as [relationship]" or paste any addresses/phones you find.`;
+        } else {
+          resultMessage = `❌ No confirmed profiles for "${fullName}".\n\n`;
+          resultMessage += `**Try manually:**\n`;
+          resultMessage += `• Facebook People Search\n`;
+          resultMessage += `• Search nicknames or aliases\n`;
+          resultMessage += `• Search family members' profiles\n`;
+          resultMessage += `\nUse the search links in OSINT TOOLS →`;
         }
 
         setChatMessages(prev => [...prev, {
@@ -1230,7 +1251,7 @@ ${result.explanation}`,
     }
 
     // COMMAND: Update relationship for last added associate
-    const relationshipMatch = userTextLower.match(/^(friend|family|mother|father|sister|brother|spouse|wife|husband|girlfriend|boyfriend|employer|coworker|co-signer|cosigner|roommate|neighbor)$/i);
+    const relationshipMatch = userTextLower.match(/^(friend|family|mother|father|sister|brother|spouse|wife|husband|girlfriend|boyfriend|employer|coworker|co-signer|cosigner|roommate|neighbor|aunt|uncle|cousin|grandma|grandmother|grandpa|grandfather)$/i);
     if (relationshipMatch && discoveredAssociates.length > 0) {
       const relationship = relationshipMatch[1];
       setDiscoveredAssociates(prev => {
@@ -1241,10 +1262,34 @@ ${result.explanation}`,
         return updated;
       });
 
+      // Save to AsyncStorage
+      AsyncStorage.getItem(`case_associates_${id}`).then(existing => {
+        const list = existing ? JSON.parse(existing) : [];
+        if (list.length > 0) {
+          list[list.length - 1].relationship = relationship;
+          AsyncStorage.setItem(`case_associates_${id}`, JSON.stringify(list));
+        }
+      });
+
       setChatMessages(prev => [...prev, {
         id: uniqueId(),
         role: 'agent',
-        content: `✓ Updated relationship to **${relationship}**. Ready for more intel.`,
+        content: `✅ Updated to **${relationship}**. What else did you find?`,
+        timestamp: new Date(),
+      }]);
+      setIsSending(false);
+      scrollToBottom();
+      return;
+    }
+
+    // COMMAND: Log address found on social media
+    const addressMatch = userText.match(/(?:found|saw|lives at|address[:\s]+)(.+(?:street|st|avenue|ave|drive|dr|road|rd|lane|ln|court|ct|way|blvd|boulevard)[^,]*,?\s*[a-z\s]*,?\s*(?:la|louisiana|tx|texas|ms|mississippi|al|alabama|fl|florida|ga|georgia)?[\s,]*\d{5})?/i);
+    if (addressMatch && addressMatch[1]) {
+      const foundAddress = addressMatch[1].trim();
+      setChatMessages(prev => [...prev, {
+        id: uniqueId(),
+        role: 'agent',
+        content: `📍 Logged potential address: **${foundAddress}**\n\nI'll add this to the case. Where did you find this? (Facebook, Instagram, etc.)`,
         timestamp: new Date(),
       }]);
       setIsSending(false);
