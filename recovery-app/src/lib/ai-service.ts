@@ -6,7 +6,7 @@
 import { OSINT_CONFIG } from '@/constants';
 
 const getBackendUrl = (): string => {
-  return OSINT_CONFIG?.productionUrl || 'https://elite-recovery-osint.onrender.com';
+  return OSINT_CONFIG?.productionUrl || 'https://elite-recovery-osint.fly.dev';
 };
 
 // ============================================================================

@@ -123,11 +123,39 @@ export default function ExportScreen() {
     This document contains sensitive personal information. Use only for authorized fugitive recovery purposes.
   </div>
 
+  ${subjectPhoto ? `
+  <h2>Subject Profile</h2>
+  <div class="section" style="display: flex; gap: 20px; align-items: flex-start;">
+    <img src="${subjectPhoto}" style="width: 150px; height: 180px; object-fit: cover; border-radius: 8px; border: 3px solid #dc2626;" alt="Subject Photo" />
+    <div style="flex: 1;">
+      <div style="font-size: 24px; font-weight: bold; color: #1f2937; margin-bottom: 10px;">${caseData.name}</div>
+      ${caseData.rosterData?.inmate?.dob ? `
+      <div class="info-row">
+        <span class="info-label">DOB:</span>
+        <span class="info-value">${caseData.rosterData.inmate.dob}</span>
+      </div>` : subject.dob ? `
+      <div class="info-row">
+        <span class="info-label">DOB:</span>
+        <span class="info-value">${subject.dob}</span>
+      </div>` : ''}
+      ${subject.partialSsn ? `
+      <div class="info-row">
+        <span class="info-label">SSN:</span>
+        <span class="info-value">XXX-XX-${maskSensitive ? '****' : subject.partialSsn}</span>
+      </div>` : ''}
+      ${caseData.bookingNumber ? `
+      <div class="info-row">
+        <span class="info-label">Booking #:</span>
+        <span class="info-value">${caseData.bookingNumber}</span>
+      </div>` : ''}
+    </div>
+  </div>
+  ` : `
   <h2>Subject Information</h2>
   <div class="section">
     <div class="info-row">
       <span class="info-label">Name:</span>
-      <span class="info-value">${subject.fullName}</span>
+      <span class="info-value">${caseData.name}</span>
     </div>
     ${subject.dob ? `
     <div class="info-row">
@@ -145,6 +173,7 @@ export default function ExportScreen() {
       <span class="info-value">${subject.aliases.join(', ')}</span>
     </div>` : ''}
   </div>
+  `}
 
   ${brief ? `
   <h2>Identity Verification</h2>
@@ -269,13 +298,6 @@ export default function ExportScreen() {
   </div>` : ''}
   ` : ''}
 
-  ${subjectPhoto ? `
-  <h2>Subject Photo</h2>
-  <div class="section" style="text-align: center;">
-    <img src="${subjectPhoto}" style="max-width: 300px; max-height: 300px; border-radius: 8px; border: 2px solid #dc2626;" alt="Subject Photo" />
-    <p style="font-size: 11px; color: #6b7280; margin-top: 8px;">Subject photograph - verify identity before approach</p>
-  </div>
-  ` : ''}
 
   ${socialProfiles.filter(p => p.status === 'found').length > 0 ? `
   <h2>Social Media Profiles Found</h2>
@@ -328,30 +350,30 @@ export default function ExportScreen() {
 
     <h3 style="font-size: 13px; color: #374151;">Social Media</h3>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px;">
-      <div style="font-size: 11px;"><strong>Facebook:</strong><br>facebook.com/search/people/?q=${encodeURIComponent(subject.fullName)}</div>
-      <div style="font-size: 11px;"><strong>Instagram:</strong><br>instagram.com/${subject.fullName.toLowerCase().replace(/\s+/g, '')}</div>
-      <div style="font-size: 11px;"><strong>TikTok:</strong><br>tiktok.com/@${subject.fullName.toLowerCase().replace(/\s+/g, '')}</div>
-      <div style="font-size: 11px;"><strong>Twitter/X:</strong><br>twitter.com/search?q=${encodeURIComponent(subject.fullName)}</div>
+      <div style="font-size: 11px;"><strong>Facebook:</strong><br>facebook.com/search/people/?q=${encodeURIComponent(caseData.name)}</div>
+      <div style="font-size: 11px;"><strong>Instagram:</strong><br>instagram.com/${caseData.name.toLowerCase().replace(/\s+/g, '')}</div>
+      <div style="font-size: 11px;"><strong>TikTok:</strong><br>tiktok.com/@${caseData.name.toLowerCase().replace(/\s+/g, '')}</div>
+      <div style="font-size: 11px;"><strong>Twitter/X:</strong><br>twitter.com/search?q=${encodeURIComponent(caseData.name)}</div>
     </div>
 
     <h3 style="font-size: 13px; color: #374151;">People Search</h3>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px;">
-      <div style="font-size: 11px;"><strong>TruePeopleSearch:</strong><br>truepeoplesearch.com/results?name=${encodeURIComponent(subject.fullName)}</div>
-      <div style="font-size: 11px;"><strong>FastPeopleSearch:</strong><br>fastpeoplesearch.com/name/${encodeURIComponent(subject.fullName.replace(/\s+/g, '-'))}</div>
-      <div style="font-size: 11px;"><strong>Whitepages:</strong><br>whitepages.com/name/${encodeURIComponent(subject.fullName.replace(/\s+/g, '-'))}</div>
-      <div style="font-size: 11px;"><strong>Spokeo:</strong><br>spokeo.com/${encodeURIComponent(subject.fullName.replace(/\s+/g, '-'))}</div>
+      <div style="font-size: 11px;"><strong>TruePeopleSearch:</strong><br>truepeoplesearch.com/results?name=${encodeURIComponent(caseData.name)}</div>
+      <div style="font-size: 11px;"><strong>FastPeopleSearch:</strong><br>fastpeoplesearch.com/name/${encodeURIComponent(caseData.name.replace(/\s+/g, '-'))}</div>
+      <div style="font-size: 11px;"><strong>Whitepages:</strong><br>whitepages.com/name/${encodeURIComponent(caseData.name.replace(/\s+/g, '-'))}</div>
+      <div style="font-size: 11px;"><strong>Spokeo:</strong><br>spokeo.com/${encodeURIComponent(caseData.name.replace(/\s+/g, '-'))}</div>
     </div>
 
     <h3 style="font-size: 13px; color: #374151;">Court & Criminal</h3>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px;">
-      <div style="font-size: 11px;"><strong>CourtListener:</strong><br>courtlistener.com/?q=${encodeURIComponent(subject.fullName)}</div>
-      <div style="font-size: 11px;"><strong>Google Mugshots:</strong><br>google.com/search?q=${encodeURIComponent(subject.fullName + ' mugshot')}</div>
+      <div style="font-size: 11px;"><strong>CourtListener:</strong><br>courtlistener.com/?q=${encodeURIComponent(caseData.name)}</div>
+      <div style="font-size: 11px;"><strong>Google Mugshots:</strong><br>google.com/search?q=${encodeURIComponent(caseData.name + ' mugshot')}</div>
     </div>
 
     <h3 style="font-size: 13px; color: #374151;">Fraud Research</h3>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-      <div style="font-size: 11px;"><strong>Social Catfish:</strong><br>social-catfish.com/search/results?q=${encodeURIComponent(subject.fullName)}</div>
-      <div style="font-size: 11px;"><strong>ScamDigger:</strong><br>scamdigger.com/search?q=${encodeURIComponent(subject.fullName)}</div>
+      <div style="font-size: 11px;"><strong>Social Catfish:</strong><br>social-catfish.com/search/results?q=${encodeURIComponent(caseData.name)}</div>
+      <div style="font-size: 11px;"><strong>ScamDigger:</strong><br>scamdigger.com/search?q=${encodeURIComponent(caseData.name)}</div>
     </div>
   </div>
 
@@ -452,13 +474,15 @@ export default function ExportScreen() {
       <Card title="Case Brief" style={styles.card}>
         <View style={styles.previewInfo}>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Case:</Text>
+            <Text style={styles.infoLabel}>Target:</Text>
             <Text style={styles.infoValue}>{caseData?.name}</Text>
           </View>
+          {caseData?.bookingNumber && (
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Subject:</Text>
-            <Text style={styles.infoValue}>{latestReport.parsedData.subject.fullName}</Text>
+            <Text style={styles.infoLabel}>Booking #:</Text>
+            <Text style={styles.infoValue}>{caseData.bookingNumber}</Text>
           </View>
+          )}
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Addresses:</Text>
             <Text style={styles.infoValue}>{latestReport.parsedData.addresses.length} found</Text>

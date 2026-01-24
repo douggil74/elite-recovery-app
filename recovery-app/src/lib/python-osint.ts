@@ -7,7 +7,7 @@ import { getSettings } from './storage';
 
 // Production URL: Update this once deployed to Render.com
 // Default to Render.com deployment, falls back to localhost for development
-const PRODUCTION_BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
+const PRODUCTION_BACKEND_URL = 'https://elite-recovery-osint.fly.dev';
 const LOCAL_DEV_URL = 'http://localhost:8000';
 
 const getBackendUrl = async (): Promise<string> => {

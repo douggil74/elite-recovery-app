@@ -65,9 +65,10 @@ export default function BriefScreen() {
   // Get brief data for action plan
   const { actionPlan, likelyLocations, contactStrategy } = brief as any;
 
-  // Get the PRIMARY TARGET name (locked-in fugitive, doesn't change with associate docs)
-  const primaryTargetName = caseData?.primaryTarget?.fullName || subject.fullName || caseData?.name || 'Unknown';
-  const primaryTargetDOB = caseData?.primaryTarget?.dob || subject.dob;
+  // Get the PRIMARY TARGET name - use case name first (from jail roster/mugshot), not parsed doc subject
+  // The parsed doc subject might be a co-signer, reference, or indemnitor - NOT the actual target
+  const primaryTargetName = caseData?.name || caseData?.primaryTarget?.fullName || 'Unknown';
+  const primaryTargetDOB = caseData?.rosterData?.inmate?.dob || caseData?.primaryTarget?.dob || subject.dob;
 
   return (
     <ScrollView

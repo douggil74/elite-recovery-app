@@ -18,8 +18,8 @@ import { getStorageUsage, clearAllData } from '@/lib/storage';
 import { confirm, showAlert } from '@/lib/confirm';
 import { Button, Input } from '@/components';
 import { COLORS, VERSION } from '@/constants';
-import { getAllCases } from '@/lib/database';
-import { isSyncEnabled, fetchSyncedCases } from '@/lib/sync';
+import { getAllCases, getReportsForCase } from '@/lib/database';
+import { isSyncEnabled, fetchSyncedCases, pushAllToCloud, syncSettings } from '@/lib/sync';
 import { isFirebaseReady } from '@/lib/firebase';
 import { checkAIBackendHealth } from '@/lib/ai-service';
 
@@ -71,6 +71,10 @@ export default function SettingsScreen() {
     testing: false,
     lastTested: null,
   });
+
+  // Manual sync state
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ synced: number; failed: number } | null>(null);
 
   useEffect(() => {
     loadStorageUsage();
@@ -138,6 +142,44 @@ export default function SettingsScreen() {
       testing: false,
       lastTested: new Date().toLocaleTimeString(),
     });
+  };
+
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    setSyncResult(null);
+
+    try {
+      // Get all local cases
+      const localCases = await getAllCases();
+
+      if (localCases.length === 0) {
+        showAlert('No Data', 'No local cases to sync');
+        setIsSyncing(false);
+        return;
+      }
+
+      // Also sync settings if user is logged in
+      if (user?.uid && settings) {
+        await syncSettings(user.uid, settings);
+      }
+
+      // Push all cases to cloud
+      const result = await pushAllToCloud(localCases, getReportsForCase);
+      setSyncResult(result);
+
+      if (result.synced > 0) {
+        showAlert('Sync Complete', `Synced ${result.synced} case(s) to cloud${result.failed > 0 ? `, ${result.failed} failed` : ''}`);
+      } else if (result.failed > 0) {
+        showAlert('Sync Failed', `Failed to sync ${result.failed} case(s). Check your connection.`);
+      }
+
+      // Refresh database status
+      await testDatabaseConnections();
+    } catch (error: any) {
+      showAlert('Sync Error', error?.message || 'Failed to sync to cloud');
+    }
+
+    setIsSyncing(false);
   };
 
   const handleSignOut = async () => {
@@ -654,6 +696,29 @@ export default function SettingsScreen() {
             <Ionicons name="refresh" size={20} color={COLORS.primary} />
           )}
         </TouchableOpacity>
+
+        {/* Manual Sync Button */}
+        <TouchableOpacity
+          style={[styles.settingRow, styles.settingRowBorder, { backgroundColor: COLORS.success + '10' }]}
+          onPress={handleManualSync}
+          disabled={isSyncing}
+        >
+          <View style={styles.settingInfo}>
+            <Text style={[styles.settingLabel, { color: COLORS.success }]}>
+              Sync All to Cloud
+            </Text>
+            <Text style={styles.settingDescription}>
+              {isSyncing ? 'Syncing...' :
+                syncResult ? `Last sync: ${syncResult.synced} synced, ${syncResult.failed} failed` :
+                `Upload ${dbStatus.localCases || 0} local case(s) to cloud`}
+            </Text>
+          </View>
+          {isSyncing ? (
+            <ActivityIndicator size="small" color={COLORS.success} />
+          ) : (
+            <Ionicons name="cloud-upload" size={20} color={COLORS.success} />
+          )}
+        </TouchableOpacity>
       </View>
 
       {/* Data Management Section */}
@@ -790,6 +855,9 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
     paddingBottom: 40,
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
   },
   sectionTitle: {
     fontSize: 14,

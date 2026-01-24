@@ -1,7 +1,7 @@
 import { ScrollView, View, Text, StyleSheet, TouchableOpacity, Linking } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, VERSION } from '@/constants';
+import { COLORS, VERSION, AI_CONFIG, OSINT_CONFIG } from '@/constants';
 
 interface FeatureSection {
   title: string;
@@ -29,17 +29,18 @@ const FEATURES: FeatureSection[] = [
       { name: 'Prior FTA Detection', description: 'Detects FUGITIVE charges indicating prior warrants', type: 'tool' },
       { name: 'Charge Analysis', description: 'Weighs felony vs misdemeanor, violent crimes', type: 'tool' },
       { name: 'Bond Amount Factor', description: 'Higher bonds = more skin in the game', type: 'tool' },
-      { name: 'AI Assessment', description: 'GPT-4o generates risk narrative with recommendations', type: 'ai' },
+      { name: 'AI Assessment', description: 'AI generates risk narrative with recommendations', type: 'ai' },
     ],
   },
   {
-    title: 'AI Intelligence (GPT-4o)',
+    title: 'AI Intelligence',
     icon: 'hardware-chip',
     items: [
-      { name: 'AI Chat', description: 'Ask questions, get investigation advice', type: 'ai' },
-      { name: 'Photo Analysis', description: 'Analyzes photos for addresses, plates, landmarks', type: 'ai' },
-      { name: 'Document Reading', description: 'Extracts info from skip-trace reports', type: 'ai' },
+      { name: 'Agent Dialogue', description: 'Investigative partner that thinks alongside you', type: 'ai' },
+      { name: 'Photo Analysis', description: 'Extracts addresses, plates, landmarks from images', type: 'ai' },
+      { name: 'Document Reading', description: 'Parses skip-trace reports and bail documents', type: 'ai' },
       { name: 'Recovery Brief', description: 'Generates tactical recovery plans', type: 'ai' },
+      { name: 'Face Matching', description: 'Compares mugshot to social media photos', type: 'ai' },
     ],
   },
   {
@@ -100,8 +101,8 @@ const FEATURES: FeatureSection[] = [
 
 const PYTHON_TOOLS_LIVE = [
   // AI Tools
-  { name: 'GPT-4o Chat', description: 'AI chat for investigation questions', status: 'live', category: 'ai' },
-  { name: 'GPT-4o Vision', description: 'AI photo/document analysis', status: 'live', category: 'ai' },
+  { name: 'Agent Dialogue', description: 'AI investigative partner', status: 'live', category: 'ai' },
+  { name: 'Vision Analysis', description: 'AI photo/document analysis', status: 'live', category: 'ai' },
   { name: 'FTA Risk Analysis', description: 'AI-generated risk assessments', status: 'live', category: 'ai' },
   // Jail Roster
   { name: 'Jail Roster Scraper', description: 'Extract inmate data from Revize jail sites', status: 'live', category: 'scraper' },
@@ -118,28 +119,17 @@ const PYTHON_TOOLS_LIVE = [
 ];
 
 const BACKEND_INFO = {
-  url: 'https://elite-recovery-osint.onrender.com',
-  version: '3.0.0',
+  url: OSINT_CONFIG.productionUrl,
+  version: VERSION,
   endpoints: [
-    // Jail Roster
-    '/api/jail-roster - Scrape single jail booking',
-    '/api/jail-roster/bulk - Bulk import from jail',
-    // FTA Risk
-    '/api/fta-score - Calculate FTA risk score',
-    '/api/fta-score/batch - Batch FTA scoring',
-    // Username
+    '/api/jail-roster - Scrape jail booking',
+    '/api/fta-score - FTA risk calculation',
     '/api/sherlock - Username search (400+ sites)',
-    '/api/socialscan - Quick availability check',
-    '/api/osint/search - Combined username search',
-    // Email
-    '/api/holehe - Email account discovery',
-    // Court Records
-    '/api/court-records - Federal court search',
-    '/api/la-court-records - Louisiana court search',
-    // AI
-    '/api/ai/chat - AI chat (OpenAI proxy)',
-    '/api/ai/analyze - Image/document analysis',
-    '/health - Service health check',
+    '/api/holehe - Email discovery',
+    '/api/ai/chat - AI dialogue',
+    '/api/ai/analyze - Vision analysis',
+    '/api/ai/brief - Recovery brief',
+    '/api/face-match - Face comparison',
   ]
 };
 
@@ -203,8 +193,8 @@ export default function AboutScreen() {
             <Text style={styles.statLabel}>API Endpoints</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>GPT-4o</Text>
-            <Text style={styles.statLabel}>AI Model</Text>
+            <Text style={styles.statNumber}>{AI_CONFIG.provider}</Text>
+            <Text style={styles.statLabel}>AI Provider</Text>
           </View>
         </View>
 
@@ -255,6 +245,26 @@ export default function AboutScreen() {
           </View>
         ))}
 
+        {/* AI Engine */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="flash" size={20} color="#8b5cf6" />
+            <Text style={styles.sectionTitle}>AI Engine</Text>
+            <View style={[styles.typeBadge, { backgroundColor: '#8b5cf630', marginLeft: 8 }]}>
+              <Text style={[styles.typeText, { color: '#8b5cf6' }]}>{AI_CONFIG.provider}</Text>
+            </View>
+          </View>
+
+          <View style={[styles.item, { borderLeftColor: '#8b5cf6', marginBottom: 8 }]}>
+            <Text style={styles.itemName}>Chat Model: {AI_CONFIG.chatModel}</Text>
+            <Text style={styles.itemDesc}>Powers Agent Dialogue and investigation reasoning</Text>
+          </View>
+          <View style={[styles.item, { borderLeftColor: '#8b5cf6' }]}>
+            <Text style={styles.itemName}>Vision Model: {AI_CONFIG.visionModel}</Text>
+            <Text style={styles.itemDesc}>Analyzes photos, documents, and performs face matching</Text>
+          </View>
+        </View>
+
         {/* Python OSINT Backend - LIVE */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -267,8 +277,8 @@ export default function AboutScreen() {
 
           {/* Backend Status */}
           <View style={[styles.item, { borderLeftColor: '#22c55e', marginBottom: 12 }]}>
-            <Text style={styles.itemName}>Backend: {BACKEND_INFO.url}</Text>
-            <Text style={styles.itemDesc}>Version {BACKEND_INFO.version} - All tools installed and running</Text>
+            <Text style={styles.itemName}>{BACKEND_INFO.url}</Text>
+            <Text style={styles.itemDesc}>Version {BACKEND_INFO.version}</Text>
           </View>
 
           <View style={styles.itemList}>

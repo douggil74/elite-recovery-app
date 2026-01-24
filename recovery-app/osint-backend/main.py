@@ -27,6 +27,13 @@ from pydantic import BaseModel, EmailStr
 import aiohttp
 import httpx
 
+# Claude AI (primary for reasoning)
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+
 # Playwright for browser automation (replaces ScrapingBee)
 try:
     from playwright.async_api import async_playwright
@@ -38,7 +45,7 @@ except ImportError:
 app = FastAPI(
     title="Elite Recovery OSINT API",
     description="Advanced OSINT intelligence gathering for fugitive recovery",
-    version="3.4.0"
+    version="3.5.0"  # Added arrests-search endpoint
 )
 
 # CORS - allow all origins for the recovery app
@@ -1213,6 +1220,281 @@ async def court_search(request: CourtSearchRequest):
         request.filed_after,
         request.filed_before
     )
+    return result
+
+
+# ============================================================================
+# LOUISIANA ARRESTS.ORG SEARCH
+# ============================================================================
+
+class ArrestsSearchRequest(BaseModel):
+    name: str
+    parish: Optional[str] = "st-tammany"  # Default to St. Tammany
+
+
+class ArrestRecord(BaseModel):
+    name: str
+    booking_date: Optional[str] = None
+    charges: List[str] = []
+    mugshot_url: Optional[str] = None
+    age: Optional[str] = None
+    details_url: Optional[str] = None
+    has_fta: bool = False
+    has_warrant: bool = False
+    parish: Optional[str] = None
+
+
+class ArrestsSearchResult(BaseModel):
+    query: str
+    searched_at: str
+    arrests_found: List[ArrestRecord]
+    total_results: int
+    fta_count: int
+    warrant_count: int
+    search_url: str
+    errors: List[str]
+    execution_time: float
+
+
+async def search_louisiana_arrests(name: str, parish: str = "st-tammany") -> Dict[str, Any]:
+    """
+    Search louisiana.arrests.org for arrest records.
+    Uses Playwright for browser automation to bypass anti-scraping.
+    """
+    import re
+    from urllib.parse import quote_plus
+
+    start_time = datetime.now()
+    arrests = []
+    errors = []
+    fta_count = 0
+    warrant_count = 0
+
+    # FTA/warrant keywords to detect
+    fta_keywords = ['failure to appear', 'fta', 'bench warrant', 'contempt of court',
+                    'fugitive', 'absconding', 'bail jumping', 'bond forfeiture']
+    warrant_keywords = ['warrant', 'capias', 'fugitive', 'hold for']
+
+    # Parse name
+    name_parts = name.strip().split()
+    if len(name_parts) >= 2:
+        first_name = name_parts[0]
+        last_name = name_parts[-1]
+    else:
+        first_name = ""
+        last_name = name
+
+    # Build search URL
+    search_name = quote_plus(name)
+    search_url = f"https://louisiana.arrests.org/search.php?fname={quote_plus(first_name)}&lname={quote_plus(last_name)}&county="
+
+    if not PLAYWRIGHT_AVAILABLE:
+        errors.append("Playwright not available - cannot scrape arrests.org")
+        return {
+            'query': name,
+            'searched_at': datetime.now().isoformat(),
+            'arrests_found': [],
+            'total_results': 0,
+            'fta_count': 0,
+            'warrant_count': 0,
+            'search_url': search_url,
+            'errors': errors,
+            'execution_time': (datetime.now() - start_time).total_seconds()
+        }
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080}
+            )
+            page = await context.new_page()
+
+            try:
+                # Navigate to search page
+                await page.goto(search_url, wait_until='domcontentloaded', timeout=30000)
+                await page.wait_for_timeout(2000)
+
+                # Get the page content
+                html = await page.content()
+
+                # Parse with BeautifulSoup
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(html, 'html.parser')
+
+                # Find arrest cards/entries - try multiple selectors
+                card_selectors = [
+                    '.inmate-card', '.arrest-card', '.result-card',
+                    '.mugshot-card', 'article.inmate', 'div.inmate',
+                    '.search-result', '.listing', 'a[href*="/Arrests/"]'
+                ]
+
+                cards = []
+                for selector in card_selectors:
+                    found = soup.select(selector)
+                    if found:
+                        cards = found
+                        break
+
+                # If no cards found, try finding links to arrest pages
+                if not cards:
+                    cards = soup.find_all('a', href=re.compile(r'/Arrests/|/mugshot|/booking'))
+
+                # Process each result
+                for card in cards[:20]:  # Limit to 20 results
+                    try:
+                        card_text = card.get_text(' ', strip=True).lower()
+
+                        # Skip if name doesn't match
+                        if last_name.lower() not in card_text and first_name.lower() not in card_text:
+                            continue
+
+                        arrest = {
+                            'name': '',
+                            'booking_date': None,
+                            'charges': [],
+                            'mugshot_url': None,
+                            'age': None,
+                            'details_url': None,
+                            'has_fta': False,
+                            'has_warrant': False,
+                            'parish': parish
+                        }
+
+                        # Extract name
+                        name_elem = card.select_one('.name, .inmate-name, h2, h3, strong')
+                        if name_elem:
+                            arrest['name'] = name_elem.get_text(strip=True)
+                        elif card.name == 'a':
+                            arrest['name'] = card.get_text(strip=True)
+
+                        # Extract link
+                        if card.name == 'a':
+                            href = card.get('href', '')
+                            if href:
+                                if not href.startswith('http'):
+                                    href = f"https://louisiana.arrests.org{href}"
+                                arrest['details_url'] = href
+                        else:
+                            link = card.select_one('a[href]')
+                            if link:
+                                href = link.get('href', '')
+                                if href and not href.startswith('http'):
+                                    href = f"https://louisiana.arrests.org{href}"
+                                arrest['details_url'] = href
+
+                        # Extract mugshot
+                        img = card.select_one('img')
+                        if img:
+                            src = img.get('src') or img.get('data-src')
+                            if src:
+                                if not src.startswith('http'):
+                                    src = f"https://louisiana.arrests.org{src}"
+                                arrest['mugshot_url'] = src
+
+                        # Extract date
+                        date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{2,4})', card_text)
+                        if date_match:
+                            arrest['booking_date'] = date_match.group(1)
+
+                        # Extract age
+                        age_match = re.search(r'age[:\s]*(\d{2})', card_text)
+                        if age_match:
+                            arrest['age'] = age_match.group(1)
+
+                        # Extract charges (look for charge-related text)
+                        charge_elem = card.select_one('.charges, .charge-list, .offense')
+                        if charge_elem:
+                            charge_text = charge_elem.get_text(strip=True)
+                            # Split by common delimiters
+                            charges = re.split(r'[,;|\n]+', charge_text)
+                            arrest['charges'] = [c.strip() for c in charges if c.strip()]
+
+                        # Check for FTA keywords
+                        for keyword in fta_keywords:
+                            if keyword in card_text:
+                                arrest['has_fta'] = True
+                                fta_count += 1
+                                break
+
+                        # Check for warrant keywords
+                        for keyword in warrant_keywords:
+                            if keyword in card_text:
+                                arrest['has_warrant'] = True
+                                warrant_count += 1
+                                break
+
+                        if arrest['name'] or arrest['details_url']:
+                            arrests.append(arrest)
+
+                    except Exception as e:
+                        continue
+
+                # If we found results, try to get more details from individual pages
+                if arrests and len(arrests) <= 5:
+                    for i, arrest in enumerate(arrests[:3]):  # Limit detailed fetches
+                        if arrest.get('details_url'):
+                            try:
+                                await page.goto(arrest['details_url'], wait_until='domcontentloaded', timeout=15000)
+                                await page.wait_for_timeout(1000)
+
+                                detail_html = await page.content()
+                                detail_soup = BeautifulSoup(detail_html, 'html.parser')
+                                detail_text = detail_soup.get_text(' ', strip=True).lower()
+
+                                # Extract more charges from detail page
+                                charge_section = detail_soup.select_one('.charges, .offense-list, .booking-charges')
+                                if charge_section:
+                                    charges = charge_section.get_text('\n', strip=True).split('\n')
+                                    arrest['charges'] = list(set(arrest['charges'] + [c.strip() for c in charges if c.strip() and len(c) > 3]))
+
+                                # Re-check for FTA/warrant on detail page
+                                for keyword in fta_keywords:
+                                    if keyword in detail_text:
+                                        if not arrest['has_fta']:
+                                            arrest['has_fta'] = True
+                                            fta_count += 1
+                                        break
+
+                                for keyword in warrant_keywords:
+                                    if keyword in detail_text:
+                                        if not arrest['has_warrant']:
+                                            arrest['has_warrant'] = True
+                                            warrant_count += 1
+                                        break
+
+                            except Exception:
+                                continue
+
+            finally:
+                await browser.close()
+
+    except Exception as e:
+        errors.append(f"Playwright error: {str(e)[:100]}")
+
+    execution_time = (datetime.now() - start_time).total_seconds()
+
+    return {
+        'query': name,
+        'searched_at': datetime.now().isoformat(),
+        'arrests_found': arrests,
+        'total_results': len(arrests),
+        'fta_count': fta_count,
+        'warrant_count': warrant_count,
+        'search_url': search_url,
+        'errors': errors,
+        'execution_time': execution_time
+    }
+
+
+@app.post("/api/arrests-search", response_model=ArrestsSearchResult)
+async def search_arrests(request: ArrestsSearchRequest):
+    """
+    Search Louisiana arrests.org for criminal history.
+    Returns prior arrests, charges, FTA indicators, and warrants.
+    """
+    result = await search_louisiana_arrests(request.name, request.parish)
     return result
 
 
@@ -5263,7 +5545,8 @@ async def health_check():
 
     # API-based services
     tools['courtlistener_api'] = 'configured' if COURTLISTENER_API_KEY else 'available (no key = limited)'
-    tools['openai_api'] = 'configured' if OPENAI_API_KEY else 'not configured'
+    tools['claude_api'] = 'configured (primary)' if ANTHROPIC_API_KEY else 'not configured'
+    tools['openai_api'] = 'configured (vision)' if OPENAI_API_KEY else 'not configured'
 
     return {
         'status': 'healthy',
@@ -5334,10 +5617,16 @@ async def root():
 
 
 # ============================================================================
-# AI PROXY (OpenAI) - Keeps API key server-side
+# AI SERVICES - Claude for reasoning, OpenAI for vision
 # ============================================================================
 
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Initialize Claude client
+claude_client = None
+if ANTHROPIC_AVAILABLE and ANTHROPIC_API_KEY:
+    claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 class ChatRequest(BaseModel):
     messages: List[Dict[str, str]]
@@ -5363,9 +5652,48 @@ class BriefRequest(BaseModel):
 
 @app.post("/api/ai/chat")
 async def ai_chat(request: ChatRequest):
-    """OpenAI chat completion proxy - keeps API key server-side"""
+    """AI chat - uses Claude for reasoning, falls back to OpenAI"""
+
+    # Try Claude first (preferred for reasoning)
+    if claude_client:
+        try:
+            # Extract system message and user messages
+            system_msg = ""
+            messages = []
+            for msg in request.messages:
+                if msg.get("role") == "system":
+                    system_msg = msg.get("content", "")
+                else:
+                    messages.append({
+                        "role": msg.get("role", "user"),
+                        "content": msg.get("content", "")
+                    })
+
+            # Call Claude
+            response = claude_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=request.max_tokens,
+                system=system_msg if system_msg else "You are an expert investigative partner helping licensed bail recovery agents locate individuals who have skipped bail. Be direct, actionable, and professional.",
+                messages=messages
+            )
+
+            # Format response to match OpenAI structure (for frontend compatibility)
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": response.content[0].text
+                    }
+                }],
+                "model": "claude-sonnet-4-20250514",
+                "provider": "anthropic"
+            }
+        except Exception as e:
+            print(f"Claude error, falling back to OpenAI: {e}")
+
+    # Fallback to OpenAI
     if not OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="OpenAI API key not configured on server")
+        raise HTTPException(status_code=500, detail="No AI API keys configured on server")
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -5385,7 +5713,9 @@ async def ai_chat(request: ChatRequest):
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail=response.text)
 
-        return response.json()
+        result = response.json()
+        result["provider"] = "openai"
+        return result
 
 
 @app.post("/api/ai/analyze")
@@ -5431,9 +5761,7 @@ async def ai_analyze(request: AnalyzeRequest):
 
 @app.post("/api/ai/brief")
 async def generate_brief(request: BriefRequest):
-    """Generate AI-powered recovery brief"""
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="OpenAI API key not configured on server")
+    """Generate AI-powered recovery brief using Claude"""
 
     # Build context for the AI
     context = f"""Generate a professional fugitive recovery brief for field agents.
@@ -5455,15 +5783,42 @@ SOCIAL MEDIA PROFILES:
 ADDITIONAL NOTES:
 {request.notes or 'None'}
 
-Please provide:
-1. EXECUTIVE SUMMARY (2-3 sentences)
-2. RECOMMENDED APPROACH (tactical advice for field agents)
-3. LOCATIONS TO CHECK (prioritized list based on available info)
-4. TIMING RECOMMENDATIONS (best times to attempt contact/apprehension)
-5. SAFETY CONSIDERATIONS (risk assessment)
-6. BACKUP PLANS (alternative approaches if primary fails)
+Provide a tactical brief with:
+1. EXECUTIVE SUMMARY - Your best assessment of where this person is and why
+2. PRIMARY APPROACH - Most likely location and recommended timing
+3. SECONDARY OPTIONS - Backup locations ranked by probability
+4. SAFETY NOTES - Any concerns based on available info
+5. NEXT STEPS - Specific actionable items
 
-Be concise, professional, and actionable. This is for licensed bail enforcement agents."""
+Write naturally, not in bullet points. Be direct and confident in your assessments."""
+
+    system_prompt = """You are an elite investigative partner for bail recovery agents. You think like a detective - noticing patterns, making deductions, and providing actionable intelligence.
+
+Write in natural paragraphs, not bullet lists. Be confident and direct. When you make an assessment, explain your reasoning briefly. Focus on what the agent should DO, not just what you found."""
+
+    # Try Claude first
+    if claude_client:
+        try:
+            response = claude_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2000,
+                system=system_prompt,
+                messages=[{"role": "user", "content": context}]
+            )
+
+            return {
+                "subject": request.subject_name,
+                "generated_at": datetime.now().isoformat(),
+                "brief": response.content[0].text,
+                "model": "claude-sonnet-4-20250514",
+                "provider": "anthropic"
+            }
+        except Exception as e:
+            print(f"Claude brief error, falling back to OpenAI: {e}")
+
+    # Fallback to OpenAI
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="No AI API keys configured")
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -5475,7 +5830,7 @@ Be concise, professional, and actionable. This is for licensed bail enforcement 
             json={
                 "model": "gpt-4o-mini",
                 "messages": [
-                    {"role": "system", "content": "You are an expert fugitive recovery consultant helping licensed bail enforcement agents. Provide tactical, professional advice."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": context}
                 ],
                 "max_tokens": 2000
@@ -5493,7 +5848,8 @@ Be concise, professional, and actionable. This is for licensed bail enforcement 
             "subject": request.subject_name,
             "generated_at": datetime.now().isoformat(),
             "brief": brief_text,
-            "model": "gpt-4o-mini"
+            "model": "gpt-4o-mini",
+            "provider": "openai"
         }
 
 

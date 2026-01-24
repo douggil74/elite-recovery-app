@@ -357,7 +357,7 @@ export function getMultiPlatformUsernameSearchUrl(username: string): string {
 // BACKEND OSINT INTEGRATIONS
 // ============================================================================
 
-const OSINT_API_BASE = 'https://elite-recovery-osint.onrender.com';
+const OSINT_API_BASE = 'https://elite-recovery-osint.fly.dev';
 
 /**
  * PhoneInfoga - Advanced phone number OSINT

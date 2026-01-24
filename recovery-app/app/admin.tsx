@@ -19,7 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '@/constants';
 import { useAuthContext } from '@/contexts/AuthContext';
 
-const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
+const BACKEND_URL = 'https://elite-recovery-osint.fly.dev';
 const ADMIN_PASSWORD_KEY = 'elite_admin_password';
 const ADMIN_USERS_KEY = 'elite_admin_users';
 const DEFAULT_ADMIN_PASSWORD = '2627f68597G!';

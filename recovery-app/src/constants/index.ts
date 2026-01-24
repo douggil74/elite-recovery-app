@@ -1,7 +1,7 @@
 // App constants
 
 export const APP_NAME = 'Fugitive Recovery';
-export const VERSION = '1.0.0';
+export const VERSION = '3.2.0';
 
 // Database
 export const DB_NAME = 'bailrecovery.db';
@@ -53,9 +53,25 @@ export const DEFAULT_SETTINGS = {
 
 // OSINT Backend Configuration
 export const OSINT_CONFIG = {
-  productionUrl: 'https://elite-recovery-osint.onrender.com',
+  productionUrl: 'https://elite-recovery-osint.fly.dev',
   localDevUrl: 'http://localhost:8000',
   healthCheckTimeout: 3000, // 3 seconds
+};
+
+// AI Configuration - what's actually running
+export const AI_CONFIG = {
+  chatModel: 'Claude Sonnet',
+  visionModel: 'GPT-4o',
+  provider: 'Claude + GPT-4o',
+  reasoningProvider: 'Anthropic',
+  visionProvider: 'OpenAI',
+  features: {
+    chat: true,
+    vision: true,
+    documentAnalysis: true,
+    recoveryBrief: true,
+    faceMatch: true,
+  },
 };
 
 // Journey plan default checklist

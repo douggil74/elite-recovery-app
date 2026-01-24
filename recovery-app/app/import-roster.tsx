@@ -22,7 +22,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCases } from '@/hooks/useCases';
 
 const IMPORT_HISTORY_KEY = 'jail_import_history';
-const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
+const BACKEND_URL = 'https://elite-recovery-osint.fly.dev';
 
 // Dark Red Theme
 const THEME = {

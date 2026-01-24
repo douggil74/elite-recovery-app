@@ -7,7 +7,7 @@
 
 import learningSystem from './learning-system';
 
-const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
+const BACKEND_URL = 'https://elite-recovery-osint.fly.dev';
 
 export interface FacialFeatures {
   // Bone structure

@@ -230,7 +230,7 @@ CRITICAL RULES:
 5. If you see a person, ALWAYS describe them (gender, approximate age, clothing, distinguishing features)
 6. If the image quality is poor, still describe what's visible and note the quality limitation`;
 
-const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
+const BACKEND_URL = 'https://elite-recovery-osint.fly.dev';
 
 // EXIF Tag IDs
 const EXIF_TAGS: Record<number, string> = {

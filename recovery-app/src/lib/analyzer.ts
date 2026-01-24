@@ -5,7 +5,7 @@ import { sendChatMessage } from './ai-service';
 import { analyzeBailDocument, analyzeMultipleDocuments } from './bail-document-analyzer';
 
 // Backend URL
-const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
+const BACKEND_URL = 'https://elite-recovery-osint.fly.dev';
 
 /**
  * Analyze report via backend proxy (for users without local API key)

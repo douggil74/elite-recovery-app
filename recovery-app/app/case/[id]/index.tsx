@@ -44,6 +44,11 @@ import {
   type PhotoIntelligence,
 } from '@/lib/photo-intelligence';
 import {
+  analyzeSubject,
+  formatSubjectAnalysisForChat,
+  type SubjectAnalysis,
+} from '@/lib/subject-analysis';
+import {
   smartOsintSearch,
   checkBackendHealth,
   investigatePerson,
@@ -284,6 +289,8 @@ export default function CaseDetailScreen() {
   const [photoIntel, setPhotoIntel] = useState<PhotoIntelligence | null>(null);
   const [allPhotoIntel, setAllPhotoIntel] = useState<PhotoIntelligence[]>([]);  // Store ALL photo analysis results
   const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
+  const [subjectAnalysisResult, setSubjectAnalysisResult] = useState<SubjectAnalysis | null>(null);
+  const [isAnalyzingSubject, setIsAnalyzingSubject] = useState(false);
   const [tacticalAdvice, setTacticalAdvice] = useState<string[]>([]);
   const [selectedLinkNode, setSelectedLinkNode] = useState<string | null>(null); // For link analysis interactivity
   const [pythonBackendAvailable, setPythonBackendAvailable] = useState(false);
@@ -844,7 +851,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
   // Upload image to backend for reverse image search
   const uploadImageForSearch = async (imageBase64: string) => {
     try {
-      const response = await fetch('https://elite-recovery-osint.onrender.com/api/image/upload', {
+      const response = await fetch('https://elite-recovery-osint.fly.dev/api/image/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image_base64: imageBase64 }),
@@ -972,6 +979,55 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
       }]);
     }
     setIsAnalyzingPhoto(false);
+    scrollToBottom();
+  };
+
+  // Analyze subject photo for identifying features (tattoos, scars, physical description)
+  const runSubjectAnalysis = async () => {
+    if (!subjectPhoto) return;
+
+    setIsAnalyzingSubject(true);
+    setChatMessages(prev => [...prev, {
+      id: uniqueId(),
+      role: 'system',
+      content: '🔍 **ANALYZING SUBJECT** - Scanning for tattoos, scars, dental features, physical description, clothing...',
+      timestamp: new Date(),
+    }]);
+    scrollToBottom();
+
+    try {
+      const analysis = await analyzeSubject(subjectPhoto);
+
+      if (analysis) {
+        setSubjectAnalysisResult(analysis);
+
+        // Format for chat display
+        const formattedAnalysis = formatSubjectAnalysisForChat(analysis);
+
+        setChatMessages(prev => [...prev, {
+          id: uniqueId(),
+          role: 'agent',
+          content: formattedAnalysis,
+          timestamp: new Date(),
+        }]);
+      } else {
+        setChatMessages(prev => [...prev, {
+          id: uniqueId(),
+          role: 'agent',
+          content: '⚠️ Could not analyze subject photo. Try uploading a clearer image.',
+          timestamp: new Date(),
+        }]);
+      }
+    } catch (error: any) {
+      setChatMessages(prev => [...prev, {
+        id: uniqueId(),
+        role: 'agent',
+        content: `❌ Subject analysis error: ${error?.message || 'Unknown error'}`,
+        timestamp: new Date(),
+      }]);
+    }
+
+    setIsAnalyzingSubject(false);
     scrollToBottom();
   };
 
@@ -1517,7 +1573,7 @@ ${result.explanation}`,
         scrollToBottom();
 
         try {
-          const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
+          const BACKEND_URL = 'https://elite-recovery-osint.fly.dev';
           const res = await fetch(`${BACKEND_URL}/api/jail-roster`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1761,7 +1817,7 @@ ${result.explanation}`,
         recentMessages: chatMessages.slice(-5).map(m => `${m.role}: ${m.content.slice(0, 200)}`).join('\n'),
       });
 
-      const response = await fetch('https://elite-recovery-osint.onrender.com/api/ai/chat', {
+      const response = await fetch('https://elite-recovery-osint.fly.dev/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1831,7 +1887,7 @@ ${result.explanation}`,
         const subjectHeight = rosterInmate?.height;
         const subjectWeight = rosterInmate?.weight;
         const subjectHtml = `
-          <h2>👤 Subject Profile</h2>
+          <h2>Subject Profile</h2>
           <div class="profile-card-with-photo">
             ${subjectPhoto ? `<div class="subject-photo"><img src="${subjectPhoto}" alt="Subject" /></div>` : '<div class="subject-photo-placeholder">NO PHOTO</div>'}
             <div class="profile-details">
@@ -1860,7 +1916,7 @@ ${result.explanation}`,
           r.toLowerCase().includes('case:')
         ) || [];
         const bondHtml = chargesAndBond.length > 0 ? `
-          <h2>⚖️ Charges & Bond</h2>
+          <h2>Charges & Bond</h2>
           <div class="section">
             ${chargesAndBond.map(item => `<div class="charge-item">${item}</div>`).join('')}
           </div>
@@ -1869,7 +1925,7 @@ ${result.explanation}`,
         // === PHONES ===
         const phones = parsedData?.phones || [];
         const phonesHtml = phones.length > 0 ? `
-          <h2>📞 Phone Numbers</h2>
+          <h2>Phone Numbers</h2>
           <div class="section">
             ${phones.map(p => `
               <div class="contact-item">
@@ -1885,13 +1941,13 @@ ${result.explanation}`,
         // === CONTACTS/RELATIVES ===
         const relatives = parsedData?.relatives || [];
         const contactsHtml = relatives.length > 0 ? `
-          <h2>👥 Contacts & References</h2>
+          <h2>Contacts & References</h2>
           <div class="section">
             ${relatives.map(r => `
               <div class="relative-card">
                 <div class="relative-name">${r.name} ${r.relationship ? `<span class="relationship">(${r.relationship})</span>` : ''}</div>
-                ${r.phones?.length ? `<div class="relative-phone">📱 ${r.phones.join(', ')}</div>` : ''}
-                ${r.currentAddress ? `<div class="relative-address">📍 ${r.currentAddress}</div>` : ''}
+                ${r.phones?.length ? `<div class="relative-phone">${r.phones.join(', ')}</div>` : ''}
+                ${r.currentAddress ? `<div class="relative-address">${r.currentAddress}</div>` : ''}
               </div>
             `).join('')}
           </div>
@@ -1900,7 +1956,7 @@ ${result.explanation}`,
         // === VEHICLES ===
         const vehicles = parsedData?.vehicles || [];
         const vehiclesHtml = vehicles.length > 0 ? `
-          <h2>🚗 Vehicles</h2>
+          <h2>Vehicles</h2>
           <div class="section">
             ${vehicles.map(v => `
               <div class="vehicle-card">
@@ -1915,14 +1971,14 @@ ${result.explanation}`,
         // === EMPLOYMENT ===
         const employment = parsedData?.employment || [];
         const employmentHtml = employment.length > 0 ? `
-          <h2>💼 Employment</h2>
+          <h2>Employment</h2>
           <div class="section">
             ${employment.map(e => `
               <div class="employment-card">
                 <div class="employer-name">${e.employer || 'Unknown Employer'}${e.isCurrent ? ' <span class="current-tag">CURRENT</span>' : ''}</div>
                 ${e.title ? `<div class="job-title">${e.title}</div>` : ''}
-                ${e.address ? `<div class="employer-address">📍 ${e.address}</div>` : ''}
-                ${e.phone ? `<div class="employer-phone">📞 ${e.phone}</div>` : ''}
+                ${e.address ? `<div class="employer-address">${e.address}</div>` : ''}
+                ${e.phone ? `<div class="employer-phone">${e.phone}</div>` : ''}
               </div>
             `).join('')}
           </div>
@@ -1931,11 +1987,10 @@ ${result.explanation}`,
         // === WARNINGS/FLAGS ===
         const flags = parsedData?.flags || [];
         const warningsHtml = flags.length > 0 ? `
-          <h2>⚠️ Warnings & Safety Notes</h2>
+          <h2>Warnings & Safety Notes</h2>
           <div class="section">
             ${flags.map(f => `
               <div class="warning-item warning-${f.severity}">
-                <span class="warning-icon">${f.severity === 'high' ? '🔴' : f.severity === 'medium' ? '🟡' : '🔵'}</span>
                 ${f.message}
               </div>
             `).join('')}
@@ -1949,7 +2004,7 @@ ${result.explanation}`,
           !r.toLowerCase().includes('case:')
         ) || [];
         const notesHtml = caseNotes.length > 0 ? `
-          <h2>📝 Case Notes</h2>
+          <h2>Case Notes</h2>
           <div class="section">
             ${caseNotes.map(note => `<div class="case-note">${note}</div>`).join('')}
           </div>
@@ -1972,7 +2027,7 @@ ${result.explanation}`,
                 ${p.platform}: ${p.status === 'found' ? '✓ Found' : p.status === 'not_found' ? '✗ Not Found' : '○ Not Searched'}
               </span>
             `).join('')
-          : `<p style="color: #f59e0b;">⚠️ No OSINT search performed. ${parsedData?.subject?.fullName ? 'Run search from case screen.' : 'Upload a skip trace report or enter subject name to enable OSINT.'}</p>`;
+          : `<p style="color: #f59e0b;">No OSINT search performed. ${parsedData?.subject?.fullName ? 'Run search from case screen.' : 'Upload a skip trace report or enter subject name to enable OSINT.'}</p>`;
 
         // Build photo intel HTML - ONLY show photos that have actionable intel
         const photosWithIntel = allPhotoIntel.filter(intel =>
@@ -2014,18 +2069,18 @@ ${result.explanation}`,
 
           intel.addresses.forEach((a) => {
             if (a.boundingBox) {
-              items.push(`<div class="legend-item"><span class="legend-num">${num}</span> 🏠 ${a.text} (${a.confidence})</div>`);
+              items.push(`<div class="legend-item"><span class="legend-num">${num}</span> ${a.text} (${a.confidence})</div>`);
               num++;
             }
           });
 
           intel.vehicles.filter(v => v.licensePlate && v.boundingBox).forEach((v) => {
-            items.push(`<div class="legend-item"><span class="legend-num legend-plate">${num}</span> 🚗 ${v.licensePlate} - ${v.color} ${v.make || ''}</div>`);
+            items.push(`<div class="legend-item"><span class="legend-num legend-plate">${num}</span> ${v.licensePlate} - ${v.color} ${v.make || ''}</div>`);
             num++;
           });
 
           intel.businesses.filter(b => b.boundingBox).forEach((b) => {
-            items.push(`<div class="legend-item"><span class="legend-num legend-biz">${num}</span> 🏪 ${b.name}</div>`);
+            items.push(`<div class="legend-item"><span class="legend-num legend-biz">${num}</span> ${b.name}</div>`);
             num++;
           });
 
@@ -2033,36 +2088,36 @@ ${result.explanation}`,
         };
 
         const photoIntelHtml = photosWithIntel.length > 0 ? `
-          <h2>📷 Photo Intelligence</h2>
+          <h2>Photo Intelligence</h2>
           <style>
-            .photo-intel-card { margin-bottom: 20px; padding: 15px; background: #f3f4f6; border-radius: 8px; border-left: 4px solid #dc2626; }
-            .photo-container { position: relative; display: inline-block; margin-bottom: 10px; }
-            .photo-container img { max-width: 280px; max-height: 200px; border-radius: 6px; border: 2px solid #374151; }
-            .marker { position: absolute; width: 22px; height: 22px; background: #dc2626; color: white; border-radius: 50%; font-size: 11px; font-weight: bold; display: flex; align-items: center; justify-content: center; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transform: translate(-50%, -50%); }
+            .photo-intel-card { margin-bottom: 10px; padding: 10px; background: #f3f4f6; border-radius: 6px; border-left: 3px solid #dc2626; }
+            .photo-container { position: relative; display: inline-block; margin-bottom: 6px; }
+            .photo-container img { max-width: 200px; max-height: 150px; border-radius: 4px; border: 1px solid #374151; }
+            .marker { position: absolute; width: 18px; height: 18px; background: #dc2626; color: white; border-radius: 50%; font-size: 9px; font-weight: bold; display: flex; align-items: center; justify-content: center; border: 1px solid white; box-shadow: 0 1px 2px rgba(0,0,0,0.3); transform: translate(-50%, -50%); }
             .marker-plate { background: #2563eb; }
             .marker-biz { background: #16a34a; }
-            .legend-item { font-size: 12px; margin: 4px 0; display: flex; align-items: center; gap: 8px; }
-            .legend-num { width: 18px; height: 18px; background: #dc2626; color: white; border-radius: 50%; font-size: 10px; font-weight: bold; display: inline-flex; align-items: center; justify-content: center; }
+            .legend-item { font-size: 11px; margin: 2px 0; display: flex; align-items: center; gap: 6px; }
+            .legend-num { width: 14px; height: 14px; background: #dc2626; color: white; border-radius: 50%; font-size: 9px; font-weight: bold; display: inline-flex; align-items: center; justify-content: center; }
             .legend-plate { background: #2563eb; }
             .legend-biz { background: #16a34a; }
-            .intel-details { margin-top: 10px; padding-top: 10px; border-top: 1px solid #d1d5db; }
+            .intel-details { margin-top: 6px; padding-top: 6px; border-top: 1px solid #d1d5db; }
           </style>
           <div class="section">
             ${photosWithIntel.map((intel) => `
               <div class="photo-intel-card">
-                <p style="font-weight: bold; margin-bottom: 10px; font-size: 14px;">📸 ${intel.sourceFileName || 'Unknown file'}</p>
-                <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                <p style="font-weight: bold; margin-bottom: 6px; font-size: 12px;">${intel.sourceFileName || 'Unknown file'}</p>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                   ${intel.thumbnailBase64 ? `
                     <div class="photo-container">
                       <img src="${intel.thumbnailBase64}" alt="${intel.sourceFileName || 'Evidence photo'}" />
                       ${generateMarkers(intel)}
                     </div>
                   ` : ''}
-                  <div style="flex: 1; min-width: 200px;">
+                  <div style="flex: 1; min-width: 150px;">
                     ${generateLegend(intel)}
                     <div class="intel-details">
-                      ${intel.exifData?.gps ? `<p style="font-size: 12px;"><strong>📍 GPS:</strong> <a href="${intel.exifData.gps.googleMapsUrl}">${intel.exifData.gps.latitude.toFixed(6)}, ${intel.exifData.gps.longitude.toFixed(6)}</a></p>` : ''}
-                      ${intel.addresses.filter(a => !a.boundingBox).length > 0 ? `<p style="font-size: 12px;"><strong>🏠 Other addresses:</strong> ${intel.addresses.filter(a => !a.boundingBox).map(a => a.text).join(', ')}</p>` : ''}
+                      ${intel.exifData?.gps ? `<p style="font-size: 11px;"><strong>GPS:</strong> <a href="${intel.exifData.gps.googleMapsUrl}">${intel.exifData.gps.latitude.toFixed(6)}, ${intel.exifData.gps.longitude.toFixed(6)}</a></p>` : ''}
+                      ${intel.addresses.filter(a => !a.boundingBox).length > 0 ? `<p style="font-size: 11px;"><strong>Other addresses:</strong> ${intel.addresses.filter(a => !a.boundingBox).map(a => a.text).join(', ')}</p>` : ''}
                     </div>
                   </div>
                 </div>
@@ -2096,77 +2151,75 @@ ${result.explanation}`,
             <head>
               <title>Investigation Report - ${(parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown') ? parsedData.subject.fullName : caseData?.name}</title>
               <style>
-                body { font-family: -apple-system, Arial, sans-serif; margin: 0; color: #1f2937; font-size: 13px; line-height: 1.5; }
-                .header { background: linear-gradient(135deg, #18181b 0%, #27272a 100%); color: white; padding: 30px 40px; }
-                .header h1 { margin: 0 0 8px 0; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
-                .header .subtitle { color: #a1a1aa; font-size: 14px; }
-                .header .case-id { color: #dc2626; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
-                .content { padding: 30px 40px; max-width: 900px; }
-                .meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }
-                .meta-card { background: #f9fafb; border-radius: 8px; padding: 15px; text-align: center; border: 1px solid #e5e7eb; }
-                .meta-card .value { font-size: 24px; font-weight: 700; color: #dc2626; }
-                .meta-card .label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
-                h2 { color: #18181b; font-size: 16px; font-weight: 600; margin: 25px 0 12px 0; padding-bottom: 8px; border-bottom: 2px solid #dc2626; display: flex; align-items: center; gap: 8px; }
-                .section { margin-bottom: 20px; }
-                .summary-list { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 15px 20px; }
-                .summary-list li { margin: 6px 0; color: #166534; }
-                .location { padding: 12px 15px; margin: 8px 0; background: white; border-left: 4px solid #dc2626; border-radius: 0 6px 6px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }
-                .location .probability { background: #dcfce7; color: #166534; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
-                .social { display: inline-block; padding: 6px 12px; margin: 4px; border-radius: 6px; font-size: 11px; font-weight: 500; }
+                body { font-family: -apple-system, Arial, sans-serif; margin: 0; color: #1f2937; font-size: 12px; line-height: 1.4; }
+                .header { background: linear-gradient(135deg, #18181b 0%, #27272a 100%); color: white; padding: 16px 30px; }
+                .header h1 { margin: 0 0 4px 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+                .header .subtitle { color: #a1a1aa; font-size: 12px; }
+                .header .case-id { color: #dc2626; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+                .content { padding: 16px 30px; max-width: 900px; }
+                .meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+                .meta-card { background: #f9fafb; border-radius: 6px; padding: 10px; text-align: center; border: 1px solid #e5e7eb; }
+                .meta-card .value { font-size: 20px; font-weight: 700; color: #dc2626; }
+                .meta-card .label { font-size: 10px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+                h2 { color: #18181b; font-size: 14px; font-weight: 600; margin: 14px 0 8px 0; padding-bottom: 4px; border-bottom: 2px solid #dc2626; }
+                .section { margin-bottom: 10px; }
+                .summary-list { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 10px 14px; }
+                .summary-list li { margin: 3px 0; color: #166534; }
+                .location { padding: 8px 12px; margin: 4px 0; background: white; border-left: 3px solid #dc2626; border-radius: 0 4px 4px 0; box-shadow: 0 1px 2px rgba(0,0,0,0.08); display: flex; justify-content: space-between; align-items: center; }
+                .location .probability { background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+                .social { display: inline-block; padding: 4px 8px; margin: 2px; border-radius: 4px; font-size: 10px; font-weight: 500; }
                 .found { background: #dcfce7; color: #166534; }
                 .not-found { background: #fee2e2; color: #991b1b; }
                 .not-searched { background: #fef3c7; color: #92400e; }
-                .confidential { background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 15px 20px; margin-top: 30px; display: flex; align-items: center; gap: 12px; }
-                .confidential-icon { font-size: 20px; }
-                .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 11px; text-align: center; }
+                .confidential { background: #fef3c7; border: 1px solid #fcd34d; border-radius: 6px; padding: 10px 14px; margin-top: 16px; }
+                .footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 10px; text-align: center; }
                 /* Profile styles with photo */
-                .profile-card-with-photo { display: flex; gap: 20px; background: #f9fafb; border-radius: 8px; padding: 15px 20px; border: 1px solid #e5e7eb; }
+                .profile-card-with-photo { display: flex; gap: 14px; background: #f9fafb; border-radius: 6px; padding: 10px 14px; border: 1px solid #e5e7eb; }
                 .subject-photo { flex-shrink: 0; }
-                .subject-photo img { width: 120px; height: 150px; object-fit: cover; border-radius: 6px; border: 2px solid #dc2626; }
-                .subject-photo-placeholder { width: 120px; height: 150px; background: #e5e7eb; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #6b7280; font-weight: 600; }
+                .subject-photo img { width: 90px; height: 112px; object-fit: cover; border-radius: 4px; border: 2px solid #dc2626; }
+                .subject-photo-placeholder { width: 90px; height: 112px; background: #e5e7eb; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #6b7280; font-weight: 600; }
                 .profile-details { flex: 1; }
-                .profile-name { font-size: 20px; font-weight: 700; color: #18181b; margin-bottom: 4px; }
-                .profile-aliases { font-size: 12px; color: #6b7280; font-style: italic; margin-bottom: 10px; }
-                .profile-grid-compact { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-                .profile-card { background: #f9fafb; border-radius: 8px; padding: 15px 20px; border: 1px solid #e5e7eb; }
-                .profile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-                .profile-item { font-size: 13px; }
+                .profile-name { font-size: 16px; font-weight: 700; color: #18181b; margin-bottom: 2px; }
+                .profile-aliases { font-size: 11px; color: #6b7280; font-style: italic; margin-bottom: 6px; }
+                .profile-grid-compact { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+                .profile-card { background: #f9fafb; border-radius: 6px; padding: 10px 14px; border: 1px solid #e5e7eb; }
+                .profile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+                .profile-item { font-size: 12px; }
                 .profile-item .label { color: #6b7280; }
-                .profile-item .value { font-weight: 600; color: #18181b; margin-left: 6px; }
+                .profile-item .value { font-weight: 600; color: #18181b; margin-left: 4px; }
                 /* Charges/Bond styles */
-                .charge-item { padding: 10px 15px; margin: 6px 0; background: #fef2f2; border-left: 4px solid #dc2626; border-radius: 0 6px 6px 0; font-size: 13px; color: #991b1b; }
+                .charge-item { padding: 6px 10px; margin: 3px 0; background: #fef2f2; border-left: 3px solid #dc2626; border-radius: 0 4px 4px 0; font-size: 12px; color: #991b1b; }
                 /* Phone styles */
-                .contact-item { padding: 10px 15px; margin: 6px 0; background: #f9fafb; border-radius: 6px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-                .phone-number { font-weight: 600; font-size: 14px; font-family: monospace; }
-                .phone-type, .phone-carrier { background: #e5e7eb; color: #374151; padding: 2px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase; }
-                .phone-active { background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+                .contact-item { padding: 6px 10px; margin: 3px 0; background: #f9fafb; border-radius: 4px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+                .phone-number { font-weight: 600; font-size: 12px; font-family: monospace; }
+                .phone-type, .phone-carrier { background: #e5e7eb; color: #374151; padding: 1px 6px; border-radius: 3px; font-size: 10px; text-transform: uppercase; }
+                .phone-active { background: #dcfce7; color: #166534; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
                 /* Relative/Contact styles */
-                .relative-card { padding: 12px 15px; margin: 8px 0; background: #f9fafb; border-left: 4px solid #3b82f6; border-radius: 0 6px 6px 0; }
-                .relative-name { font-weight: 600; font-size: 14px; color: #18181b; }
-                .relationship { font-weight: 400; color: #6b7280; font-size: 12px; }
-                .relative-phone, .relative-address { font-size: 12px; color: #374151; margin-top: 4px; }
+                .relative-card { padding: 8px 10px; margin: 4px 0; background: #f9fafb; border-left: 3px solid #3b82f6; border-radius: 0 4px 4px 0; }
+                .relative-name { font-weight: 600; font-size: 12px; color: #18181b; }
+                .relationship { font-weight: 400; color: #6b7280; font-size: 11px; }
+                .relative-phone, .relative-address { font-size: 11px; color: #374151; margin-top: 2px; }
                 /* Vehicle styles */
-                .vehicle-card { padding: 12px 15px; margin: 8px 0; background: #f0f9ff; border-left: 4px solid #0ea5e9; border-radius: 0 6px 6px 0; }
-                .vehicle-info { font-weight: 600; font-size: 14px; color: #0c4a6e; }
-                .vehicle-plate { font-size: 13px; color: #18181b; margin-top: 4px; }
-                .vehicle-plate strong { font-family: monospace; background: #fef3c7; padding: 2px 6px; border-radius: 4px; }
-                .vehicle-vin { font-size: 11px; color: #6b7280; font-family: monospace; }
+                .vehicle-card { padding: 8px 10px; margin: 4px 0; background: #f0f9ff; border-left: 3px solid #0ea5e9; border-radius: 0 4px 4px 0; }
+                .vehicle-info { font-weight: 600; font-size: 12px; color: #0c4a6e; }
+                .vehicle-plate { font-size: 12px; color: #18181b; margin-top: 2px; }
+                .vehicle-plate strong { font-family: monospace; background: #fef3c7; padding: 1px 4px; border-radius: 3px; }
+                .vehicle-vin { font-size: 10px; color: #6b7280; font-family: monospace; }
                 /* Employment styles */
-                .employment-card { padding: 12px 15px; margin: 8px 0; background: #f0fdf4; border-left: 4px solid #22c55e; border-radius: 0 6px 6px 0; }
-                .employer-name { font-weight: 600; font-size: 14px; color: #166534; }
-                .current-tag { background: #22c55e; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px; }
-                .job-title { font-size: 12px; color: #374151; font-style: italic; }
-                .employer-address, .employer-phone { font-size: 12px; color: #374151; margin-top: 4px; }
+                .employment-card { padding: 8px 10px; margin: 4px 0; background: #f0fdf4; border-left: 3px solid #22c55e; border-radius: 0 4px 4px 0; }
+                .employer-name { font-weight: 600; font-size: 12px; color: #166534; }
+                .current-tag { background: #22c55e; color: white; padding: 1px 4px; border-radius: 3px; font-size: 9px; margin-left: 6px; }
+                .job-title { font-size: 11px; color: #374151; font-style: italic; }
+                .employer-address, .employer-phone { font-size: 11px; color: #374151; margin-top: 2px; }
                 /* Warning styles */
-                .warning-item { padding: 12px 15px; margin: 8px 0; border-radius: 6px; display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
+                .warning-item { padding: 8px 10px; margin: 4px 0; border-radius: 4px; font-size: 12px; }
                 .warning-high { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
                 .warning-medium { background: #fef3c7; border: 1px solid #fcd34d; color: #92400e; }
                 .warning-low { background: #f0f9ff; border: 1px solid #bae6fd; color: #0c4a6e; }
-                .warning-icon { font-size: 16px; }
                 /* Case notes styles */
-                .case-note { padding: 10px 15px; margin: 6px 0; background: #f9fafb; border-radius: 6px; font-size: 13px; color: #374151; }
+                .case-note { padding: 6px 10px; margin: 3px 0; background: #f9fafb; border-radius: 4px; font-size: 12px; color: #374151; }
                 /* Location reasons */
-                .location-reasons { font-size: 11px; color: #6b7280; margin-top: 4px; }
+                .location-reasons { font-size: 10px; color: #6b7280; margin-top: 2px; }
                 @media print {
                   body { margin: 0; }
                   .header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -2197,7 +2250,7 @@ ${result.explanation}`,
                 </div>
 
                 ${summaryItems.length > 0 ? `
-                  <h2>📊 Executive Summary</h2>
+                  <h2>Executive Summary</h2>
                   <div class="summary-list">
                     <ul>
                       ${summaryItems.map(item => `<li>${item}</li>`).join('')}
@@ -2211,7 +2264,7 @@ ${result.explanation}`,
 
                 ${bondHtml}
 
-                <h2>📍 Priority Locations</h2>
+                <h2>Priority Locations</h2>
                 <div class="section">${locationsHtml}</div>
 
                 ${phonesHtml}
@@ -2227,7 +2280,6 @@ ${result.explanation}`,
                 ${notesHtml}
 
                 <div class="confidential">
-                  <span class="confidential-icon">⚠️</span>
                   <div>
                     <strong>CONFIDENTIAL</strong><br>
                     <span style="font-size: 11px; color: #92400e;">For authorized bail enforcement and fugitive recovery personnel only. Unauthorized disclosure prohibited.</span>
@@ -2383,8 +2435,8 @@ ${result.explanation}`,
         >
           <View style={styles.colTitleRow}>
             <View>
-              <Text style={styles.colTitleText}>🔴 TRACE</Text>
-              <Text style={styles.colSubtitle}>Tactical Recovery Analysis Engine</Text>
+              <Text style={styles.colTitleText}>Agent Dialogue</Text>
+              <Text style={styles.colSubtitle}>AI reasoning alongside you</Text>
             </View>
             <TouchableOpacity
               onPress={() => {
@@ -2730,6 +2782,26 @@ ${result.explanation}`,
                 {facialFeatures && (
                   <Text style={styles.faceReadyBadge}>✓ Face ready for matching</Text>
                 )}
+                {/* Subject ID Analysis Button */}
+                <TouchableOpacity
+                  style={[styles.subjectAnalysisBtn, isAnalyzingSubject && styles.btnDisabled]}
+                  onPress={runSubjectAnalysis}
+                  disabled={isAnalyzingSubject}
+                >
+                  {isAnalyzingSubject ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="body" size={14} color="#fff" />
+                      <Text style={styles.subjectAnalysisBtnText}>
+                        {subjectAnalysisResult ? 'Re-Analyze ID' : 'Analyze Tattoos/Scars'}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                {subjectAnalysisResult && (
+                  <Text style={styles.analysisCompleteBadge}>✓ ID Analysis Complete</Text>
+                )}
               </View>
             )}
 
@@ -3055,6 +3127,10 @@ const styles = StyleSheet.create({
   networkPhone: { fontSize: 12, color: DARK.success, marginTop: 6 },
   // Simplified styles
   faceReadyBadge: { fontSize: 12, color: DARK.success, backgroundColor: DARK.success + '20', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+  subjectAnalysisBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: DARK.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6, gap: 6, marginTop: 8, width: '100%', justifyContent: 'center' },
+  subjectAnalysisBtnText: { fontSize: 12, fontWeight: '600', color: '#fff' },
+  analysisCompleteBadge: { fontSize: 11, color: DARK.success, marginTop: 6 },
+  btnDisabled: { opacity: 0.6 },
   quickLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   quickLink: { width: 44, height: 44, borderRadius: 8, backgroundColor: DARK.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: DARK.border },
   quickLinkFound: { borderColor: DARK.success, backgroundColor: DARK.success + '15' },
