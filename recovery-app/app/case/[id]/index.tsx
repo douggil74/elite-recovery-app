@@ -296,7 +296,6 @@ export default function CaseDetailScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatInputRef = useRef<TextInput>(null);
-  const dropZoneRef = useRef<View>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
   const latestReport = reports[0];
@@ -409,11 +408,11 @@ export default function CaseDetailScreen() {
 
   // Native DOM drag-and-drop handlers for web
   useEffect(() => {
-    if (!isWeb || !dropZoneRef.current) return;
+    if (!isWeb) return;
 
-    // Get the native DOM node from the React Native Web View
-    const node = (dropZoneRef.current as any)._nativeRef || dropZoneRef.current;
-    if (!node || typeof node.addEventListener !== 'function') return;
+    // Use document.getElementById with nativeID (more reliable than refs in RN Web)
+    const node = document.getElementById('chat-drop-zone');
+    if (!node) return;
 
     const handleDragEnter = (e: DragEvent) => {
       e.preventDefault();
@@ -2334,7 +2333,7 @@ ${result.explanation}`,
 
         {/* COLUMN 1: Chat (Drop Zone for files) */}
         <View
-          ref={dropZoneRef}
+          nativeID="chat-drop-zone"
           style={[
             styles.col,
             styles.chatCol,
