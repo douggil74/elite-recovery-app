@@ -183,12 +183,13 @@ const OSINT_API = 'https://elite-recovery-osint.fly.dev';
 
 // Types for backend results
 interface OSINTResult {
-  type: 'email' | 'username' | 'name';
+  type: 'email' | 'username' | 'name' | 'phone';
   query: string;
-  accounts: { service: string; url?: string; status: string }[];
+  accounts: { service: string; url?: string; status?: string; note?: string }[];
   totalFound: number;
   executionTime: number;
   errors: string[];
+  tip?: string;
 }
 
 export default function OSINTScreen() {
@@ -229,40 +230,73 @@ export default function OSINTScreen() {
     const links = generateSearchLinks(searchQuery.trim(), searchType);
     setSearchResults(links);
 
-    // For email and username, also call backend APIs for actual results
-    if (searchType === 'email' || searchType === 'username') {
+    // Call backend APIs for actual results
+    if (searchType === 'email' || searchType === 'username' || searchType === 'phone') {
       setIsSearching(true);
       setSearchError(null);
       setOsintResult(null);
 
       try {
         if (searchType === 'email') {
-          // Use Holehe for email search
-          const response = await fetch(`${OSINT_API}/api/holehe`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: searchQuery.trim() }),
-          });
+          // Use Holehe for email search + Google lookup
+          const [holeheRes, googleRes] = await Promise.all([
+            fetch(`${OSINT_API}/api/holehe`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: searchQuery.trim() }),
+            }),
+            fetch(`${OSINT_API}/api/google-lookup`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: searchQuery.trim() }),
+            }),
+          ]);
 
-          if (response.ok) {
-            const data = await response.json();
-            setOsintResult({
-              type: 'email',
-              query: searchQuery.trim(),
-              accounts: (data.registered_on || []).map((item: any) => ({
+          const accounts: any[] = [];
+          let totalFound = 0;
+
+          if (holeheRes.ok) {
+            const data = await holeheRes.json();
+            (data.registered_on || []).forEach((item: any) => {
+              accounts.push({
                 service: item.service,
                 status: item.status,
                 url: item.service.includes('.') ? `https://${item.service}` : undefined,
-              })),
-              totalFound: data.registered_on?.length || 0,
-              executionTime: data.execution_time || 0,
-              errors: [],
+              });
             });
-          } else {
-            setSearchError('Email search failed');
+            totalFound += data.registered_on?.length || 0;
           }
+
+          if (googleRes.ok) {
+            const googleData = await googleRes.json();
+            if (googleData.intel?.google_account_exists) {
+              accounts.unshift({
+                service: 'Google Account',
+                status: 'exists',
+                url: `https://google.com/search?q="${searchQuery.trim()}"`,
+              });
+              totalFound += 1;
+            }
+            (googleData.intel?.services_found || []).forEach((svc: any) => {
+              accounts.push({
+                service: `Google: ${svc.service}`,
+                status: 'found',
+                url: svc.url,
+              });
+              totalFound += 1;
+            });
+          }
+
+          setOsintResult({
+            type: 'email',
+            query: searchQuery.trim(),
+            accounts,
+            totalFound,
+            executionTime: 0,
+            errors: [],
+          });
         } else if (searchType === 'username') {
-          // Use Sherlock for username search
+          // Use direct HTTP checks for username search
           const response = await fetch(`${OSINT_API}/api/sherlock`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -275,7 +309,7 @@ export default function OSINTScreen() {
               type: 'username',
               query: searchQuery.trim(),
               accounts: (data.found || []).map((item: any) => ({
-                service: item.site || item.name,
+                service: item.platform || item.site || item.name,
                 url: item.url,
                 status: 'found',
               })),
@@ -285,6 +319,41 @@ export default function OSINTScreen() {
             });
           } else {
             setSearchError('Username search failed');
+          }
+        } else if (searchType === 'phone') {
+          // Use phone lookup endpoint
+          const response = await fetch(`${OSINT_API}/api/phone-lookup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: searchQuery.trim() }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const accounts = [
+              ...(data.accounts_found || []).map((item: any) => ({
+                service: item.platform,
+                status: item.status,
+                url: item.url,
+                note: item.note,
+              })),
+              ...(data.apps_to_check || []).map((item: any) => ({
+                service: item.platform,
+                status: item.status,
+                note: item.note,
+              })),
+            ];
+            setOsintResult({
+              type: 'phone',
+              query: searchQuery.trim(),
+              accounts,
+              totalFound: data.total_found || 0,
+              executionTime: data.execution_time || 0,
+              errors: data.errors || [],
+              tip: data.tip,
+            });
+          } else {
+            setSearchError('Phone search failed');
           }
         }
       } catch (error: any) {
@@ -496,7 +565,7 @@ export default function OSINTScreen() {
             <>
               <Ionicons name="search" size={20} color="#fff" />
               <Text style={styles.searchBtnText}>
-                {searchType === 'email' || searchType === 'username' ? 'Search Accounts' : 'Generate Search Links'}
+                {searchType === 'email' || searchType === 'username' || searchType === 'phone' ? 'Search Accounts' : 'Generate Search Links'}
               </Text>
             </>
           )}

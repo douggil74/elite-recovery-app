@@ -36,7 +36,10 @@ RUN pip install --no-cache-dir \
     sherlock-project \
     socialscan \
     holehe \
-    playwright
+    playwright \
+    ignorant \
+    phoneinfoga || true \
+    ghunt || true
 
 # Install Playwright browsers (chromium only to save space)
 RUN playwright install chromium
