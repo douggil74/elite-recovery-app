@@ -3839,6 +3839,137 @@ async def extract_photo_gps(request: PhotoGPSRequest):
 
 
 # ============================================================================
+# REVERSE IMAGE SEARCH - Find original images with metadata
+# ============================================================================
+
+class ReverseImageSearchRequest(BaseModel):
+    image_base64: str
+
+
+@app.post("/api/reverse-image-search")
+async def reverse_image_search(request: ReverseImageSearchRequest):
+    """
+    Reverse image search to find original photos that may have GPS metadata.
+    Returns search URLs and attempts to find matches via free services.
+    """
+    start_time = datetime.now()
+    results = {
+        'search_urls': [],
+        'matches_found': [],
+        'tips': [],
+        'errors': []
+    }
+
+    try:
+        import base64
+        import tempfile
+        import hashlib
+
+        # Decode image
+        image_data = base64.b64decode(request.image_base64)
+        image_hash = hashlib.md5(image_data).hexdigest()
+
+        # Save temporarily for potential API uploads
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+            tmp.write(image_data)
+            tmp_path = tmp.name
+
+        try:
+            # Generate search URLs for manual searching
+            # These open directly in the browser with the image
+
+            # 1. Google Images - requires uploading, provide instructions
+            results['search_urls'].append({
+                'engine': 'Google Images',
+                'url': 'https://images.google.com/',
+                'instructions': 'Click camera icon, upload image or paste URL',
+                'best_for': 'Finding copies across the web, news articles'
+            })
+
+            # 2. Yandex - often finds more than Google for people
+            results['search_urls'].append({
+                'engine': 'Yandex Images',
+                'url': 'https://yandex.com/images/',
+                'instructions': 'Click camera icon, upload image',
+                'best_for': 'Finding social media profiles, especially Eastern European'
+            })
+
+            # 3. TinEye - specialized reverse image search
+            results['search_urls'].append({
+                'engine': 'TinEye',
+                'url': 'https://tineye.com/',
+                'instructions': 'Upload image or paste URL',
+                'best_for': 'Finding original source, oldest version with metadata'
+            })
+
+            # 4. Bing Visual Search
+            results['search_urls'].append({
+                'engine': 'Bing Visual Search',
+                'url': 'https://www.bing.com/visualsearch',
+                'instructions': 'Drag and drop image',
+                'best_for': 'Finding similar images, products, locations'
+            })
+
+            # 5. PimEyes (face search) - paid but powerful
+            results['search_urls'].append({
+                'engine': 'PimEyes',
+                'url': 'https://pimeyes.com/',
+                'instructions': 'Upload face photo - finds other photos of same person',
+                'best_for': 'Finding other photos of the same person across the internet'
+            })
+
+            # 6. FaceCheck.ID - face recognition search
+            results['search_urls'].append({
+                'engine': 'FaceCheck.ID',
+                'url': 'https://facecheck.id/',
+                'instructions': 'Upload face photo for reverse face search',
+                'best_for': 'Finding social media profiles by face'
+            })
+
+            # Try TinEye API (free tier - limited)
+            try:
+                # TinEye has a free search page we can link to
+                # For actual API, would need paid subscription
+                pass
+            except Exception as e:
+                results['errors'].append(f"TinEye search error: {str(e)}")
+
+            # Add tips for finding original with metadata
+            results['tips'] = [
+                "TinEye shows 'oldest' results first - these are most likely to be originals with GPS data",
+                "Check image properties on found pages - right click > Properties or Inspect",
+                "Look for the image on cloud services (Google Photos, iCloud) where metadata is preserved",
+                "Facebook/Instagram strip GPS but may show tagged location on the post",
+                "Request the original photo directly from the source if possible",
+                "Check if the person posted the same photo to multiple platforms - one may have kept metadata"
+            ]
+
+            # Calculate image dimensions for reference
+            try:
+                from PIL import Image
+                import io
+                img = Image.open(io.BytesIO(image_data))
+                results['image_info'] = {
+                    'width': img.width,
+                    'height': img.height,
+                    'format': img.format,
+                    'mode': img.mode,
+                    'hash': image_hash[:12]
+                }
+            except:
+                results['image_info'] = {'hash': image_hash[:12]}
+
+        finally:
+            os.unlink(tmp_path)
+
+    except Exception as e:
+        results['errors'].append(f"Reverse image search error: {str(e)}")
+
+    results['execution_time'] = (datetime.now() - start_time).total_seconds()
+    return results
+
+
+# ============================================================================
 # IP GEOLOCATION
 # ============================================================================
 

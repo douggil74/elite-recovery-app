@@ -215,6 +215,8 @@ export default function OSINTScreen() {
     yandex?: string;
     bing?: string;
     tineye?: string;
+    pimeyes?: string;
+    facecheck?: string;
   } | null>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhancedLocations, setEnhancedLocations] = useState<{
@@ -828,7 +830,30 @@ export default function OSINTScreen() {
                       </View>
                       <Ionicons name="open-outline" size={14} color={THEME.success} />
                     </TouchableOpacity>
-                    <Text style={styles.searchUrlNote}>Image uploaded - links will auto-search</Text>
+
+                    {/* Face Recognition Search Engines */}
+                    <Text style={[styles.reverseSearchTitle, { marginTop: 16, marginBottom: 8 }]}>FACE RECOGNITION SEARCH</Text>
+                    <TouchableOpacity
+                      style={styles.reverseSearchBtnFace}
+                      onPress={() => openUrl('https://pimeyes.com/')}
+                    >
+                      <View style={styles.reverseSearchReady}>
+                        <Ionicons name="person-circle" size={16} color={THEME.warning} />
+                        <Text style={styles.reverseSearchNameFace}>PimEyes (Face Search)</Text>
+                      </View>
+                      <Ionicons name="open-outline" size={14} color={THEME.warning} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.reverseSearchBtnFace}
+                      onPress={() => openUrl('https://facecheck.id/')}
+                    >
+                      <View style={styles.reverseSearchReady}>
+                        <Ionicons name="scan" size={16} color={THEME.warning} />
+                        <Text style={styles.reverseSearchNameFace}>FaceCheck.ID</Text>
+                      </View>
+                      <Ionicons name="open-outline" size={14} color={THEME.warning} />
+                    </TouchableOpacity>
+                    <Text style={styles.searchUrlNote}>Upload face photo to find other images of same person</Text>
                   </>
                 ) : (
                   <>
@@ -843,6 +868,30 @@ export default function OSINTScreen() {
                       </TouchableOpacity>
                     ))}
                     <Text style={styles.searchUrlNote}>Manual upload required</Text>
+
+                    {/* Face Recognition Search Engines - always show */}
+                    <Text style={[styles.reverseSearchTitle, { marginTop: 16, marginBottom: 8 }]}>FACE RECOGNITION SEARCH</Text>
+                    <TouchableOpacity
+                      style={styles.reverseSearchBtnFace}
+                      onPress={() => openUrl('https://pimeyes.com/')}
+                    >
+                      <View style={styles.reverseSearchReady}>
+                        <Ionicons name="person-circle" size={16} color={THEME.warning} />
+                        <Text style={styles.reverseSearchNameFace}>PimEyes (Face Search)</Text>
+                      </View>
+                      <Ionicons name="open-outline" size={14} color={THEME.warning} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.reverseSearchBtnFace}
+                      onPress={() => openUrl('https://facecheck.id/')}
+                    >
+                      <View style={styles.reverseSearchReady}>
+                        <Ionicons name="scan" size={16} color={THEME.warning} />
+                        <Text style={styles.reverseSearchNameFace}>FaceCheck.ID</Text>
+                      </View>
+                      <Ionicons name="open-outline" size={14} color={THEME.warning} />
+                    </TouchableOpacity>
+                    <Text style={styles.searchUrlNote}>Upload face photo to find other images of same person</Text>
                   </>
                 )}
               </View>
@@ -1569,6 +1618,22 @@ const styles = StyleSheet.create({
   reverseSearchNameActive: {
     fontSize: 13,
     color: THEME.success,
+    fontWeight: '600',
+  },
+  reverseSearchBtnFace: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: THEME.warning + '15',
+    padding: 10,
+    borderRadius: 6,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: THEME.warning + '40',
+  },
+  reverseSearchNameFace: {
+    fontSize: 13,
+    color: THEME.warning,
     fontWeight: '600',
   },
   searchUrlNote: {
