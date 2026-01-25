@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { DeviceEventEmitter } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getAllCases,
@@ -139,6 +140,16 @@ export function useCases(): UseCasesReturn {
 
   useEffect(() => {
     refresh();
+
+    // Listen for sync updates from AuthContext
+    const subscription = DeviceEventEmitter.addListener('casesUpdated', () => {
+      console.log('[useCases] Received casesUpdated event, refreshing...');
+      refresh();
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, [refresh]);
 
   const createCase = useCallback(

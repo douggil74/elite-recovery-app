@@ -2,7 +2,8 @@
  * Authentication Context
  * Manages user authentication state across the app
  */
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { DeviceEventEmitter } from 'react-native';
 import {
   AuthUser,
   signIn as firebaseSignIn,
@@ -91,6 +92,8 @@ async function handleUserLogin(authUser: AuthUser): Promise<void> {
           }
         }
         console.log(`[Auth] Synced ${newCount} new cases from cloud (${cloudCases.length} total in cloud)`);
+        // Emit event to refresh cases list
+        DeviceEventEmitter.emit('casesUpdated');
       }
 
       // 3. Sync settings from cloud
