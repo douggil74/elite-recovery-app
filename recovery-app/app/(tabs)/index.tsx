@@ -224,8 +224,6 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 12,
     width: '100%',
-    borderBottomWidth: 2,
-    borderBottomColor: THEME.primary,
   },
   brandTitle: {
     fontSize: 48,
