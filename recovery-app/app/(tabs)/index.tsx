@@ -104,7 +104,10 @@ export default function CasesScreen() {
     <View style={styles.container}>
       {/* TRACE Header - Centered Branding */}
       <View style={styles.brandHeader}>
-        <Text style={styles.brandTitle}>TRACE</Text>
+        <View style={styles.brandTitleRow}>
+          <Ionicons name="locate" size={42} color={THEME.primary} style={styles.brandLogo} />
+          <Text style={styles.brandTitle}>TRACE</Text>
+        </View>
         <Text style={styles.brandAcronym}>
           <Text style={styles.acronymLetter}>T</Text>actical{' '}
           <Text style={styles.acronymLetter}>R</Text>ecovery{' '}
@@ -225,6 +228,16 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 12,
     width: '100%',
+  },
+  brandTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  brandLogo: {
+    textShadowColor: THEME.primary,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 20,
   },
   brandTitle: {
     fontSize: 48,
