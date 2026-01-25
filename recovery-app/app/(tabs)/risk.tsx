@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -59,6 +59,13 @@ export default function RiskScreen() {
   const [criminalHistory, setCriminalHistory] = useState<ArrestsSearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [prefillApplied, setPrefillApplied] = useState(false);
+
+  // Track mounted state to prevent state updates after unmount
+  const isMounted = useRef(true);
+  useEffect(() => {
+    isMounted.current = true;
+    return () => { isMounted.current = false; };
+  }, []);
 
   // Form state
   const [name, setName] = useState('');
@@ -161,11 +168,15 @@ export default function RiskScreen() {
       };
 
       const scoreResult = await calculateRiskScore(input);
+      if (!isMounted.current) return;
       setResult(scoreResult);
     } catch (err: any) {
+      if (!isMounted.current) return;
       setError(err.message || 'Failed to calculate risk score');
     } finally {
-      setIsLoading(false);
+      if (isMounted.current) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -201,6 +212,10 @@ export default function RiskScreen() {
 
     try {
       const historyResult = await searchCriminalHistory(name.trim());
+
+      // Only update state if component is still mounted
+      if (!isMounted.current) return;
+
       setCriminalHistory(historyResult);
 
       // Auto-fill prior FTAs if found
@@ -216,9 +231,12 @@ export default function RiskScreen() {
         }
       }
     } catch (err: any) {
+      if (!isMounted.current) return;
       setError(err.message || 'Failed to search criminal history');
     } finally {
-      setIsSearchingHistory(false);
+      if (isMounted.current) {
+        setIsSearchingHistory(false);
+      }
     }
   };
 
