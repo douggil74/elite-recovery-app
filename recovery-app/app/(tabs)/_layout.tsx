@@ -45,7 +45,7 @@ export default function TabLayout() {
           title: 'TRACE',
           headerShown: false,
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="radio-outline" size={size} color={color} />
+            <Ionicons name="locate" size={size} color={color} />
           ),
         }}
       />

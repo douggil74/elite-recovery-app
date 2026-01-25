@@ -185,7 +185,7 @@ export default function AboutScreen() {
         {/* App Info */}
         <View style={styles.appInfo}>
           <View style={styles.logoBox}>
-            <Ionicons name="locate" size={40} color={COLORS.primary} />
+            <Ionicons name="locate" size={28} color={COLORS.primary} />
           </View>
           <Text style={styles.appName}>Elite Recovery System</Text>
           <Text style={styles.appVersion}>Version {VERSION}</Text>
@@ -366,25 +366,28 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
     paddingBottom: 40,
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
   },
   appInfo: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   logoBox: {
-    width: 80,
-    height: 80,
-    borderRadius: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 16,
     backgroundColor: COLORS.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
     borderWidth: 2,
     borderColor: COLORS.primary,
   },
   appName: {
-    fontSize: 24,
-    fontWeight: '800',
+    fontSize: 20,
+    fontWeight: '700',
     color: COLORS.text,
     marginBottom: 4,
   },
@@ -402,23 +405,23 @@ const styles = StyleSheet.create({
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   statBox: {
     flex: 1,
     alignItems: 'center',
-    padding: 12,
+    padding: 10,
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    marginHorizontal: 4,
+    borderRadius: 10,
+    marginHorizontal: 3,
   },
   statNumber: {
-    fontSize: 24,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '700',
     color: COLORS.primary,
   },
   statLabel: {
-    fontSize: 10,
+    fontSize: 9,
     color: COLORS.textSecondary,
     marginTop: 2,
   },
@@ -447,28 +450,28 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   section: {
-    marginBottom: 20,
+    marginBottom: 16,
   },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-    paddingBottom: 8,
+    gap: 8,
+    marginBottom: 10,
+    paddingBottom: 6,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '600',
     color: COLORS.text,
   },
   itemList: {
-    gap: 8,
+    gap: 6,
   },
   item: {
     backgroundColor: COLORS.surface,
-    padding: 12,
+    padding: 10,
     borderRadius: 8,
     borderLeftWidth: 3,
     borderLeftColor: COLORS.border,
@@ -480,7 +483,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   itemName: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: COLORS.text,
     flex: 1,
@@ -495,9 +498,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   itemDesc: {
-    fontSize: 12,
+    fontSize: 11,
     color: COLORS.textSecondary,
-    lineHeight: 16,
+    lineHeight: 15,
   },
   supportSection: {
     backgroundColor: COLORS.surface,
