@@ -565,7 +565,7 @@ export default function OSINTScreen() {
             <>
               <Ionicons name="search" size={20} color="#fff" />
               <Text style={styles.searchBtnText}>
-                {searchType === 'email' || searchType === 'username' || searchType === 'phone' ? 'Search Accounts' : 'Generate Search Links'}
+                {searchType === 'name' || searchType === 'address' ? 'Search Person' : 'Find Accounts'}
               </Text>
             </>
           )}
