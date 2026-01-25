@@ -47,8 +47,8 @@ const FEATURES: FeatureSection[] = [
     title: 'Username Search',
     icon: 'at',
     items: [
-      { name: 'Sherlock', description: 'Searches 400+ sites for username matches', type: 'tool' },
-      { name: 'Socialscan', description: 'Quick username availability check', type: 'tool' },
+      { name: 'Direct HTTP Checks', description: 'Checks 24 major platforms (Twitter, Instagram, TikTok, etc.)', type: 'tool' },
+      { name: 'Real Profile URLs', description: 'Returns actual profile links, not just availability', type: 'tool' },
       { name: 'Name Variations', description: 'Auto-generates usernames from name (Doug/Douglas, etc.)', type: 'tool' },
     ],
   },
@@ -57,6 +57,17 @@ const FEATURES: FeatureSection[] = [
     icon: 'mail',
     items: [
       { name: 'Holehe', description: 'Checks if email is registered on 120+ services', type: 'tool' },
+      { name: 'Google Account Check', description: 'Detects Google account, YouTube, Blogger, Maps reviews', type: 'tool' },
+      { name: 'Search Links', description: 'Google Image search, public Docs/Drive files', type: 'tool' },
+    ],
+  },
+  {
+    title: 'Phone Lookup',
+    icon: 'call',
+    items: [
+      { name: 'WhatsApp/Telegram Check', description: 'Detects if phone has messaging apps', type: 'tool' },
+      { name: 'Payment Apps', description: 'Lists Venmo, Cash App, Zelle to check manually', type: 'tool' },
+      { name: 'Forgot Password Trick', description: 'Use phone in FB/IG recovery to verify account exists', type: 'tool' },
     ],
   },
   {
@@ -101,17 +112,20 @@ const FEATURES: FeatureSection[] = [
 
 const PYTHON_TOOLS_LIVE = [
   // AI Tools
-  { name: 'Agent Dialogue', description: 'AI investigative partner', status: 'live', category: 'ai' },
+  { name: 'Agent Dialogue', description: 'AI investigative partner (Claude + GPT-4o)', status: 'live', category: 'ai' },
   { name: 'Vision Analysis', description: 'AI photo/document analysis', status: 'live', category: 'ai' },
   { name: 'FTA Risk Analysis', description: 'AI-generated risk assessments', status: 'live', category: 'ai' },
   // Jail Roster
   { name: 'Jail Roster Scraper', description: 'Extract inmate data from Revize jail sites', status: 'live', category: 'scraper' },
   { name: 'Bulk Import', description: 'Import multiple inmates at once', status: 'live', category: 'scraper' },
   // Username Search
-  { name: 'Sherlock', description: 'Username search across 400+ sites', status: 'live', category: 'username' },
+  { name: 'Direct HTTP Checks', description: 'Username search across 24 platforms via direct requests', status: 'live', category: 'username' },
   { name: 'Socialscan', description: 'Quick username availability check', status: 'live', category: 'username' },
   // Email Tools
   { name: 'Holehe', description: 'Check email registration on 120+ services', status: 'live', category: 'email' },
+  { name: 'Google Account Check', description: 'YouTube, Blogger, Maps review detection', status: 'live', category: 'email' },
+  // Phone Lookup
+  { name: 'Phone Lookup', description: 'WhatsApp/Telegram detection + payment app guidance', status: 'live', category: 'phone' },
   // Court Records
   { name: 'CourtListener API', description: 'Federal court records (limited without key)', status: 'live', category: 'court' },
   // Risk Scoring
@@ -124,9 +138,11 @@ const BACKEND_INFO = {
   endpoints: [
     '/api/jail-roster - Scrape jail booking',
     '/api/fta-score - FTA risk calculation',
-    '/api/sherlock - Username search (400+ sites)',
-    '/api/holehe - Email discovery',
-    '/api/ai/chat - AI dialogue',
+    '/api/sherlock - Username search (24 platforms)',
+    '/api/holehe - Email discovery (120+ services)',
+    '/api/phone-lookup - WhatsApp/Telegram detection',
+    '/api/google-check - Google account investigation',
+    '/api/ai/chat - AI dialogue (Claude/GPT-4o)',
     '/api/ai/analyze - Vision analysis',
     '/api/ai/brief - Recovery brief',
     '/api/face-match - Face comparison',
@@ -181,15 +197,15 @@ export default function AboutScreen() {
         {/* Stats */}
         <View style={styles.statsRow}>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>5</Text>
+            <Text style={styles.statNumber}>7</Text>
             <Text style={styles.statLabel}>OSINT Tools</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>400+</Text>
-            <Text style={styles.statLabel}>Sites Searched</Text>
+            <Text style={styles.statNumber}>144+</Text>
+            <Text style={styles.statLabel}>Sites Checked</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>15</Text>
+            <Text style={styles.statNumber}>10</Text>
             <Text style={styles.statLabel}>API Endpoints</Text>
           </View>
           <View style={styles.statBox}>
