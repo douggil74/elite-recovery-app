@@ -1,7 +1,9 @@
 {
-  "buildCommand": "npm run build",
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "expo export -p web",
   "outputDirectory": "dist",
   "framework": null,
+  "installCommand": "npm install",
   "public": true,
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
