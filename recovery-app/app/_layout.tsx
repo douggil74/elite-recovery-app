@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Font from 'expo-font';
 import { COLORS } from '@/constants';
 import { initializeFirebase } from '@/lib/firebase';
 import { AuthProvider } from '@/contexts/AuthContext';
@@ -9,7 +10,21 @@ import { AuthProvider } from '@/contexts/AuthContext';
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
+  const [fontsLoaded, setFontsLoaded] = useState(false);
+
   useEffect(() => {
+    async function loadFonts() {
+      try {
+        await Font.loadAsync({
+          'WorldConflict': require('../assets/fonts/WorldConflict.ttf'),
+        });
+        setFontsLoaded(true);
+      } catch (err) {
+        console.error('Font loading error:', err);
+        setFontsLoaded(true); // Continue without custom font
+      }
+    }
+
     // Initialize Firebase on app start - always sync to cloud
     initializeFirebase()
       .then((db) => {
@@ -23,8 +38,14 @@ export default function RootLayout() {
         console.error('Firebase init error:', err);
       });
 
-    SplashScreen.hideAsync();
+    loadFonts();
   }, []);
+
+  useEffect(() => {
+    if (fontsLoaded) {
+      SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded]);
 
   return (
     <AuthProvider>

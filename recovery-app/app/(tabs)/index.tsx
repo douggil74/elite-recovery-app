@@ -247,7 +247,7 @@ const styles = StyleSheet.create({
     textShadowColor: THEME.primary,
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 25,
-    fontFamily: '"Black Ops One", monospace',
+    fontFamily: 'WorldConflict',
   },
   brandAcronym: {
     fontSize: 12,
