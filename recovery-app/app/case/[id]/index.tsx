@@ -1839,6 +1839,28 @@ ${result.explanation}`,
           content: aiResponse,
           timestamp: new Date(),
         }]);
+
+        // Extract addresses from AI response and add to locations
+        const addressPattern = /(\d+\s+[A-Za-z0-9\s,.]+(?:Street|St|Avenue|Ave|Drive|Dr|Road|Rd|Lane|Ln|Court|Ct|Way|Boulevard|Blvd|Circle|Cir|Place|Pl)[^,]*,?\s*[A-Za-z\s]+,?\s*(?:LA|Louisiana|TX|Texas|MS|FL|AL|GA)?[,\s]*\d{5}(?:-\d{4})?)/gi;
+        const foundAddresses = aiResponse.match(addressPattern);
+        if (foundAddresses && foundAddresses.length > 0) {
+          const newLocations: RankedLocation[] = foundAddresses.map((addr: string, idx: number) => ({
+            rank: idx + 1,
+            address: addr.trim(),
+            probability: Math.max(0.3, 0.8 - (idx * 0.15)),
+            type: 'frequent_location' as const,
+            reasoning: ['Mentioned by AI analyst'],
+            sources: ['Chat analysis'],
+          }));
+          setSquadLocations(prev => {
+            const existing = new Set(prev.map(l => l.address.toLowerCase()));
+            const unique = newLocations.filter(l => !existing.has(l.address.toLowerCase()));
+            if (unique.length > 0) {
+              console.log('[Chat] Extracted addresses from AI response:', unique.map(l => l.address));
+            }
+            return [...prev, ...unique];
+          });
+        }
       } else {
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
