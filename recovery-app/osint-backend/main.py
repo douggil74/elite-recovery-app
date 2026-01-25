@@ -75,7 +75,7 @@ class UsernameSearchResult(BaseModel):
     searched_at: str
     tool: str
     total_sites: int
-    found: List[Dict[str, str]]
+    found: List[Dict[str, Any]]
     not_found: List[str]
     errors: List[str]
     execution_time: float
@@ -217,15 +217,113 @@ def run_sherlock(username: str, timeout: int = 60) -> Dict[str, Any]:
 
 @app.post("/api/sherlock", response_model=UsernameSearchResult)
 async def sherlock_search(request: UsernameSearchRequest):
-    """Search username across 400+ sites using Sherlock"""
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        executor,
-        run_sherlock,
-        request.username,
-        request.timeout
-    )
+    """Search username across popular platforms using direct HTTP checks"""
+    # Use direct HTTP checks instead of CLI tools for reliability
+    result = await check_username_direct(request.username)
     return result
+
+
+async def check_username_direct(username: str) -> Dict[str, Any]:
+    """Direct HTTP checks for username on popular platforms - more reliable than CLI tools"""
+    start_time = datetime.now()
+    found = []
+    errors = []
+
+    # Popular platforms with reliable username check patterns
+    platforms = [
+        {"name": "Twitter/X", "url": f"https://twitter.com/{username}", "check": "status_code"},
+        {"name": "Instagram", "url": f"https://www.instagram.com/{username}/", "check": "status_code"},
+        {"name": "GitHub", "url": f"https://github.com/{username}", "check": "status_code"},
+        {"name": "TikTok", "url": f"https://www.tiktok.com/@{username}", "check": "status_code"},
+        {"name": "YouTube", "url": f"https://www.youtube.com/@{username}", "check": "status_code"},
+        {"name": "Reddit", "url": f"https://www.reddit.com/user/{username}", "check": "status_code"},
+        {"name": "Pinterest", "url": f"https://www.pinterest.com/{username}/", "check": "status_code"},
+        {"name": "LinkedIn", "url": f"https://www.linkedin.com/in/{username}", "check": "status_code"},
+        {"name": "Snapchat", "url": f"https://www.snapchat.com/add/{username}", "check": "status_code"},
+        {"name": "Facebook", "url": f"https://www.facebook.com/{username}", "check": "status_code"},
+        {"name": "Twitch", "url": f"https://www.twitch.tv/{username}", "check": "status_code"},
+        {"name": "SoundCloud", "url": f"https://soundcloud.com/{username}", "check": "status_code"},
+        {"name": "Spotify", "url": f"https://open.spotify.com/user/{username}", "check": "status_code"},
+        {"name": "Medium", "url": f"https://medium.com/@{username}", "check": "status_code"},
+        {"name": "Flickr", "url": f"https://www.flickr.com/people/{username}", "check": "status_code"},
+        {"name": "Vimeo", "url": f"https://vimeo.com/{username}", "check": "status_code"},
+        {"name": "Tumblr", "url": f"https://{username}.tumblr.com", "check": "status_code"},
+        {"name": "DeviantArt", "url": f"https://www.deviantart.com/{username}", "check": "status_code"},
+        {"name": "Patreon", "url": f"https://www.patreon.com/{username}", "check": "status_code"},
+        {"name": "Cash App", "url": f"https://cash.app/${username}", "check": "status_code"},
+        {"name": "Venmo", "url": f"https://venmo.com/{username}", "check": "status_code"},
+        {"name": "Steam", "url": f"https://steamcommunity.com/id/{username}", "check": "status_code"},
+        {"name": "Xbox", "url": f"https://account.xbox.com/en-us/profile?gamertag={username}", "check": "status_code"},
+        {"name": "Roblox", "url": f"https://www.roblox.com/users/profile?username={username}", "check": "status_code"},
+    ]
+
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        tasks = []
+        for platform in platforms:
+            tasks.append(check_single_platform(client, platform, username))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, dict) and result.get("found"):
+                found.append({
+                    "platform": result["name"],
+                    "url": result["url"],
+                    "response_time": result.get("response_time", 0)
+                })
+            elif isinstance(result, Exception):
+                errors.append(str(result))
+
+    execution_time = (datetime.now() - start_time).total_seconds()
+
+    return {
+        "username": username,
+        "searched_at": datetime.now().isoformat(),
+        "tool": "direct_http",
+        "total_sites": len(platforms),
+        "found": found,
+        "not_found": [],
+        "errors": errors[:5],  # Limit error messages
+        "execution_time": execution_time
+    }
+
+
+async def check_single_platform(client: httpx.AsyncClient, platform: Dict, username: str) -> Dict:
+    """Check if username exists on a single platform"""
+    try:
+        start = datetime.now()
+        response = await client.get(
+            platform["url"],
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+        )
+        elapsed = (datetime.now() - start).total_seconds()
+
+        # Most platforms return 404 for non-existent users
+        # 200 usually means the profile exists
+        found = response.status_code == 200
+
+        # Some platforms redirect non-existent users
+        if response.status_code in [301, 302, 303, 307, 308]:
+            # Check if redirected to login/home (user doesn't exist)
+            final_url = str(response.url)
+            if "login" in final_url.lower() or final_url == platform["url"].split("/")[0] + "//":
+                found = False
+
+        return {
+            "name": platform["name"],
+            "url": platform["url"],
+            "found": found,
+            "response_time": elapsed
+        }
+    except Exception as e:
+        return {
+            "name": platform["name"],
+            "url": platform["url"],
+            "found": False,
+            "error": str(e)
+        }
 
 
 # ============================================================================
