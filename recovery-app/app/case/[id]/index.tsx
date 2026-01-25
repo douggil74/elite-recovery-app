@@ -1787,8 +1787,8 @@ ${result.explanation}`,
           contextParts.push(`\n--- DOCUMENT CONTENTS ---`);
           docsWithText.forEach(f => {
             // Include up to 15000 chars per doc for context (enough for detailed questions)
-            const textPreview = f.extractedText!.slice(0, 15000);
-            contextParts.push(`\n[${f.name}]:\n${textPreview}${f.extractedText!.length > 15000 ? '\n...(truncated)' : ''}`);
+            const textPreview = f.extractedText!.slice(0, 40000);
+            contextParts.push(`\n[${f.name}]:\n${textPreview}${f.extractedText!.length > 40000 ? '\n...(truncated)' : ''}`);
           });
           contextParts.push(`--- END DOCUMENTS ---\n`);
         }
@@ -1800,7 +1800,7 @@ ${result.explanation}`,
       // Build TRACE detective partner prompt
       const docsWithText = uploadedFiles.filter(f => f.extractedText);
       const documentContents = docsWithText.length > 0
-        ? docsWithText.map(f => `[${f.name}]:\n${f.extractedText!.slice(0, 15000)}${f.extractedText!.length > 15000 ? '\n...(truncated)' : ''}`).join('\n\n')
+        ? docsWithText.map(f => `[${f.name}]:\n${f.extractedText!.slice(0, 40000)}${f.extractedText!.length > 40000 ? '\n...(truncated)' : ''}`).join('\n\n')
         : undefined;
 
       const photoIntelSummary = photoIntel
@@ -1814,7 +1814,7 @@ ${result.explanation}`,
         uploadedFiles: uploadedFiles.map(f => f.name),
         knownAddresses: displayAddresses.slice(0, 5).map(a => a.fullAddress),
         documentContents,
-        recentMessages: chatMessages.slice(-5).map(m => `${m.role}: ${m.content.slice(0, 200)}`).join('\n'),
+        recentMessages: chatMessages.slice(-15).map(m => `${m.role}: ${m.content.slice(0, 800)}`).join('\n'),
       });
 
       const response = await fetch('https://elite-recovery-osint.fly.dev/api/ai/chat', {

@@ -218,7 +218,8 @@ export async function extractTextFromPdf(data: ArrayBuffer | Uint8Array): Promis
         .trim();
 
       if (pageText) {
-        textParts.push(pageText);
+        // Include page marker for reference (e.g., "pg 4-11")
+        textParts.push(`--- Page ${pageNum} ---\n${pageText}`);
       }
     }
 
