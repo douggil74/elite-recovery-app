@@ -441,6 +441,84 @@ CRITICAL RULES:
 7. If you truly cannot determine location, say so but still note all clues`;
 
 /**
+ * Extract GPS from EXIF metadata first (fast, accurate if available)
+ */
+async function extractExifGPS(imageBase64: string): Promise<{
+  hasGps: boolean;
+  latitude?: number;
+  longitude?: number;
+  altitude?: number;
+  timestamp?: string;
+  cameraMake?: string;
+  cameraModel?: string;
+} | null> {
+  try {
+    const base64Data = imageBase64.includes('base64,')
+      ? imageBase64.split('base64,')[1]
+      : imageBase64;
+
+    console.log('[GeoAnalysis] Extracting EXIF GPS data...');
+
+    const response = await fetch(`${BACKEND_URL}/api/photo-gps`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_base64: base64Data }),
+    });
+
+    if (!response.ok) {
+      console.error('[GeoAnalysis] EXIF extraction failed:', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log('[GeoAnalysis] EXIF result:', data.has_gps ? 'GPS found' : 'No GPS');
+
+    return {
+      hasGps: data.has_gps,
+      latitude: data.latitude,
+      longitude: data.longitude,
+      altitude: data.altitude,
+      timestamp: data.timestamp,
+      cameraMake: data.camera_make,
+      cameraModel: data.camera_model,
+    };
+  } catch (error) {
+    console.error('[GeoAnalysis] EXIF extraction error:', error);
+    return null;
+  }
+}
+
+/**
+ * Reverse geocode coordinates to get address
+ */
+async function reverseGeocode(lat: number, lng: number): Promise<{
+  city?: string;
+  state?: string;
+  country?: string;
+  address?: string;
+} | null> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1`;
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'TRACE-Recovery-App/1.0' },
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    return {
+      city: data.address?.city || data.address?.town || data.address?.village,
+      state: data.address?.state,
+      country: data.address?.country,
+      address: data.display_name,
+    };
+  } catch (error) {
+    console.error('[GeoAnalysis] Reverse geocode error:', error);
+    return null;
+  }
+}
+
+/**
  * Analyze a photo to predict its geographic location
  */
 export async function analyzePhotoLocation(imageBase64: string): Promise<GeoAnalysisResult | null> {
@@ -450,6 +528,61 @@ export async function analyzePhotoLocation(imageBase64: string): Promise<GeoAnal
       : imageBase64;
 
     console.log('[GeoAnalysis] Starting analysis...');
+
+    // STEP 1: Try to extract GPS from EXIF metadata (fast, accurate)
+    const exifData = await extractExifGPS(imageBase64);
+
+    if (exifData?.hasGps && exifData.latitude && exifData.longitude) {
+      console.log('[GeoAnalysis] Found GPS in EXIF!', exifData.latitude, exifData.longitude);
+
+      // Reverse geocode to get address
+      const location = await reverseGeocode(exifData.latitude, exifData.longitude);
+
+      const googleMapsUrl = `https://www.google.com/maps/@${exifData.latitude},${exifData.longitude},17z`;
+      const streetViewUrl = `https://www.google.com/maps/@${exifData.latitude},${exifData.longitude},3a,75y,0h,90t/data=!3m6!1e1!3m4!1s!2e0!7i16384!8i8192`;
+
+      return {
+        analyzedAt: new Date().toISOString(),
+        primaryLocation: {
+          country: location?.country || 'United States',
+          region: location?.state || 'Unknown',
+          city: location?.city,
+          confidence: 'high',
+          coordinates: {
+            lat: exifData.latitude,
+            lng: exifData.longitude,
+            radius: 'exact GPS location',
+          },
+        },
+        alternativeLocations: [],
+        visualClues: [{
+          type: 'infrastructure',
+          description: 'GPS coordinates extracted from photo metadata',
+          locationIndicator: `EXIF GPS: ${exifData.latitude}, ${exifData.longitude}`,
+          confidence: 'strong',
+        }],
+        businessNames: [],
+        signText: [],
+        landmarks: [],
+        areaCodesFound: [],
+        regionalChains: [],
+        businessSearchLinks: [],
+        summary: `**EXACT GPS LOCATION FOUND** - Photo taken at coordinates ${exifData.latitude}, ${exifData.longitude}${location?.address ? ` (${location.address})` : ''}. ${exifData.timestamp ? `Photo timestamp: ${exifData.timestamp}.` : ''} ${exifData.cameraMake ? `Camera: ${exifData.cameraMake} ${exifData.cameraModel || ''}` : ''}`,
+        searchSuggestions: [
+          'GPS coordinates extracted from EXIF metadata - exact location!',
+          `View on Google Maps: ${googleMapsUrl}`,
+          location?.address ? `Address: ${location.address}` : 'Use coordinates to find exact address',
+        ],
+        mapSearchLinks: {
+          googleMaps: googleMapsUrl,
+          googleStreetView: streetViewUrl,
+        },
+        rawAnalysis: `GPS extracted from photo EXIF metadata.\nLatitude: ${exifData.latitude}\nLongitude: ${exifData.longitude}${exifData.altitude ? `\nAltitude: ${exifData.altitude}m` : ''}${exifData.timestamp ? `\nTimestamp: ${exifData.timestamp}` : ''}${exifData.cameraMake ? `\nCamera: ${exifData.cameraMake} ${exifData.cameraModel || ''}` : ''}`,
+      };
+    }
+
+    // STEP 2: No GPS in EXIF, fall back to AI visual analysis
+    console.log('[GeoAnalysis] No EXIF GPS, using AI visual analysis...');
 
     const response = await fetch(`${BACKEND_URL}/api/ai/analyze`, {
       method: 'POST',

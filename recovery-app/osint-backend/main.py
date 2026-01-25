@@ -3728,6 +3728,117 @@ async def extract_metadata(request: MetadataRequest):
 
 
 # ============================================================================
+# PHOTO GPS EXTRACTION - Extract GPS coordinates from image EXIF
+# ============================================================================
+
+class PhotoGPSRequest(BaseModel):
+    image_base64: str
+
+
+def convert_gps_to_decimal(gps_coords, gps_ref):
+    """Convert EXIF GPS coordinates (degrees, minutes, seconds) to decimal"""
+    try:
+        # Handle both string and Ratio formats
+        def to_float(val):
+            if hasattr(val, 'num') and hasattr(val, 'den'):
+                return float(val.num) / float(val.den)
+            return float(val)
+
+        degrees = to_float(gps_coords[0])
+        minutes = to_float(gps_coords[1])
+        seconds = to_float(gps_coords[2])
+
+        decimal = degrees + (minutes / 60.0) + (seconds / 3600.0)
+
+        # Apply hemisphere
+        if gps_ref in ['S', 'W']:
+            decimal = -decimal
+
+        return round(decimal, 6)
+    except Exception as e:
+        print(f"GPS conversion error: {e}")
+        return None
+
+
+@app.post("/api/photo-gps")
+async def extract_photo_gps(request: PhotoGPSRequest):
+    """Extract GPS coordinates and EXIF data from photo"""
+    start_time = datetime.now()
+    result = {
+        'has_gps': False,
+        'latitude': None,
+        'longitude': None,
+        'altitude': None,
+        'timestamp': None,
+        'camera_make': None,
+        'camera_model': None,
+        'errors': []
+    }
+
+    try:
+        import base64
+        import tempfile
+        import exifread
+
+        # Decode image
+        image_data = base64.b64decode(request.image_base64)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+            tmp.write(image_data)
+            tmp_path = tmp.name
+
+        try:
+            with open(tmp_path, 'rb') as f:
+                tags = exifread.process_file(f, details=True)
+
+            # Extract GPS coordinates
+            if 'GPS GPSLatitude' in tags and 'GPS GPSLongitude' in tags:
+                lat_ref = str(tags.get('GPS GPSLatitudeRef', 'N'))
+                lon_ref = str(tags.get('GPS GPSLongitudeRef', 'W'))
+
+                lat_vals = tags['GPS GPSLatitude'].values
+                lon_vals = tags['GPS GPSLongitude'].values
+
+                lat = convert_gps_to_decimal(lat_vals, lat_ref)
+                lon = convert_gps_to_decimal(lon_vals, lon_ref)
+
+                if lat is not None and lon is not None:
+                    result['has_gps'] = True
+                    result['latitude'] = lat
+                    result['longitude'] = lon
+
+                    # Get altitude if available
+                    if 'GPS GPSAltitude' in tags:
+                        try:
+                            alt = tags['GPS GPSAltitude'].values[0]
+                            if hasattr(alt, 'num') and hasattr(alt, 'den'):
+                                result['altitude'] = round(float(alt.num) / float(alt.den), 1)
+                        except:
+                            pass
+
+            # Extract timestamp
+            if 'EXIF DateTimeOriginal' in tags:
+                result['timestamp'] = str(tags['EXIF DateTimeOriginal'])
+            elif 'Image DateTime' in tags:
+                result['timestamp'] = str(tags['Image DateTime'])
+
+            # Extract camera info
+            if 'Image Make' in tags:
+                result['camera_make'] = str(tags['Image Make'])
+            if 'Image Model' in tags:
+                result['camera_model'] = str(tags['Image Model'])
+
+        finally:
+            os.unlink(tmp_path)
+
+    except Exception as e:
+        result['errors'].append(f"EXIF extraction error: {str(e)}")
+
+    result['execution_time'] = (datetime.now() - start_time).total_seconds()
+    return result
+
+
+# ============================================================================
 # IP GEOLOCATION
 # ============================================================================
 
