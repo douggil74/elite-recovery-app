@@ -407,8 +407,16 @@ export async function syncSettings(userId: string, settings: Partial<AppSettings
     // Don't sync passcode-related settings for security
     const { passcode, ...safeSettings } = settings as any;
 
+    // Filter out undefined values - Firestore doesn't accept them
+    const cleanSettings: Record<string, any> = {};
+    for (const [key, value] of Object.entries(safeSettings)) {
+      if (value !== undefined) {
+        cleanSettings[key] = value;
+      }
+    }
+
     await setDoc(settingsRef, {
-      ...safeSettings,
+      ...cleanSettings,
       syncedAt: serverTimestamp(),
     }, { merge: true });
 
