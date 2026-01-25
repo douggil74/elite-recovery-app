@@ -106,6 +106,8 @@ export default function SignUpScreen() {
                 placeholder="John Doe"
                 placeholderTextColor={COLORS.textMuted}
                 autoCapitalize="words"
+                autoComplete="name"
+                textContentType="name"
               />
             </View>
           </View>
@@ -123,6 +125,8 @@ export default function SignUpScreen() {
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
+                autoComplete="email"
+                textContentType="emailAddress"
               />
             </View>
           </View>
@@ -155,6 +159,8 @@ export default function SignUpScreen() {
                 placeholder="••••••••"
                 placeholderTextColor={COLORS.textMuted}
                 secureTextEntry={!showPassword}
+                autoComplete="new-password"
+                textContentType="newPassword"
               />
               <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
                 <Ionicons
@@ -177,6 +183,8 @@ export default function SignUpScreen() {
                 placeholder="••••••••"
                 placeholderTextColor={COLORS.textMuted}
                 secureTextEntry={!showPassword}
+                autoComplete="new-password"
+                textContentType="newPassword"
               />
             </View>
           </View>
