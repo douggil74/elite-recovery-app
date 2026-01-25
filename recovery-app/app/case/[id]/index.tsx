@@ -508,7 +508,7 @@ export default function CaseDetailScreen() {
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
           role: 'agent',
-          content: '🔬 **FACE ANALYSIS**: Extracting facial biometrics for matching...',
+          content: 'FACE ANALYSIS: Extracting facial biometrics for matching...',
           timestamp: new Date(),
         }]);
 
@@ -526,20 +526,20 @@ export default function CaseDetailScreen() {
             setChatMessages(prev => [...prev, {
               id: uniqueId(),
               role: 'agent',
-              content: `✅ **FACE BIOMETRICS EXTRACTED**
+              content: `FACE BIOMETRICS EXTRACTED
 
-**Bone Structure:**
+Bone Structure:
 - Face: ${result.features.faceShape}, ${result.features.jawline} jaw
 - Cheekbones: ${result.features.cheekbones}
 
-**Eyes:**
+Eyes:
 - Shape: ${result.features.eyeShape}, ${result.features.eyeSpacing} spacing
 - Color: ${result.features.eyeColor}
 
-**Nose:**
+Nose:
 - ${result.features.noseShape}, ${result.features.noseWidth} width
 
-**Distinctive:**
+Distinctive:
 ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveFeatures.map(f => `- ${f}`).join('\n') : '- None noted'}
 
 *Use this profile to match against any photo.*`,
@@ -687,13 +687,13 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
         let resultMessage = '';
 
         if (found > 0) {
-          resultMessage = `✅ **${found} PROFILES FOUND** for "${fullName}"\n\n`;
+          resultMessage = `[FOUND]${found} PROFILES FOUND** for "${fullName}"\n\n`;
           resultMessage += investigation.confirmed_profiles.slice(0, 5).map(p =>
-            `• **${p.platform}**: ${p.url}`
+            `${p.platform}: ${p.url}`
           ).join('\n');
           if (found > 5) resultMessage += `\n• +${found - 5} more`;
 
-          resultMessage += `\n\n📋 **OSINT CHECKLIST:**`;
+          resultMessage += `\n\n[REPORT]OSINT CHECKLIST:**`;
           resultMessage += `\n1. Open each profile and compare photo to mugshot`;
           resultMessage += `\n2. Check for current location in bio/posts`;
           resultMessage += `\n3. Note friends/family who comment often`;
@@ -702,15 +702,15 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
 
           if (hasMugshot) {
             const demographicInfo = demographics
-              ? `\n\n👤 **Match Against:** ${demographics.race || ''} ${demographics.sex || ''}, Age ${demographics.age || 'Unknown'}`
+              ? `\n\n[PERSON]Match Against:** ${demographics.race || ''} ${demographics.sex || ''}, Age ${demographics.age || 'Unknown'}`
               : '';
             resultMessage += demographicInfo;
           }
 
-          resultMessage += `\n\n💡 **Found intel?** Tell me: "add [name] as [relationship]" or paste any addresses/phones you find.`;
+          resultMessage += `\n\n[TIP]Found intel?** Tell me: "add [name] as [relationship]" or paste any addresses/phones you find.`;
         } else {
-          resultMessage = `❌ No confirmed profiles for "${fullName}".\n\n`;
-          resultMessage += `**Try manually:**\n`;
+          resultMessage = `[ERROR]No confirmed profiles for "${fullName}".\n\n`;
+          resultMessage += `Try manually:\n`;
           resultMessage += `• Facebook People Search\n`;
           resultMessage += `• Search nicknames or aliases\n`;
           resultMessage += `• Search family members' profiles\n`;
@@ -763,40 +763,37 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
       setChatMessages(prev => [...prev, {
         id: uniqueId(),
         role: 'agent',
-        content: `✅ Local OSINT complete. Found ${localResults.profiles.filter(p => p.exists === true).length} profiles.`,
+        content: `[OK]Local OSINT complete. Found ${localResults.profiles.filter(p => p.exists === true).length} profiles.`,
         timestamp: new Date(),
       }]);
     } catch (localError: any) {
       setChatMessages(prev => [...prev, {
         id: uniqueId(),
         role: 'agent',
-        content: `⚠️ OSINT search error: ${localError?.message || 'Unknown error'}. Try manual search links.`,
+        content: `[WARN]OSINT search error: ${localError?.message || 'Unknown error'}. Try manual search links.`,
         timestamp: new Date(),
       }]);
     }
   };
 
-  // Get the best available subject name (used throughout the component)
-  // IMPORTANT: primaryTarget is the LOCKED-IN fugitive we're searching for
-  // It doesn't change even when analyzing documents about associates (mom, employer, etc.)
+  // Get the subject name - ALWAYS use the user-entered case name
+  // IMPORTANT: The target name is set ONLY by the user. It should NEVER be auto-replaced.
+  // Format should be "First Last" (no middle name) for best OSINT results.
   const getSubjectName = useCallback(() => {
-    // Priority: PRIMARY TARGET (locked) > valid case name > roster data > parsed report > 'Subject'
-    // We check primaryTarget FIRST because it represents the actual fugitive
-    if (caseData?.primaryTarget?.fullName && isValidSubjectName(caseData.primaryTarget.fullName)) {
-      return caseData.primaryTarget.fullName;
-    }
-    // Skip placeholder names like "?" - check parsed data first
-    if (parsedData?.subject?.fullName && isValidSubjectName(parsedData.subject.fullName)) {
-      return parsedData.subject.fullName;
-    }
+    // Priority: USER-ENTERED CASE NAME > primaryTarget > roster data > 'Subject'
+    // We NEVER use parsedData.subject.fullName because documents may have
+    // different name formats (Last, First) that break OSINT searches.
     if (caseData?.name && isValidSubjectName(caseData.name)) {
       return caseData.name;
+    }
+    if (caseData?.primaryTarget?.fullName && isValidSubjectName(caseData.primaryTarget.fullName)) {
+      return caseData.primaryTarget.fullName;
     }
     if (caseData?.rosterData?.inmate?.name && isValidSubjectName(caseData.rosterData.inmate.name)) {
       return caseData.rosterData.inmate.name;
     }
     return 'Subject';
-  }, [parsedData, caseData]);
+  }, [caseData]);
 
   // Init greeting
   useEffect(() => {
@@ -806,8 +803,8 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
         id: 'greeting',
         role: 'agent',
         content: latestReport
-          ? `🎯 **${subjectName}** - ${addresses.length} addresses, ${phones.length} phones.`
-          : `🔍 **${subjectName}** - Drop files or paste report data.`,
+          ? `[TARGET]${subjectName}** - ${addresses.length} addresses, ${phones.length} phones.`
+          : `[SEARCH]${subjectName}** - Drop files or paste report data.`,
         timestamp: new Date(),
       }]);
     }
@@ -818,25 +815,14 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
     const updateCaseNameIfNeeded = async () => {
       if (!caseData?.id) return;
 
-      // Check if current case name is a placeholder
-      if (isValidSubjectName(caseData.name)) return; // Already has valid name
-
-      // Check if parsed data has a real name
-      const parsedName = parsedData?.subject?.fullName;
-      if (parsedName && isValidSubjectName(parsedName)) {
-        console.log(`[AutoUpdate] Updating case name from "${caseData.name}" to "${parsedName}"`);
-        try {
-          await updateCase(caseData.id, { name: parsedName });
-          // Refresh case data to get updated name
-          refresh?.();
-        } catch (err) {
-          console.error('[AutoUpdate] Failed to update case name:', err);
-        }
-      }
+      // IMPORTANT: Target name is ONLY set by the user manually
+      // We no longer auto-update case name from parsed documents
+      // This prevents confusion during OSINT analysis when names change unexpectedly
+      // The user types the fugitive's name exactly as they want it searched
     };
 
     updateCaseNameIfNeeded();
-  }, [caseData?.id, caseData?.name, parsedData?.subject?.fullName]);
+  }, [caseData?.id, caseData?.name]);
 
   const scrollToBottom = () => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
 
@@ -878,22 +864,22 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
         // Don't generate tactical advice automatically - wait for user to request it
 
         // Build detailed message for chat
-        const parts: string[] = [`📷 **PHOTO INTELLIGENCE REPORT**${intel.sourceFileName ? ` - ${intel.sourceFileName}` : ''}\n`];
+        const parts: string[] = [`[PHOTO]PHOTO INTELLIGENCE REPORT**${intel.sourceFileName ? ` - ${intel.sourceFileName}` : ''}\n`];
 
         // EXIF METADATA - Display first as it's highest priority
         if (intel.exifData) {
           if (intel.exifData.gps) {
-            parts.push(`\n🎯 **CRITICAL: GPS LOCATION FOUND!**`);
-            parts.push(`📍 Coordinates: ${intel.exifData.gps.latitude.toFixed(6)}, ${intel.exifData.gps.longitude.toFixed(6)}`);
-            parts.push(`🗺️ [Open in Google Maps](${intel.exifData.gps.googleMapsUrl})`);
+            parts.push(`\n[TARGET]CRITICAL: GPS LOCATION FOUND!**`);
+            parts.push(`Coordinates: ${intel.exifData.gps.latitude.toFixed(6)}, ${intel.exifData.gps.longitude.toFixed(6)}`);
+            parts.push(`[Open in Google Maps](${intel.exifData.gps.googleMapsUrl})`);
           }
           if (intel.exifData.dateTime?.original) {
-            parts.push(`\n📅 **Photo Taken:** ${intel.exifData.dateTime.original}`);
+            parts.push(`\n[DATE]Photo Taken:** ${intel.exifData.dateTime.original}`);
           }
           if (intel.exifData.device) {
             const device = [intel.exifData.device.make, intel.exifData.device.model].filter(Boolean).join(' ');
             if (device) {
-              parts.push(`📱 **Device:** ${device}`);
+              parts.push(`[DEVICE]Device:** ${device}`);
             }
           }
           if (intel.exifData.gps || intel.exifData.dateTime?.original) {
@@ -902,14 +888,14 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
         }
 
         if (intel.addresses.length > 0) {
-          parts.push(`\n🏠 **ADDRESSES DETECTED (${intel.addresses.length}):**`);
+          parts.push(`\n[ADDRESS]ADDRESSES DETECTED (${intel.addresses.length}):**`);
           intel.addresses.forEach(a => {
             parts.push(`• "${a.text}" (${a.confidence} confidence) - ${a.context}`);
           });
         }
 
         if (intel.vehicles.length > 0) {
-          parts.push(`\n🚗 **VEHICLES DETECTED (${intel.vehicles.length}):**`);
+          parts.push(`\n[VEHICLES]VEHICLES DETECTED (${intel.vehicles.length}):**`);
           intel.vehicles.forEach(v => {
             const plateInfo = v.licensePlate ? ` - PLATE: ${v.licensePlate}${v.plateState ? ` (${v.plateState})` : ''}` : '';
             parts.push(`• ${v.color} ${v.make || ''} ${v.model || ''} ${v.type}${plateInfo}`);
@@ -917,14 +903,14 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
         }
 
         if (intel.businesses.length > 0) {
-          parts.push(`\n🏪 **BUSINESSES/LANDMARKS (${intel.businesses.length}):**`);
+          parts.push(`\n[BUSINESS]BUSINESSES/LANDMARKS (${intel.businesses.length}):**`);
           intel.businesses.forEach(b => {
             parts.push(`• ${b.name} (${b.type})`);
           });
         }
 
         if (intel.people.length > 0) {
-          parts.push(`\n👥 **PEOPLE IN PHOTO (${intel.people.length}):**`);
+          parts.push(`\n[CONTACTS]PEOPLE IN PHOTO (${intel.people.length}):**`);
           intel.people.forEach(p => {
             parts.push(`• ${p.description} - ${p.clothing}`);
             if (p.distinguishingFeatures?.length > 0) {
@@ -934,7 +920,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
         }
 
         if (intel.geography.length > 0) {
-          parts.push(`\n🌍 **GEOGRAPHIC INDICATORS:**`);
+          parts.push(`\n[GEO]GEOGRAPHIC INDICATORS:**`);
           intel.geography.forEach(g => {
             parts.push(`• ${g.indicator}${g.possibleRegion ? ` → Possible: ${g.possibleRegion}` : ''}`);
           });
@@ -943,7 +929,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
         if (intel.leads.length > 0) {
           const highPriority = intel.leads.filter(l => l.priority === 'high');
           if (highPriority.length > 0) {
-            parts.push(`\n⚠️ **HIGH PRIORITY LEADS (${highPriority.length}):**`);
+            parts.push(`\n[WARNING]HIGH PRIORITY LEADS (${highPriority.length}):**`);
             highPriority.forEach(l => {
               parts.push(`• ${l.description}`);
               parts.push(`  Action: ${l.actionItem}`);
@@ -951,8 +937,8 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
           }
         }
 
-        parts.push(`\n📍 **SETTING:** ${intel.metadata.settingType} (${intel.metadata.indoorOutdoor})`);
-        parts.push(`⏰ **TIME:** ${intel.metadata.estimatedTimeOfDay}, ${intel.metadata.estimatedSeason}`);
+        parts.push(`\n[LOCATION]SETTING:** ${intel.metadata.settingType} (${intel.metadata.indoorOutdoor})`);
+        parts.push(`TIME: ${intel.metadata.estimatedTimeOfDay}, ${intel.metadata.estimatedSeason}`);
 
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
@@ -966,7 +952,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
           role: 'agent',
-          content: '⚠️ Could not analyze photo. Backend may be unavailable - try again in a moment.',
+          content: '[WARN]Could not analyze photo. Backend may be unavailable - try again in a moment.',
           timestamp: new Date(),
         }]);
       }
@@ -974,7 +960,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
       setChatMessages(prev => [...prev, {
         id: uniqueId(),
         role: 'agent',
-        content: `❌ Photo analysis error: ${error?.message || 'Unknown error'}`,
+        content: `[ERROR]Photo analysis error: ${error?.message || 'Unknown error'}`,
         timestamp: new Date(),
       }]);
     }
@@ -990,7 +976,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
     setChatMessages(prev => [...prev, {
       id: uniqueId(),
       role: 'system',
-      content: '🔍 **ANALYZING SUBJECT** - Scanning for tattoos, scars, dental features, physical description, clothing...',
+      content: '[SEARCH]ANALYZING SUBJECT** - Scanning for tattoos, scars, dental features, physical description, clothing...',
       timestamp: new Date(),
     }]);
     scrollToBottom();
@@ -1014,7 +1000,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
           role: 'agent',
-          content: '⚠️ Could not analyze subject photo. Try uploading a clearer image.',
+          content: '[WARN]Could not analyze subject photo. Try uploading a clearer image.',
           timestamp: new Date(),
         }]);
       }
@@ -1022,7 +1008,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
       setChatMessages(prev => [...prev, {
         id: uniqueId(),
         role: 'agent',
-        content: `❌ Subject analysis error: ${error?.message || 'Unknown error'}`,
+        content: `[ERROR]Subject analysis error: ${error?.message || 'Unknown error'}`,
         timestamp: new Date(),
       }]);
     }
@@ -1062,7 +1048,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
               setChatMessages(prev => [...prev, {
                 id: uniqueId(),
                 role: 'user',
-                content: `📸 Compare face: ${currentFileName}`,
+                content: `Compare face: ${currentFileName}`,
                 timestamp: new Date(),
               }]);
               scrollToBottom();
@@ -1070,7 +1056,7 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
               setChatMessages(prev => [...prev, {
                 id: uniqueId(),
                 role: 'agent',
-                content: `🔬 **COMPARING FACES** - Analyzing bone structure...`,
+                content: `[ANALYSIS]COMPARING FACES** - Analyzing bone structure...`,
                 timestamp: new Date(),
               }]);
 
@@ -1084,17 +1070,17 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
                 setChatMessages(prev => [...prev, {
                   id: uniqueId(),
                   role: 'agent',
-                  content: `${emoji} **FACE MATCH RESULT: ${result.verdict}**
+                  content: `FACE MATCH RESULT: ${result.verdict}
 
-**Score:** ${result.matchScore}% (Confidence: ${result.confidence}%)
+Score: ${result.matchScore}% (Confidence: ${result.confidence}%)
 
-**Matching Features:**
+Matching Features:
 ${result.matchingFeatures.length > 0 ? result.matchingFeatures.map(f => `✓ ${f}`).join('\n') : '- None significant'}
 
-**Differences:**
+Differences:
 ${result.differingFeatures.length > 0 ? result.differingFeatures.map(f => `✗ ${f}`).join('\n') : '- None noted'}
 
-**Analysis:**
+Analysis:
 ${result.explanation}`,
                   timestamp: new Date(),
                 }]);
@@ -1103,7 +1089,7 @@ ${result.explanation}`,
                 setChatMessages(prev => [...prev, {
                   id: uniqueId(),
                   role: 'agent',
-                  content: `⚠️ Face comparison failed: ${err?.message || 'Unknown error'}`,
+                  content: `[WARN]Face comparison failed: ${err?.message || 'Unknown error'}`,
                   timestamp: new Date(),
                 }]);
               }
@@ -1128,7 +1114,7 @@ ${result.explanation}`,
               setChatMessages(prev => [...prev, {
                 id: uniqueId(),
                 role: 'agent',
-                content: `📸 **NEW PHOTO RECEIVED**\n\nIs this someone connected to ${getSubjectName()}?\n\n**Who is this?** _(Type their name, e.g., "John Smith")_`,
+                content: `NEW PHOTO RECEIVED\n\nIs this someone connected to ${getSubjectName()}?\n\nWho is this? (Type their name, e.g., "John Smith")`,
                 timestamp: new Date(),
               }]);
               scrollToBottom();
@@ -1141,7 +1127,7 @@ ${result.explanation}`,
               setSubjectPhoto(dataUrl);
               try { await AsyncStorage.setItem(`case_photo_${id}`, dataUrl); } catch {}
               setUploadedFiles(prev => [...prev, { id: uniqueId(), name: currentFileName, type: 'image', uploadedAt: new Date() }]);
-              setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `📸 Subject photo set: ${currentFileName}\n\n🔍 Analyzing photo for investigative leads...`, timestamp: new Date() }]);
+              setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `Subject photo set: ${currentFileName}\n\nAnalyzing photo for investigative leads...`, timestamp: new Date() }]);
               scrollToBottom();
             }
 
@@ -1171,7 +1157,7 @@ ${result.explanation}`,
           scrollToBottom();
         }
         if (!extractResult.success || !extractResult.text) {
-          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `❌ ${extractResult.error || 'Could not read file.'}`, timestamp: new Date() }]);
+          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `[ERROR]${extractResult.error || 'Could not read file.'}`, timestamp: new Date() }]);
           continue;
         }
 
@@ -1213,7 +1199,7 @@ ${result.explanation}`,
              !normalizedPrimary.toLowerCase().includes(normalizedSubject.split(' ')[0]?.toLowerCase() || ''));
 
           if (isAboutAssociate) {
-            intelReport += `📋 **ASSOCIATE INTEL** (for locating ${primaryName})\n`;
+            intelReport += `[REPORT]ASSOCIATE INTEL** (for locating ${primaryName})\n`;
 
             // ADD this person as a discovered associate
             if (normalizedSubject && normalizedSubject !== 'Unknown') {
@@ -1240,31 +1226,31 @@ ${result.explanation}`,
                 return [...prev, newAssociate];
               });
             }
-            intelReport += `👤 This document is about **${normalizedSubject || 'Unknown'}**, who may have info on ${primaryName}.\n\n`;
+            intelReport += `This document is about ${normalizedSubject || 'Unknown'}, who may have info on ${primaryName}.\n\n`;
           } else {
-            intelReport += `📋 **INTEL REPORT EXTRACTED**\n\n`;
+            intelReport += `[REPORT]INTEL REPORT EXTRACTED**\n\n`;
           }
 
           // Subject Profile
-          intelReport += `👤 **${result.isAssociateDocument ? 'ASSOCIATE' : 'SUBJECT'} PROFILE**\n`;
-          intelReport += `• **Name:** ${subject.fullName || 'Unknown'}\n`;
-          if (subject.dob) intelReport += `• **DOB:** ${subject.dob}\n`;
-          if (subject.partialSsn) intelReport += `• **SSN:** XXX-XX-${subject.partialSsn}\n`;
-          if (phones.length > 0) intelReport += `• **Phone:** ${phones[0].number}\n`;
-          if (subject.aliases?.length > 0) intelReport += `• **AKA:** ${subject.aliases.join(', ')}\n`;
+          intelReport += `[PERSON]${result.isAssociateDocument ? 'ASSOCIATE' : 'SUBJECT'} PROFILE**\n`;
+          intelReport += `Name: ${subject.fullName || 'Unknown'}\n`;
+          if (subject.dob) intelReport += `DOB: ${subject.dob}\n`;
+          if (subject.partialSsn) intelReport += `SSN: XXX-XX-${subject.partialSsn}\n`;
+          if (phones.length > 0) intelReport += `Phone: ${phones[0].number}\n`;
+          if (subject.aliases?.length > 0) intelReport += `AKA: ${subject.aliases.join(', ')}\n`;
           intelReport += `\n`;
 
           // Charges/Bond from recommendations
           const bondInfo = recommendations.filter((r: string) => r.includes('Bond') || r.includes('Charge'));
           if (bondInfo.length > 0) {
-            intelReport += `⚖️ **CHARGES & BOND**\n`;
+            intelReport += `[CHARGES]CHARGES & BOND**\n`;
             bondInfo.forEach((info: string) => { intelReport += `• ${info}\n`; });
             intelReport += `\n`;
           }
 
           // Top Addresses
           if (addresses.length > 0) {
-            intelReport += `📍 **TOP LOCATIONS (${addresses.length} total)**\n`;
+            intelReport += `[LOCATION]TOP LOCATIONS (${addresses.length} total)**\n`;
             addresses.slice(0, 5).forEach((addr: any, i: number) => {
               const confidence = addr.confidence ? ` (${Math.round(addr.confidence * 100)}%)` : '';
               intelReport += `${i + 1}. ${addr.fullAddress || addr.address}${confidence}\n`;
@@ -1275,23 +1261,23 @@ ${result.explanation}`,
 
           // Contacts/References
           if (relatives.length > 0) {
-            intelReport += `👥 **CONTACTS/REFERENCES (${relatives.length})**\n`;
+            intelReport += `[CONTACTS]CONTACTS/REFERENCES (${relatives.length})**\n`;
             relatives.slice(0, 5).forEach((rel: any) => {
-              intelReport += `• **${rel.name}** (${rel.relationship})`;
+              intelReport += `${rel.name} (${rel.relationship})`;
               if (rel.phones?.[0]) intelReport += ` - ${rel.phones[0]}`;
               intelReport += `\n`;
-              if (rel.currentAddress) intelReport += `  📍 ${rel.currentAddress}\n`;
+              if (rel.currentAddress) intelReport += `  ${rel.currentAddress}\n`;
             });
             intelReport += `\n`;
           }
 
           // Vehicles
           if (vehicles.length > 0) {
-            intelReport += `🚗 **VEHICLES**\n`;
+            intelReport += `[VEHICLES]VEHICLES**\n`;
             vehicles.forEach((v: any) => {
               const desc = [v.year, v.make, v.model, v.color].filter(Boolean).join(' ') || v.description || 'Unknown';
               intelReport += `• ${desc}`;
-              if (v.plate) intelReport += ` | **PLATE: ${v.plate}**`;
+              if (v.plate) intelReport += ` | PLATE: ${v.plate}`;
               intelReport += `\n`;
             });
             intelReport += `\n`;
@@ -1299,20 +1285,20 @@ ${result.explanation}`,
 
           // Employment
           if (employment.length > 0) {
-            intelReport += `💼 **EMPLOYMENT**\n`;
+            intelReport += `[EMPLOYMENT]EMPLOYMENT**\n`;
             employment.forEach((emp: any) => {
-              intelReport += `• **${emp.employer}**`;
+              intelReport += `${emp.employer}`;
               if (emp.isCurrent) intelReport += ` (CURRENT)`;
               intelReport += `\n`;
-              if (emp.address) intelReport += `  📍 ${emp.address}\n`;
-              if (emp.phone) intelReport += `  📞 ${emp.phone}\n`;
+              if (emp.address) intelReport += `  ${emp.address}\n`;
+              if (emp.phone) intelReport += `  ${emp.phone}\n`;
             });
             intelReport += `\n`;
           }
 
           // All phones
           if (phones.length > 1) {
-            intelReport += `📞 **ALL PHONE NUMBERS**\n`;
+            intelReport += `[PHONES]ALL PHONE NUMBERS**\n`;
             phones.forEach((p: any) => {
               intelReport += `• ${p.number} (${p.type || 'unknown'})\n`;
             });
@@ -1321,7 +1307,7 @@ ${result.explanation}`,
 
           // Warnings/Flags
           if (flags.length > 0) {
-            intelReport += `⚠️ **WARNINGS**\n`;
+            intelReport += `[WARNING]WARNINGS**\n`;
             flags.forEach((f: any) => {
               intelReport += `• ${f.message}\n`;
             });
@@ -1331,7 +1317,7 @@ ${result.explanation}`,
           // Key Intel
           const keyIntel = recommendations.filter((r: string) => !r.includes('Bond') && !r.includes('Charge'));
           if (keyIntel.length > 0) {
-            intelReport += `💡 **KEY INTEL**\n`;
+            intelReport += `[TIP]KEY INTEL**\n`;
             keyIntel.forEach((note: string) => { intelReport += `• ${note}\n`; });
           }
 
@@ -1343,10 +1329,10 @@ ${result.explanation}`,
           }]);
           await refresh();
         } else {
-          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `⚠️ Analysis failed: ${result.error || 'Unknown error'}`, timestamp: new Date() }]);
+          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `[WARN]Analysis failed: ${result.error || 'Unknown error'}`, timestamp: new Date() }]);
         }
       } catch (err: any) {
-        setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `❌ Error processing file: ${err?.message || 'Unknown error'}`, timestamp: new Date() }]);
+        setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `[ERROR]Error processing file: ${err?.message || 'Unknown error'}`, timestamp: new Date() }]);
       }
     }
 
@@ -1395,7 +1381,7 @@ ${result.explanation}`,
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
           role: 'agent',
-          content: `✅ **${associateName}** added with photo.\n\n**Relationship to ${getSubjectName()}?**\n_(friend, brother, mother, employer, etc.)_`,
+          content: `${associateName} added with photo.\n\nRelationship to ${getSubjectName()}? (friend, brother, mother, employer, etc.)`,
           timestamp: new Date(),
         }]);
 
@@ -1436,7 +1422,7 @@ ${result.explanation}`,
       setChatMessages(prev => [...prev, {
         id: uniqueId(),
         role: 'agent',
-        content: `✅ **${waitingForRel}** - ${relationship}\n\nAdded to Network. Drop another photo or continue investigating.`,
+        content: `[FOUND]${waitingForRel}** - ${relationship}\n\nAdded to Network. Drop another photo or continue investigating.`,
         timestamp: new Date(),
       }]);
 
@@ -1499,7 +1485,7 @@ ${result.explanation}`,
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
           role: 'agent',
-          content: `✅ **${normalizedName}** added to Network.\n\nRelationship to ${getSubjectName()}? _(type: brother, mother, friend, employer, etc.)_`,
+          content: `[FOUND]${normalizedName}** added to Network.\n\nRelationship to ${getSubjectName()}? _(type: brother, mother, friend, employer, etc.)_`,
           timestamp: new Date(),
         }]);
         setIsSending(false);
@@ -1533,7 +1519,7 @@ ${result.explanation}`,
       setChatMessages(prev => [...prev, {
         id: uniqueId(),
         role: 'agent',
-        content: `✅ Updated to **${relationship}**. What else did you find?`,
+        content: `Updated to ${relationship}. What else did you find?`,
         timestamp: new Date(),
       }]);
       setIsSending(false);
@@ -1548,7 +1534,7 @@ ${result.explanation}`,
       setChatMessages(prev => [...prev, {
         id: uniqueId(),
         role: 'agent',
-        content: `📍 Logged potential address: **${foundAddress}**\n\nI'll add this to the case. Where did you find this? (Facebook, Instagram, etc.)`,
+        content: `Logged potential address: ${foundAddress}\n\nAdded to case. Source? (Facebook, Instagram, etc.)`,
         timestamp: new Date(),
       }]);
       setIsSending(false);
@@ -1567,7 +1553,7 @@ ${result.explanation}`,
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
           role: 'agent',
-          content: `🔍 Scraping arrest record from URL...`,
+          content: `Scraping arrest record from URL...`,
           timestamp: new Date(),
         }]);
         scrollToBottom();
@@ -1587,19 +1573,19 @@ ${result.explanation}`,
               const charges = data.charges || [];
 
               // Build intel report from scraped data
-              let report = `📋 **ARREST RECORD EXTRACTED**\n\n`;
-              report += `👤 **SUBJECT**\n`;
-              report += `• **Name:** ${inmate.name || 'Unknown'}\n`;
-              if (inmate.age) report += `• **Age:** ${inmate.age}\n`;
-              if (inmate.dob) report += `• **DOB:** ${inmate.dob}\n`;
-              if (inmate.race) report += `• **Race:** ${inmate.race}\n`;
-              if (inmate.sex) report += `• **Sex:** ${inmate.sex}\n`;
-              if (inmate.height) report += `• **Height:** ${inmate.height}\n`;
-              if (inmate.weight) report += `• **Weight:** ${inmate.weight}\n`;
-              if (inmate.address) report += `• **Address:** ${inmate.address}\n`;
+              let report = `[REPORT]ARREST RECORD EXTRACTED**\n\n`;
+              report += `[PERSON]SUBJECT**\n`;
+              report += `Name: ${inmate.name || 'Unknown'}\n`;
+              if (inmate.age) report += `Age: ${inmate.age}\n`;
+              if (inmate.dob) report += `DOB: ${inmate.dob}\n`;
+              if (inmate.race) report += `Race: ${inmate.race}\n`;
+              if (inmate.sex) report += `Sex: ${inmate.sex}\n`;
+              if (inmate.height) report += `Height: ${inmate.height}\n`;
+              if (inmate.weight) report += `Weight: ${inmate.weight}\n`;
+              if (inmate.address) report += `Address: ${inmate.address}\n`;
 
               if (charges.length > 0) {
-                report += `\n⚖️ **CHARGES**\n`;
+                report += `\n[CHARGES]CHARGES**\n`;
                 charges.forEach((c: any) => {
                   report += `• ${c.charge || c.description || 'Unknown charge'}`;
                   if (c.bond_amount) report += ` | Bond: ${c.bond_amount}`;
@@ -1631,7 +1617,7 @@ ${result.explanation}`,
               setChatMessages(prev => [...prev, {
                 id: uniqueId(),
                 role: 'agent',
-                content: `⚠️ Could not extract data from that URL. The site may have anti-bot protection.`,
+                content: `[WARN]Could not extract data from that URL. The site may have anti-bot protection.`,
                 timestamp: new Date(),
               }]);
             }
@@ -1639,7 +1625,7 @@ ${result.explanation}`,
             setChatMessages(prev => [...prev, {
               id: uniqueId(),
               role: 'agent',
-              content: `⚠️ Scrape failed. Try the Import from Jail Roster feature instead.`,
+              content: `[WARN]Scrape failed. Try the Import from Jail Roster feature instead.`,
               timestamp: new Date(),
             }]);
           }
@@ -1647,7 +1633,7 @@ ${result.explanation}`,
           setChatMessages(prev => [...prev, {
             id: uniqueId(),
             role: 'agent',
-            content: `❌ Error: ${err?.message || 'Failed to scrape URL'}`,
+            content: `[ERROR]Error: ${err?.message || 'Failed to scrape URL'}`,
             timestamp: new Date(),
           }]);
         }
@@ -1676,7 +1662,7 @@ ${result.explanation}`,
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
           role: 'agent',
-          content: `🔍 Searching username: "${userText}"...`,
+          content: `Searching username: "${userText}"...`,
           timestamp: new Date(),
         }]);
         setIsSearchingOSINT(true);
@@ -1690,7 +1676,7 @@ ${result.explanation}`,
               id: uniqueId(),
               role: 'agent',
               content: foundCount > 0
-                ? `✅ Found ${foundCount} profiles for "${userText}":\n${result.found.slice(0, 10).map(p => `• ${p.platform}: ${p.url}`).join('\n')}${foundCount > 10 ? `\n+${foundCount - 10} more` : ''}`
+                ? `[OK]Found ${foundCount} profiles for "${userText}":\n${result.found.slice(0, 10).map(p => `• ${p.platform}: ${p.url}`).join('\n')}${foundCount > 10 ? `\n+${foundCount - 10} more` : ''}`
                 : `No profiles found for username "${userText}".`,
               timestamp: new Date(),
             }]);
@@ -1728,7 +1714,7 @@ ${result.explanation}`,
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
           role: 'agent',
-          content: '⚠️ No subject name found. Enter a username to search directly.',
+          content: '[WARN]No subject name found. Enter a username to search directly.',
           timestamp: new Date(),
         }]);
         setIsSending(false);
@@ -2523,11 +2509,11 @@ ${result.explanation}`,
           isWeb && !isMobile && { flex: 1.5 },
           isMobile && { height: 400 }
         ]}>
-          <Text style={styles.colTitle}>🎯 CASE INTELLIGENCE</Text>
+          <Text style={styles.colTitle}>CASE INTELLIGENCE</Text>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8 }}>
             {/* PRIMARY TARGET Info */}
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>🎯 PRIMARY TARGET</Text>
+              <Text style={styles.sectionTitle}>PRIMARY TARGET</Text>
               <View style={styles.intelCard}>
                 <Text style={styles.intelName}>{getSubjectName()}</Text>
                 {parsedData?.subject?.dateOfBirth && <Text style={styles.intelDetail}>DOB: {parsedData.subject.dateOfBirth}</Text>}
@@ -2539,7 +2525,7 @@ ${result.explanation}`,
             {/* Locations with Map */}
             {displayAddresses.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>📍 LOCATIONS ({displayAddresses.length})</Text>
+                <Text style={styles.sectionTitle}>LOCATIONS ({displayAddresses.length})</Text>
                 {/* Compact Map */}
                 <TouchableOpacity onPress={() => openMaps(displayAddresses[0].fullAddress)} style={styles.compactMap}>
                   {isWeb ? (
@@ -2560,7 +2546,7 @@ ${result.explanation}`,
                     <View style={styles.locDetails}>
                       <Text style={styles.locAddr} numberOfLines={1}>{addr.fullAddress || addr.address}</Text>
                       <Text style={styles.locSource}>
-                        {addr.reasons?.[0] || addr.type || (addr.isCurrent ? '📍 Current residence' : 'From case documents')}
+                        {addr.reasons?.[0] || addr.type || (addr.isCurrent ? 'Current residence' : 'From case documents')}
                       </Text>
                     </View>
                     {(addr.confidence || addr.probability) && (
@@ -2573,7 +2559,7 @@ ${result.explanation}`,
 
             {/* LINK ANALYSIS / RELATIONSHIP MAP */}
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>🔗 LINK ANALYSIS</Text>
+              <Text style={styles.sectionTitle}>LINK ANALYSIS</Text>
               <View style={styles.linkMap}>
                 {/* PRIMARY TARGET in center - NEVER changes */}
                 <View style={styles.linkCenter}>
@@ -2712,7 +2698,7 @@ ${result.explanation}`,
             {/* Phones */}
             {phones.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>📱 PHONES ({phones.length})</Text>
+                <Text style={styles.sectionTitle}>PHONES ({phones.length})</Text>
                 {phones.slice(0, 5).map((p: any, idx: number) => (
                   <TouchableOpacity key={idx} style={styles.phoneRow} onPress={() => Linking.openURL(`tel:${p.number}`)}>
                     <Ionicons name="call" size={14} color={DARK.success} />
@@ -2726,7 +2712,7 @@ ${result.explanation}`,
             {/* Emails */}
             {parsedData?.emails && parsedData.emails.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>📧 EMAILS ({parsedData.emails.length})</Text>
+                <Text style={styles.sectionTitle}>EMAILS ({parsedData.emails.length})</Text>
                 {parsedData.emails.slice(0, 5).map((email: string, idx: number) => (
                   <TouchableOpacity key={idx} style={styles.phoneRow} onPress={() => Linking.openURL(`mailto:${email}`)}>
                     <Ionicons name="mail" size={14} color={DARK.primary} />
@@ -2739,7 +2725,7 @@ ${result.explanation}`,
             {/* Vehicles */}
             {parsedData?.vehicles && parsedData.vehicles.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>🚗 VEHICLES ({parsedData.vehicles.length})</Text>
+                <Text style={styles.sectionTitle}>VEHICLES ({parsedData.vehicles.length})</Text>
                 {parsedData.vehicles.map((v: any, idx: number) => (
                   <View key={idx} style={styles.vehicleRow}>
                     <Ionicons name="car" size={14} color={DARK.warning} />
@@ -2753,7 +2739,7 @@ ${result.explanation}`,
             {/* Associates */}
             {parsedData?.associates && parsedData.associates.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>👥 ASSOCIATES ({parsedData.associates.length})</Text>
+                <Text style={styles.sectionTitle}>ASSOCIATES ({parsedData.associates.length})</Text>
                 {parsedData.associates.slice(0, 5).map((a: any, idx: number) => (
                   <View key={idx} style={styles.associateRow}>
                     <Ionicons name="person" size={14} color={DARK.textSecondary} />
@@ -2767,7 +2753,7 @@ ${result.explanation}`,
             {/* Files */}
             {uploadedFiles.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>📁 FILES ({uploadedFiles.length})</Text>
+                <Text style={styles.sectionTitle}>FILES ({uploadedFiles.length})</Text>
                 {uploadedFiles.map((f) => (
                   <View key={f.id} style={styles.fileRow}>
                     <Ionicons name={f.type === 'image' ? 'image' : 'document'} size={14} color={DARK.primary} />
@@ -2794,7 +2780,7 @@ ${result.explanation}`,
           isWeb && !isMobile && { flex: 1 },
           isMobile && { flex: 1 }
         ]}>
-          <Text style={styles.colTitle}>🔍 OSINT TOOLS</Text>
+          <Text style={styles.colTitle}>OSINT TOOLS</Text>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8 }}>
             {/* Subject Photo - PRIMARY TARGET */}
             {subjectPhoto && (
