@@ -278,6 +278,83 @@ export function subscribeToChatUpdates(
 }
 
 /**
+ * Subscribe to realtime updates for ALL cases (critical for multi-device sync)
+ * This ensures agents in the field always have the latest data
+ */
+export function subscribeToAllCases(
+  callback: (cases: Case[]) => void
+): () => void {
+  let unsubscribe = () => {};
+
+  (async () => {
+    const db = await getDb();
+    if (!db) return;
+
+    const userId = await getUserId();
+    if (!userId) {
+      console.log('[Sync] No userId, skipping real-time subscription');
+      return;
+    }
+
+    const casesQuery = query(
+      collection(db, 'cases'),
+      where('userId', '==', userId),
+      orderBy('updatedAt', 'desc')
+    );
+
+    unsubscribe = onSnapshot(casesQuery, (snapshot) => {
+      const cases: Case[] = snapshot.docs.map(docSnap => {
+        const data = docSnap.data();
+        return {
+          ...data,
+          id: docSnap.id,
+          createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+          updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
+        } as Case;
+      });
+      console.log(`[Sync] Real-time update: ${cases.length} cases`);
+      callback(cases);
+    }, (error) => {
+      console.error('[Sync] Real-time subscription error:', error);
+    });
+  })();
+
+  return () => unsubscribe();
+}
+
+/**
+ * Subscribe to realtime updates for a single case
+ */
+export function subscribeToCaseUpdates(
+  caseId: string,
+  callback: (caseData: Case | null) => void
+): () => void {
+  let unsubscribe = () => {};
+
+  (async () => {
+    const db = await getDb();
+    if (!db) return;
+
+    const caseRef = doc(db, 'cases', caseId);
+    unsubscribe = onSnapshot(caseRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        callback({
+          ...data,
+          id: snap.id,
+          createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+          updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
+        } as Case);
+      } else {
+        callback(null);
+      }
+    });
+  })();
+
+  return () => unsubscribe();
+}
+
+/**
  * Full sync - push all local data to cloud
  */
 export async function pushAllToCloud(

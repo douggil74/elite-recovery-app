@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { CaseCard } from '@/components';
 import { useCases } from '@/hooks/useCases';
 import { confirm } from '@/lib/confirm';
+import { COLORS } from '@/constants';
 
 // Load Black Ops One font for web
 if (Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -25,20 +26,20 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
   }
 }
 
-// Dark Red Theme
+// Use shared COLORS for consistency across app
 const THEME = {
-  bg: '#000000',
-  surface: '#0a0a0a',
-  surfaceLight: '#18181b',
-  border: '#27272a',
-  borderLight: '#3f3f46',
-  primary: '#dc2626',
-  primaryMuted: '#450a0a',
-  success: '#22c55e',
+  bg: COLORS.background,
+  surface: COLORS.card,
+  surfaceLight: COLORS.surface,
+  border: COLORS.border,
+  borderLight: COLORS.borderLight,
+  primary: COLORS.primary,
+  primaryMuted: COLORS.primaryMuted,
+  success: COLORS.success,
   info: '#3b82f6',
-  text: '#fafafa',
-  textSecondary: '#a1a1aa',
-  textMuted: '#71717a',
+  text: COLORS.text,
+  textSecondary: COLORS.textSecondary,
+  textMuted: COLORS.textMuted,
 };
 
 export default function CasesScreen() {

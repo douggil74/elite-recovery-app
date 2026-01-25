@@ -16,29 +16,30 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { calculateRiskScore, RiskScoreResult, RiskScoreInput, searchCriminalHistory, ArrestsSearchResult } from '@/lib/osint-service';
 import { useCases } from '@/hooks/useCases';
+import { COLORS } from '@/constants';
 
-// Dark Red Theme
+// Use shared COLORS for consistency across app
 const THEME = {
-  bg: '#000000',
-  surface: '#0a0a0a',
-  surfaceLight: '#18181b',
-  border: '#27272a',
-  borderLight: '#3f3f46',
-  primary: '#dc2626',
-  primaryMuted: '#450a0a',
-  success: '#22c55e',
-  warning: '#f59e0b',
-  danger: '#ef4444',
-  text: '#fafafa',
-  textSecondary: '#a1a1aa',
-  textMuted: '#71717a',
+  bg: COLORS.background,
+  surface: COLORS.card,
+  surfaceLight: COLORS.surface,
+  border: COLORS.border,
+  borderLight: COLORS.borderLight,
+  primary: COLORS.primary,
+  primaryMuted: COLORS.primaryMuted,
+  success: COLORS.success,
+  warning: COLORS.warning,
+  danger: COLORS.danger,
+  text: COLORS.text,
+  textSecondary: COLORS.textSecondary,
+  textMuted: COLORS.textMuted,
 };
 
 const RISK_COLORS = {
-  'LOW RISK': THEME.success,
-  'MODERATE RISK': THEME.warning,
+  'LOW RISK': COLORS.success,
+  'MODERATE RISK': COLORS.warning,
   'HIGH RISK': '#f97316',
-  'VERY HIGH RISK': THEME.danger,
+  'VERY HIGH RISK': COLORS.danger,
 };
 
 export default function RiskScreen() {

@@ -11,7 +11,7 @@ import {
 } from '@/lib/database';
 import { audit } from '@/lib/audit';
 import { deleteCaseDirectory } from '@/lib/storage';
-import { syncCase, deleteSyncedCase, isSyncEnabled, fetchSyncedCases } from '@/lib/sync';
+import { syncCase, deleteSyncedCase, isSyncEnabled, fetchSyncedCases, subscribeToAllCases } from '@/lib/sync';
 import { createCase as dbCreateCaseFromCloud } from '@/lib/database';
 import type { Case, CasePurpose } from '@/types';
 import type { CaseStatus } from '@/components/CaseCard';
@@ -147,8 +147,56 @@ export function useCases(): UseCasesReturn {
       refresh();
     });
 
+    // Subscribe to real-time case updates from Firestore
+    // This ensures all devices stay in sync - critical for field safety
+    let unsubscribeRealtime: (() => void) | null = null;
+
+    (async () => {
+      const syncEnabled = await isSyncEnabled();
+      if (syncEnabled) {
+        console.log('[useCases] Subscribing to real-time case updates...');
+        unsubscribeRealtime = subscribeToAllCases(async (cloudCases) => {
+          // Merge cloud cases with local stats
+          const casesWithStats: CaseWithStats[] = await Promise.all(
+            cloudCases.map(async (c) => {
+              try {
+                const [reports, mugshotUrl] = await Promise.all([
+                  getReportsForCase(c.id),
+                  AsyncStorage.getItem(`case_photo_${c.id}`),
+                ]);
+                const latestReport = reports[0];
+                const addressCount = latestReport?.parsedData?.addresses?.length || 0;
+                const phoneCount = latestReport?.parsedData?.phones?.length || 0;
+
+                let status: CaseStatus = 'new';
+                if (latestReport) {
+                  status = addressCount > 0 || phoneCount > 0 ? 'has_data' : 'new';
+                }
+
+                return {
+                  ...c,
+                  status,
+                  addressCount,
+                  phoneCount,
+                  mugshotUrl: mugshotUrl || c.mugshotUrl || undefined,
+                };
+              } catch {
+                return { ...c, status: 'new' as CaseStatus, addressCount: 0, phoneCount: 0 };
+              }
+            })
+          );
+
+          setCases(casesWithStats);
+          setIsLoading(false);
+        });
+      }
+    })();
+
     return () => {
       subscription.remove();
+      if (unsubscribeRealtime) {
+        unsubscribeRealtime();
+      }
     };
   }, [refresh]);
 
