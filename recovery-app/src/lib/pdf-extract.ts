@@ -91,75 +91,33 @@ export interface ExtractResult {
   usedOcr?: boolean;
 }
 
-// OCR using OpenAI Vision API for scanned PDFs
-async function ocrWithOpenAI(imageBase64: string, pageNum: number): Promise<string> {
-  const apiKey = await getOpenAIKey();
-  if (!apiKey) {
-    throw new Error('OpenAI API key not configured. Go to Settings to add it.');
-  }
+// Backend API URL
+const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
 
-  // Clean the API key - remove any whitespace or non-ASCII characters
-  const cleanKey = apiKey.trim().replace(/[^\x20-\x7E]/g, '');
-
-  // Ensure image data is proper base64 data URL
-  let imageUrl = imageBase64;
-  if (!imageBase64.startsWith('data:')) {
-    // Clean base64 string - remove any whitespace
-    const cleanBase64 = imageBase64.replace(/\s/g, '');
-    imageUrl = `data:image/png;base64,${cleanBase64}`;
-  }
-
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+// OCR using backend API (no frontend API keys needed)
+async function ocrWithBackend(imageBase64: string, pageNum: number): Promise<string> {
+  const response = await fetch(`${BACKEND_URL}/api/ocr`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${cleanKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: 'Extract ALL text from this document image. Return ONLY the extracted text, preserving the layout as much as possible. Include all names, addresses, phone numbers, dates, and any other information visible.',
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: imageUrl,
-              },
-            },
-          ],
-        },
-      ],
-      max_tokens: 4000,
+      image_base64: imageBase64,
+      page_number: pageNum,
     }),
   });
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`OpenAI API error: ${error}`);
+    throw new Error(`OCR error: ${error}`);
   }
 
   const data = await response.json();
-  return data.choices?.[0]?.message?.content || '';
-}
-
-// Get OpenAI API key from settings
-async function getOpenAIKey(): Promise<string | null> {
-  try {
-    const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-    const settings = await AsyncStorage.getItem('app_settings');
-    if (settings) {
-      const parsed = JSON.parse(settings);
-      return parsed.openaiApiKey || null;
-    }
-  } catch (e) {
-    console.error('Failed to get OpenAI key:', e);
+  if (!data.success) {
+    throw new Error(data.detail || 'OCR failed');
   }
-  return null;
+
+  return data.text || '';
 }
 
 // Render PDF page to image for OCR
@@ -243,7 +201,7 @@ export async function extractTextFromPdf(data: ArrayBuffer | Uint8Array): Promis
               (async () => {
                 try {
                   const imageData = await renderPageToImage(pdfjs, pdf, j);
-                  const pageText = await ocrWithOpenAI(imageData, j);
+                  const pageText = await ocrWithBackend(imageData, j);
                   return { page: j, text: pageText };
                 } catch (e) {
                   console.error(`OCR failed for page ${j}:`, e);
