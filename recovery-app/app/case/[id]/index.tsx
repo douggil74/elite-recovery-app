@@ -1336,11 +1336,12 @@ ${result.explanation}`,
             intelReport += `Locations subject RETURNS TO - best for apprehension:\n\n`;
             trace.anchorPoints.forEach((ap: any, i: number) => {
               intelReport += `${i + 1}. ${ap.location}\n`;
-              intelReport += `   Type: ${ap.type?.replace(/_/g, ' ').toUpperCase()}\n`;
+              if (ap.type) intelReport += `   Type: ${ap.type.replace(/_/g, ' ').toUpperCase()}\n`;
               if (ap.owner) intelReport += `   Contact: ${ap.owner}\n`;
               if (ap.checkInCount) intelReport += `   Check-ins: ${ap.checkInCount}x\n`;
-              intelReport += `   Confidence: ${ap.confidence}%\n`;
-              intelReport += `   → ${ap.reason}\n\n`;
+              if (ap.confidence) intelReport += `   Confidence: ${ap.confidence}%\n`;
+              if (ap.reason) intelReport += `   → ${ap.reason}\n`;
+              intelReport += `\n`;
             });
           }
 

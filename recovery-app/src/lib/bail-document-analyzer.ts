@@ -8,7 +8,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // Always use Haiku 3.5 - fastest and most cost-effective for document extraction
 const CLAUDE_MODEL = 'claude-3-5-haiku-20241022';
-const CHUNK_SIZE = 40000; // chars per chunk (leave room for prompt overhead)
+const CHUNK_SIZE = 90000; // chars per chunk - Haiku 3.5 has 200K context
 import type {
   ParsedReport,
   Subject,
@@ -46,6 +46,17 @@ DOCUMENT TYPES YOU'LL SEE:
 - Intake/booking forms (physical description, identifiers)
 - Reference pages (contacts, family, employers)
 - Notes from bondsman (movement patterns, concerns)
+- **DELVEPOINT/SKIP TRACE COMPREHENSIVE REPORTS** - These are MASSIVE data dumps containing:
+  - Full address history (10-30+ addresses with dates)
+  - 1st/2nd/3rd degree relatives with DOBs, phones, addresses
+  - Complete phone history (current and historical)
+  - Vehicle history (all registrations with VINs)
+  - Employment history
+  - Property records, liens, bankruptcies, foreclosures
+  - Email addresses and social media
+  - Criminal records and court filings
+
+  For Delvepoint reports: Extract EVERY relative, EVERY address, EVERY phone. These are gold mines.
 
 CRITICAL ANALYSIS RULES:
 
@@ -234,7 +245,10 @@ IMPORTANT:
 - Provide specific surveillance recommendations with timing
 - Extract EVERY address but RANK by value for recovery
 - Include ALL phone numbers from ALL contacts
-- Note the SOURCE of each piece of information`;
+- Note the SOURCE of each piece of information
+- For Delvepoint/skip trace reports: extract ALL relatives (1st, 2nd, 3rd degree), ALL addresses with dates, ALL phones, ALL vehicles
+- Include relatives' current phones and addresses - these are your LEADS
+- Always provide a "reason" string for anchor points (never null/undefined)`;
 
 interface ExtractedIntel {
   documentTypes?: string[];
@@ -508,13 +522,13 @@ If this is about someone ELSE (associate/relative):
 - Focus on extracting addresses, phones, and contacts that could help locate the fugitive
 
 Analyze this document and extract all intelligence. Return ONLY valid JSON, no other text.
-${extractionOnly ? '\nFocus on DATA EXTRACTION only. Skip the traceAnalysis section.' : ''}
+${extractionOnly ? '\nThis is a CONTINUATION of a larger document. Focus on DATA EXTRACTION only - skip traceAnalysis section. Extract ALL contacts, addresses, phones, vehicles, relatives, and employment. Be EXHAUSTIVE - every person, every address, every phone number matters.' : ''}
 
 DOCUMENT TEXT:
 ${text}`;
   } else {
     analysisPrompt = `Analyze this bail bond document and extract all intelligence. Return ONLY valid JSON, no other text.
-${extractionOnly ? '\nFocus on DATA EXTRACTION only. Skip the traceAnalysis section.' : ''}
+${extractionOnly ? '\nThis is a CONTINUATION of a larger document. Focus on DATA EXTRACTION only - skip traceAnalysis section. Extract ALL contacts, addresses, phones, vehicles, relatives, and employment. Be EXHAUSTIVE.' : ''}
 
 DOCUMENT TEXT:
 ${text}`;
@@ -522,7 +536,7 @@ ${text}`;
 
   const message = await client.messages.create({
     model: CLAUDE_MODEL,
-    max_tokens: 4000,
+    max_tokens: 8000,
     messages: [{ role: 'user', content: analysisPrompt }],
     system: CLAUDE_SYSTEM_PROMPT,
   });
