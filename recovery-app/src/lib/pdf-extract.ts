@@ -334,6 +334,43 @@ export async function processUploadedFile(file: File): Promise<ExtractResult> {
     }
   }
 
+  // Old Word format (.doc) - not supported
+  if (fileName.endsWith('.doc') && !fileName.endsWith('.docx')) {
+    return {
+      success: false,
+      error: 'Old .doc format not supported. Save as .docx or PDF and re-upload.',
+    };
+  }
+
+  // Word documents (.docx)
+  if (
+    fileName.endsWith('.docx') ||
+    fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ) {
+    try {
+      const mammoth = await import('mammoth');
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.default.extractRawText({ arrayBuffer });
+      const text = result.value?.trim();
+      if (text && text.length > 10) {
+        return {
+          success: true,
+          text,
+          pageCount: 1,
+        };
+      }
+      return {
+        success: false,
+        error: 'Word document appears to be empty.',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read Word document',
+      };
+    }
+  }
+
   // Image files - show helpful message
   if (
     fileType.startsWith('image/') ||
