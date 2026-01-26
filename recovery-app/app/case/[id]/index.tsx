@@ -1462,6 +1462,217 @@ ${result.explanation}`,
     setIsSending(true);
     scrollToBottom();
 
+    // /reanalyze - re-run analysis on all uploaded documents
+    if (userTextLower === '/reanalyze' || userTextLower === '/rerun' || userTextLower === 'reanalyze') {
+      const docsWithText = uploadedFiles.filter(f => f.extractedText);
+      if (docsWithText.length === 0) {
+        setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: 'No documents with extracted text found. Upload files first.', timestamp: new Date() }]);
+        setIsSending(false);
+        return;
+      }
+
+      setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `Re-analyzing ${docsWithText.length} document(s)...`, timestamp: new Date() }]);
+      scrollToBottom();
+
+      // Combine all extracted texts
+      const combinedText = docsWithText
+        .map(f => `\n\n=== DOCUMENT: ${f.name} ===\n\n${f.extractedText}`)
+        .join('\n');
+
+      try {
+        const result = await analyzeText(combinedText);
+        if (result.success && result.data) {
+          const d = result.data;
+          const subject = d.subject || {};
+          const addresses = d.addresses || [];
+          const phones = d.phones || [];
+          const relatives = d.relatives || [];
+          const vehicles = d.vehicles || [];
+          const employment = d.employment || [];
+          const flags = d.flags || [];
+          const recommendations = d.recommendations || [];
+          const dAny = d as any;
+          const cosigners = dAny.cosigners || [];
+          const references = dAny.references || [];
+          const checkIns = dAny.checkIns || [];
+          const trace = dAny.traceAnalysis;
+
+          let intelReport = `[REPORT]TRACE ANALYSIS - ${subject.fullName || 'UNKNOWN'} (CROSS-REFERENCED)**\n`;
+          intelReport += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+          intelReport += `Sources: ${docsWithText.map(f => f.name).join(' + ')}\n\n`;
+
+          // Subject
+          intelReport += `[PERSON]SUBJECT PROFILE**\n`;
+          intelReport += `Name: ${subject.fullName || 'Unknown'}\n`;
+          if (subject.dob) intelReport += `DOB: ${subject.dob}\n`;
+          if (subject.partialSsn) intelReport += `SSN: XXX-XX-${subject.partialSsn}\n`;
+          if (phones.length > 0) intelReport += `Phone: ${phones[0].number}\n`;
+          if (subject.aliases?.length > 0) intelReport += `AKA: ${subject.aliases.join(', ')}\n`;
+          intelReport += `\n`;
+
+          // Charges
+          const bondRecs = recommendations.filter((r: string) => r.includes('Bond') || r.includes('Charge'));
+          if (bondRecs.length > 0) {
+            intelReport += `[CHARGES]CHARGES & BOND**\n`;
+            bondRecs.forEach((info: string) => { intelReport += `• ${info}\n`; });
+            intelReport += `\n`;
+          }
+
+          // Employment
+          if (employment.length > 0) {
+            intelReport += `[EMPLOYMENT]EMPLOYMENT**\n`;
+            employment.forEach((emp: any) => {
+              intelReport += `• ${emp.employer}`;
+              if (emp.isCurrent) intelReport += ` (CURRENT)`;
+              if (emp.title) intelReport += ` - ${emp.title}`;
+              intelReport += `\n`;
+              if (emp.address) intelReport += `  ${emp.address}\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // Cosigners
+          if (cosigners.length > 0) {
+            intelReport += `[COSIGNER]COSIGNERS / INDEMNITORS**\n`;
+            cosigners.forEach((cs: any, i: number) => {
+              intelReport += `${i + 1}. ${cs.name} (${cs.relationship})\n`;
+              if (cs.phone) intelReport += `   Phone: ${cs.phone}\n`;
+              if (cs.address) intelReport += `   Address: ${cs.address}\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // References
+          if (references.length > 0) {
+            intelReport += `[CONTACTS]REFERENCES**\n`;
+            references.forEach((ref: any, i: number) => {
+              intelReport += `${i + 1}. ${ref.name} (${ref.relationship})`;
+              if (ref.phone) intelReport += ` - ${ref.phone}`;
+              intelReport += `\n`;
+              if (ref.address) intelReport += `   ${ref.address}\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // Associates
+          const otherContacts = relatives.filter((r: any) =>
+            !r.relationship?.includes('COSIGNER') && !r.relationship?.includes('REFERENCE')
+          );
+          if (otherContacts.length > 0) {
+            intelReport += `[CONTACTS]KNOWN ASSOCIATES (${otherContacts.length})**\n`;
+            otherContacts.slice(0, 15).forEach((rel: any) => {
+              intelReport += `• ${rel.name} (${rel.relationship})`;
+              if (rel.phones?.[0]) intelReport += ` - ${rel.phones[0]}`;
+              intelReport += `\n`;
+              if (rel.currentAddress) intelReport += `  ${rel.currentAddress}\n`;
+            });
+            if (otherContacts.length > 15) intelReport += `  ...and ${otherContacts.length - 15} more\n`;
+            intelReport += `\n`;
+          }
+
+          // Vehicles
+          if (vehicles.length > 0) {
+            intelReport += `[VEHICLES]VEHICLES**\n`;
+            vehicles.forEach((v: any) => {
+              const desc = [v.year, v.make, v.model, v.color].filter(Boolean).join(' ') || 'Unknown';
+              intelReport += `• ${desc}`;
+              if (v.plate) intelReport += ` | PLATE: ${v.plate}`;
+              if (v.vin) intelReport += ` | VIN: ${v.vin}`;
+              intelReport += `\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // Check-ins
+          if (checkIns.length > 0) {
+            intelReport += `[TIMELINE]CHECK-IN TIMELINE (${checkIns.length})**\n`;
+            checkIns.slice(0, 20).forEach((ci: any) => {
+              intelReport += `• ${ci.date} - ${ci.location || ci.city || 'Unknown'}`;
+              if (ci.state && !ci.location?.includes(ci.state)) intelReport += `, ${ci.state}`;
+              intelReport += `\n`;
+            });
+            if (checkIns.length > 20) intelReport += `  ...and ${checkIns.length - 20} more\n`;
+            intelReport += `\n`;
+          }
+
+          // TRACE sections
+          if (trace?.anchorPoints?.length > 0) {
+            intelReport += `[ANCHOR]ANCHOR POINTS**\n`;
+            trace.anchorPoints.forEach((ap: any, i: number) => {
+              intelReport += `${i + 1}. ${ap.location}\n`;
+              if (ap.type) intelReport += `   Type: ${ap.type.replace(/_/g, ' ').toUpperCase()}\n`;
+              if (ap.owner) intelReport += `   Contact: ${ap.owner}\n`;
+              if (ap.checkInCount) intelReport += `   Check-ins: ${ap.checkInCount}x\n`;
+              if (ap.confidence) intelReport += `   Confidence: ${ap.confidence}%\n`;
+              if (ap.reason) intelReport += `   → ${ap.reason}\n`;
+              intelReport += `\n`;
+            });
+          }
+          if (trace?.patternAnalysis) {
+            const pa = trace.patternAnalysis;
+            intelReport += `[PATTERN]PATTERN ANALYSIS**\n`;
+            if (pa.isTruckDriver) intelReport += `TRUCK DRIVER - road stops are NOT residences\n`;
+            if (pa.checkInFrequency) intelReport += `Frequency: ${pa.checkInFrequency}\n`;
+            if (pa.typicalReturnDay) intelReport += `Returns: ${pa.typicalReturnDay}\n`;
+            if (pa.homeBaseLocation) intelReport += `HOME BASE: ${pa.homeBaseLocation}\n`;
+            intelReport += `\n`;
+          }
+          if (trace?.predictionModel) {
+            const pm = trace.predictionModel;
+            intelReport += `[PREDICT]PREDICTION MODEL**\n`;
+            if (pm.nextLikelyLocation) intelReport += `Location: ${pm.nextLikelyLocation}\n`;
+            if (pm.bestTimeWindow) intelReport += `Time: ${pm.bestTimeWindow}\n`;
+            if (pm.confidence) intelReport += `Confidence: ${pm.confidence}%\n`;
+            if (pm.reasoning) intelReport += `${pm.reasoning}\n`;
+            intelReport += `\n`;
+          }
+          if (trace?.surveillanceRecommendations?.length > 0) {
+            intelReport += `[SURVEILLANCE]APPREHENSION STRATEGY**\n`;
+            trace.surveillanceRecommendations.forEach((rec: string, i: number) => {
+              intelReport += `${i + 1}. ${rec}\n`;
+            });
+            intelReport += `\n`;
+          }
+          if (trace?.criticalObservations?.length > 0) {
+            intelReport += `[CRITICAL]CRITICAL OBSERVATIONS**\n`;
+            trace.criticalObservations.forEach((obs: string) => { intelReport += `• ${obs}\n`; });
+          }
+
+          // Addresses
+          if (addresses.length > 0) {
+            intelReport += `\n[LOCATION]ALL ADDRESSES (${addresses.length})**\n`;
+            addresses.slice(0, 10).forEach((addr: any, i: number) => {
+              const conf = addr.confidence ? ` (${Math.round(addr.confidence * 100)}%)` : '';
+              intelReport += `${i + 1}. ${addr.fullAddress || addr.address}${conf}\n`;
+            });
+          }
+
+          // Phones
+          if (phones.length > 0) {
+            intelReport += `\n[PHONES]PHONE INTELLIGENCE (${phones.length})**\n`;
+            phones.forEach((p: any) => { intelReport += `• ${p.number} (${p.type || 'unknown'})\n`; });
+          }
+
+          // Warnings
+          if (flags.length > 0) {
+            intelReport += `\n[WARNING]RED FLAGS**\n`;
+            flags.forEach((f: any) => { intelReport += `• ${f.message}\n`; });
+          }
+
+          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: intelReport, timestamp: new Date() }]);
+          await refresh();
+        } else {
+          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `[WARN]Re-analysis failed: ${result.error || 'Unknown error'}`, timestamp: new Date() }]);
+        }
+      } catch (err: any) {
+        setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `[ERROR]${err?.message || 'Re-analysis failed'}`, timestamp: new Date() }]);
+      }
+
+      setIsSending(false);
+      scrollToBottom();
+      return;
+    }
+
     // CHECK: Are we waiting for an associate name after photo drop?
     const waitingForAssocName = await AsyncStorage.getItem(`case_waiting_associate_name_${id}`);
     if (waitingForAssocName === 'true' && userText.length > 1 && userText.length < 50 && !userText.includes(' as ')) {
