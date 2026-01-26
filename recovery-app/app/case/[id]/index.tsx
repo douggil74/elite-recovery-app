@@ -1019,8 +1019,13 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
 
   // Handle file upload
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    console.log('[Upload] File change event triggered');
     const files = event.target.files;
-    if (!files || files.length === 0) return;
+    if (!files || files.length === 0) {
+      console.log('[Upload] No files selected');
+      return;
+    }
+    console.log('[Upload] Processing', files.length, 'files:', Array.from(files).map(f => f.name).join(', '));
     setIsProcessingFile(true);
 
     const { processUploadedFile } = await import('@/lib/pdf-extract');
@@ -1147,10 +1152,12 @@ ${result.explanation}`,
       scrollToBottom();
 
       try {
+        console.log('[PDF] Starting extraction for:', file.name);
         setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `🔄 Extracting text from ${file.name}...`, timestamp: new Date() }]);
         scrollToBottom();
 
         const extractResult = await processUploadedFile(file);
+        console.log('[PDF] Extraction result:', extractResult.success, extractResult.error, extractResult.text?.length);
 
         if (extractResult.usedOcr) {
           setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `📷 PDF is scanned - using OCR to extract text...`, timestamp: new Date() }]);
@@ -1170,7 +1177,9 @@ ${result.explanation}`,
         scrollToBottom();
 
         // Analyze document text directly
+        console.log('[PDF] Starting AI analysis...');
         const result = await analyzeText(extractResult.text);
+        console.log('[PDF] Analysis result:', result.success, result.error);
         if (result.success && result.data) {
           const d = result.data;
           const subject = d.subject || {};
@@ -1332,6 +1341,7 @@ ${result.explanation}`,
           setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `[WARN]Analysis failed: ${result.error || 'Unknown error'}`, timestamp: new Date() }]);
         }
       } catch (err: any) {
+        console.error('[PDF] Processing error:', err);
         setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `[ERROR]Error processing file: ${err?.message || 'Unknown error'}`, timestamp: new Date() }]);
       }
     }
