@@ -8,6 +8,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // Always use Haiku 3.5 - fastest and most cost-effective for document extraction
 const CLAUDE_MODEL = 'claude-3-5-haiku-20241022';
+const CHUNK_SIZE = 40000; // chars per chunk (leave room for prompt overhead)
 import type {
   ParsedReport,
   Subject,
@@ -338,7 +339,7 @@ export async function analyzeBailDocument(
   }
 
   try {
-    console.log('Starting Claude analysis...');
+    console.log(`Starting Claude analysis... (${text.length} chars)`);
     if (primaryTarget) {
       console.log('Primary target context:', primaryTarget.fullName);
     }
@@ -348,71 +349,43 @@ export async function analyzeBailDocument(
       dangerouslyAllowBrowser: true,
     });
 
-    // Build the analysis prompt based on whether we have a primary target
-    let analysisPrompt: string;
+    let rawIntel: ExtractedIntel;
 
-    if (primaryTarget) {
-      // We have a primary target - analyze document as potential associate intel
-      analysisPrompt = `IMPORTANT CONTEXT: We are searching for a FUGITIVE named "${primaryTarget.fullName}"${primaryTarget.dob ? ` (DOB: ${primaryTarget.dob})` : ''}${primaryTarget.aliases?.length ? ` (AKA: ${primaryTarget.aliases.join(', ')})` : ''}.
-
-This document may be:
-1. DIRECTLY about the fugitive (their bail bond, check-ins, etc.)
-2. About an ASSOCIATE (family member, employer, co-signer, etc.) who may know where the fugitive is
-
-FIRST: Determine if this document is about the PRIMARY FUGITIVE or about an ASSOCIATE.
-
-If this is about the PRIMARY FUGITIVE "${primaryTarget.fullName}":
-- Extract all their information normally into the subject field
-- Set "isAssociateDocument": false
-
-If this is about someone ELSE (associate/relative):
-- Still put that person's info in the subject field for reference
-- Set "isAssociateDocument": true
-- In "caseNotes", add: "ASSOCIATE DOCUMENT: [Person Name] - [Relationship to fugitive if known]"
-- Focus on extracting addresses, phones, and contacts that could help locate the fugitive
-
-Analyze this document and extract all intelligence. Return ONLY valid JSON, no other text.
-
-DOCUMENT TEXT:
-${text.slice(0, 50000)}`;
+    if (text.length <= CHUNK_SIZE) {
+      // Single chunk - analyze directly
+      rawIntel = await analyzeChunk(client, text, primaryTarget);
     } else {
-      // No primary target yet - this is the first document, establishing the target
-      analysisPrompt = `Analyze this bail bond document and extract all intelligence. Return ONLY valid JSON, no other text.
+      // Split into chunks at page boundaries and merge results
+      const chunks = splitIntoChunks(text, CHUNK_SIZE);
+      console.log(`Document split into ${chunks.length} chunks for analysis`);
 
-DOCUMENT TEXT:
-${text.slice(0, 50000)}`;
+      // Analyze first chunk with full extraction
+      const firstIntel = await analyzeChunk(client, chunks[0], primaryTarget);
+
+      if (chunks.length === 1) {
+        rawIntel = firstIntel;
+      } else {
+        // Analyze remaining chunks (extraction only, skip TRACE analysis)
+        const chunkResults: ExtractedIntel[] = [firstIntel];
+        for (let i = 1; i < chunks.length; i++) {
+          console.log(`Analyzing chunk ${i + 1}/${chunks.length}...`);
+          try {
+            const chunkIntel = await analyzeChunk(client, chunks[i], primaryTarget, true);
+            chunkResults.push(chunkIntel);
+          } catch (e) {
+            console.error(`Chunk ${i + 1} analysis failed:`, e);
+          }
+        }
+
+        // Merge all chunk results
+        rawIntel = mergeIntel(chunkResults);
+
+        // Run final TRACE analysis pass on merged data
+        console.log('Running final TRACE analysis on merged data...');
+        rawIntel = await runTraceAnalysis(client, rawIntel);
+      }
     }
 
-    const message = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 4000,
-      messages: [
-        {
-          role: 'user',
-          content: analysisPrompt,
-        },
-      ],
-      system: CLAUDE_SYSTEM_PROMPT,
-    });
-
-    console.log('Claude response received');
-
-    // Extract text from response
-    const responseText = message.content[0].type === 'text'
-      ? message.content[0].text
-      : '';
-
-    // Parse JSON from response
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.error('No JSON found in response:', responseText.slice(0, 500));
-      return {
-        success: false,
-        error: 'Could not parse analysis results',
-      };
-    }
-
-    const rawIntel = JSON.parse(jsonMatch[0]) as ExtractedIntel;
     console.log('Parsed intel:', Object.keys(rawIntel));
 
     // Convert to ParsedReport format
@@ -443,6 +416,186 @@ ${text.slice(0, 50000)}`;
       error: errorMsg,
     };
   }
+}
+
+/**
+ * Split text into chunks at page boundaries (--- Page X ---)
+ */
+function splitIntoChunks(text: string, maxSize: number): string[] {
+  if (text.length <= maxSize) return [text];
+
+  const chunks: string[] = [];
+  const pages = text.split(/(?=--- Page \d+)/);
+  let currentChunk = '';
+
+  for (const page of pages) {
+    if (currentChunk.length + page.length > maxSize && currentChunk.length > 0) {
+      chunks.push(currentChunk);
+      currentChunk = page;
+    } else {
+      currentChunk += page;
+    }
+  }
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
+/**
+ * Analyze a single chunk of text
+ */
+async function analyzeChunk(
+  client: Anthropic,
+  text: string,
+  primaryTarget?: PrimaryTargetContext,
+  extractionOnly = false
+): Promise<ExtractedIntel> {
+  let analysisPrompt: string;
+
+  if (primaryTarget) {
+    analysisPrompt = `IMPORTANT CONTEXT: We are searching for a FUGITIVE named "${primaryTarget.fullName}"${primaryTarget.dob ? ` (DOB: ${primaryTarget.dob})` : ''}${primaryTarget.aliases?.length ? ` (AKA: ${primaryTarget.aliases.join(', ')})` : ''}.
+
+This document may be:
+1. DIRECTLY about the fugitive (their bail bond, check-ins, etc.)
+2. About an ASSOCIATE (family member, employer, co-signer, etc.) who may know where the fugitive is
+
+FIRST: Determine if this document is about the PRIMARY FUGITIVE or about an ASSOCIATE.
+
+If this is about the PRIMARY FUGITIVE "${primaryTarget.fullName}":
+- Extract all their information normally into the subject field
+- Set "isAssociateDocument": false
+
+If this is about someone ELSE (associate/relative):
+- Still put that person's info in the subject field for reference
+- Set "isAssociateDocument": true
+- In "caseNotes", add: "ASSOCIATE DOCUMENT: [Person Name] - [Relationship to fugitive if known]"
+- Focus on extracting addresses, phones, and contacts that could help locate the fugitive
+
+Analyze this document and extract all intelligence. Return ONLY valid JSON, no other text.
+${extractionOnly ? '\nFocus on DATA EXTRACTION only. Skip the traceAnalysis section.' : ''}
+
+DOCUMENT TEXT:
+${text}`;
+  } else {
+    analysisPrompt = `Analyze this bail bond document and extract all intelligence. Return ONLY valid JSON, no other text.
+${extractionOnly ? '\nFocus on DATA EXTRACTION only. Skip the traceAnalysis section.' : ''}
+
+DOCUMENT TEXT:
+${text}`;
+  }
+
+  const message = await client.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 4000,
+    messages: [{ role: 'user', content: analysisPrompt }],
+    system: CLAUDE_SYSTEM_PROMPT,
+  });
+
+  const responseText = message.content[0].type === 'text' ? message.content[0].text : '';
+  const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error('Could not parse analysis results');
+  }
+
+  return JSON.parse(jsonMatch[0]) as ExtractedIntel;
+}
+
+/**
+ * Merge multiple ExtractedIntel results into one
+ */
+function mergeIntel(results: ExtractedIntel[]): ExtractedIntel {
+  if (results.length === 0) throw new Error('No results to merge');
+  if (results.length === 1) return results[0];
+
+  const merged: ExtractedIntel = {
+    ...results[0], // Base from first chunk (has subject info)
+    documentTypes: [...new Set(results.flatMap(r => r.documentTypes || []))],
+    checkIns: deduplicateCheckIns(results.flatMap(r => r.checkIns || [])),
+    addresses: deduplicateByField(results.flatMap(r => r.addresses || []), 'address'),
+    contacts: deduplicateByField(results.flatMap(r => r.contacts || []), 'name'),
+    vehicles: deduplicateByField(results.flatMap(r => r.vehicles || []), 'plate'),
+    employment: deduplicateByField(results.flatMap(r => r.employment || []), 'employer'),
+    caseNotes: [...new Set(results.flatMap(r => r.caseNotes || []))],
+    warnings: [...new Set(results.flatMap(r => r.warnings || []))],
+  };
+
+  // Merge bond info (take the most complete one)
+  for (const r of results) {
+    if (r.bondInfo?.totalAmount && (!merged.bondInfo?.totalAmount || r.bondInfo.charges?.length)) {
+      merged.bondInfo = r.bondInfo;
+    }
+  }
+
+  console.log(`Merged: ${merged.checkIns?.length || 0} check-ins, ${merged.addresses?.length || 0} addresses, ${merged.contacts?.length || 0} contacts`);
+  return merged;
+}
+
+function deduplicateCheckIns(items: ExtractedIntel['checkIns']): ExtractedIntel['checkIns'] {
+  if (!items) return [];
+  const seen = new Set<string>();
+  return items.filter(item => {
+    const key = `${item.date}-${item.location}`.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function deduplicateByField<T extends Record<string, any>>(items: T[], field: string): T[] {
+  const seen = new Set<string>();
+  return items.filter(item => {
+    const val = (item[field] || '').toString().toLowerCase().trim();
+    if (!val || seen.has(val)) return false;
+    seen.add(val);
+    return true;
+  });
+}
+
+/**
+ * Run a final TRACE analysis pass on merged intel data
+ */
+async function runTraceAnalysis(client: Anthropic, intel: ExtractedIntel): Promise<ExtractedIntel> {
+  // Summarize the merged data for TRACE analysis
+  const summary = JSON.stringify({
+    subject: intel.subject,
+    checkIns: intel.checkIns,
+    addresses: intel.addresses,
+    contacts: intel.contacts,
+    employment: intel.employment,
+    bondInfo: intel.bondInfo,
+  });
+
+  const prompt = `Based on this extracted intelligence data, generate ONLY the "traceAnalysis" JSON section.
+
+Analyze check-in patterns, identify anchor points vs transient locations (truck stops, gas stations = transient),
+build a prediction model, and provide surveillance recommendations.
+
+DATA:
+${summary.slice(0, 45000)}
+
+Return ONLY a JSON object with the "traceAnalysis" key. No other text.`;
+
+  try {
+    const message = await client.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }],
+      system: CLAUDE_SYSTEM_PROMPT,
+    });
+
+    const responseText = message.content[0].type === 'text' ? message.content[0].text : '';
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const traceResult = JSON.parse(jsonMatch[0]);
+      intel.traceAnalysis = traceResult.traceAnalysis || traceResult;
+    }
+  } catch (e) {
+    console.error('TRACE analysis pass failed:', e);
+  }
+
+  return intel;
 }
 
 /**
