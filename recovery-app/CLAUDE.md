@@ -309,7 +309,166 @@ When skip trace data is uploaded, analyze in this order:
 3. **Relatives/associates** - Who's hiding them, who knows where they are
 4. **Vehicles** - What to look for, where it might be parked
 5. **Employment** - Work address, likely schedule
-6. **Social media** - Recent activity, tagged locations, friend connections
+6. **Social media** - Recent activity, tagged locations
+
+---
+
+## TRACE Report Format
+
+When analyzing case documents, generate a report in this EXACT format:
+
+```
+TRACE ANALYSIS - [SUBJECT NAME]
+
+---
+
+SUBJECT PROFILE
+
+Name: [Full name with aliases]
+DOB: [Date] (Age [X])
+Phone: [Primary phone]
+Email: [Email if known]
+SSN: [Last 4 or full if in docs]
+DL: [License number and state]
+
+Charges: [List charges with bond amounts]
+Total Bond: $[Amount]
+Bond Forfeiture: [Date if applicable]
+FTA Date: [Date if applicable]
+Status: [ACTIVE FUGITIVE / COMPLIANT / etc.]
+
+---
+
+EMPLOYMENT ANALYSIS
+
+Occupation: [Job title]
+Employer: [Company name]
+Work Location: [Address]
+Schedule: [If known - shifts, days, etc.]
+Notes: [Relevant employment intel]
+
+---
+
+CHECK-IN PATTERN ANALYSIS
+
+Total check-ins analyzed: [Number]
+
+[Create table showing pattern]:
+| Region | Locations | Frequency |
+|--------|-----------|-----------|
+| [Area] | [Cities/addresses] | [How often] |
+
+---
+
+ANCHOR POINTS - CRITICAL
+
+[Identify repeated addresses with frequency]:
+| Address | Occurrences | Notes |
+|---------|-------------|-------|
+| [Address] | [X] times | [Who lives there, relationship] |
+
+[Identify PRIMARY anchor point in bold]
+
+---
+
+CHECK-IN TIMING PATTERN
+
+[Analyze days and times]:
+| Day Pattern | Time Pattern |
+|-------------|--------------|
+| [Days] | [Times and what they indicate] |
+
+[Calculate interval between returns to anchor points]
+
+---
+
+PREDICTION MODEL
+
+Last known check-in: [Date, location, time]
+Previous: [Date, location]
+Previous: [Date, location]
+
+PATTERN DETECTED:
+[Describe the pattern in plain language]
+
+PREDICTION:
+[When and where subject likely to appear next]
+[Confidence level and reasoning]
+
+---
+
+SURVEILLANCE RECOMMENDATIONS
+
+PRIMARY TARGET: [Address]
+- [Why this location]
+- Best surveillance window: [Days/times]
+- Watch for: [Vehicle, behavior patterns]
+
+SECONDARY TARGETS:
+1. [Address with notes]
+2. [Address with notes]
+3. [Address with notes]
+
+---
+
+KNOWN ASSOCIATES
+
+| Name | Relation | Phone | Address |
+|------|----------|-------|---------|
+| [Name] | [Relationship] | [Phone] | [Address] |
+
+[Include co-signers, references, anyone mentioned in docs]
+
+---
+
+PHONE INTELLIGENCE
+
+| Number | Status | Notes |
+|--------|--------|-------|
+| [Number] | [Active/Disconnected/Unknown] | [Context] |
+
+---
+
+RED FLAGS FROM BONDSMAN NOTES
+
+[Number each red flag with date and quote from notes]:
+1. [Date]: [Direct quote or summary of concerning info]
+2. [Date]: [Direct quote or summary]
+
+---
+
+CRITICAL OBSERVATIONS
+
+[Numbered list of key intel that affects apprehension strategy]:
+1. [Observation with supporting evidence]
+2. [Observation with supporting evidence]
+
+---
+
+RECOMMENDED APPREHENSION STRATEGY
+
+[Numbered action items]:
+1. [Specific action with location/timing]
+2. [Specific action]
+3. [Specific action]
+
+CONFIDENCE LEVEL: [HIGH/MEDIUM/LOW] - [Reasoning]
+```
+
+---
+
+## Report Generation Rules
+
+1. Extract EVERY address from check-in logs and count occurrences
+2. Identify the PRIMARY anchor point (most frequent non-work location)
+3. Calculate average interval between returns to anchor point
+4. Pull ALL phone numbers from all documents and note status
+5. Extract ALL names mentioned (references, co-signers, associates)
+6. Quote bondsman notes directly when they contain actionable intel
+7. Look for contradictions (e.g., says he works in Alaska but checks in from Ohio)
+8. Note when phone numbers go dead - this often indicates awareness of warrant
+9. If subject is a truck driver, identify the trucking route pattern
+10. Always end with specific, actionable surveillance recommendations, friend connections
 
 ---
 
