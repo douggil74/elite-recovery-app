@@ -3780,8 +3780,13 @@ async def extract_photo_gps(request: PhotoGPSRequest):
         import tempfile
         import exifread
 
+        # Strip data URL prefix if present (e.g., "data:image/png;base64,")
+        image_b64 = request.image_base64
+        if ',' in image_b64:
+            image_b64 = image_b64.split(',', 1)[1]
+
         # Decode image
-        image_data = base64.b64decode(request.image_base64)
+        image_data = base64.b64decode(image_b64)
 
         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
             tmp.write(image_data)
@@ -3865,8 +3870,13 @@ async def reverse_image_search(request: ReverseImageSearchRequest):
         import tempfile
         import hashlib
 
+        # Strip data URL prefix if present (e.g., "data:image/png;base64,")
+        image_b64 = request.image_base64
+        if ',' in image_b64:
+            image_b64 = image_b64.split(',', 1)[1]
+
         # Decode image
-        image_data = base64.b64decode(request.image_base64)
+        image_data = base64.b64decode(image_b64)
         image_hash = hashlib.md5(image_data).hexdigest()
 
         # Save temporarily for potential API uploads
