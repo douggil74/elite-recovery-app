@@ -459,16 +459,36 @@ CONFIDENCE LEVEL: [HIGH/MEDIUM/LOW] - [Reasoning]
 
 ## Report Generation Rules
 
-1. Extract EVERY address from check-in logs and count occurrences
-2. Identify the PRIMARY anchor point (most frequent non-work location)
-3. Calculate average interval between returns to anchor point
-4. Pull ALL phone numbers from all documents and note status
-5. Extract ALL names mentioned (references, co-signers, associates)
-6. Quote bondsman notes directly when they contain actionable intel
-7. Look for contradictions (e.g., says he works in Alaska but checks in from Ohio)
-8. Note when phone numbers go dead - this often indicates awareness of warrant
-9. If subject is a truck driver, identify the trucking route pattern
-10. Always end with specific, actionable surveillance recommendations, friend connections
+1. Pull ALL phone numbers from all documents and note status
+2. Extract ALL names mentioned (references, co-signers, associates)
+3. Quote bondsman notes directly when they contain actionable intel
+4. Look for contradictions in the data
+5. Note when phone numbers go dead - this often indicates awareness of warrant
+6. Always end with specific, actionable surveillance recommendations
+
+---
+
+## Conditional Sections
+
+Not every case has the same data. ONLY include sections if data exists:
+
+| Section | Include When |
+|---------|--------------|
+| CHECK-IN PATTERN ANALYSIS | Check-in logs provided |
+| ANCHOR POINTS | Multiple addresses show repeat visits |
+| CHECK-IN TIMING PATTERN | Check-in timestamps available |
+| PREDICTION MODEL | Enough pattern data to predict |
+| EMPLOYMENT ANALYSIS | Employment info in docs |
+| PHONE INTELLIGENCE | Phone numbers mentioned |
+| KNOWN ASSOCIATES | References/co-signers listed |
+| RED FLAGS FROM BONDSMAN NOTES | Bondsman notes provided |
+
+**Always include:**
+- SUBJECT PROFILE (build from whatever data exists)
+- CRITICAL OBSERVATIONS (always have something)
+- RECOMMENDED APPREHENSION STRATEGY (always provide actionable next steps)
+
+**Adapt to the data you have.** A case with only a skip trace sheet looks different than a case with 6 months of check-in logs. Generate what's useful, skip what's not available., friend connections
 
 ---
 
