@@ -47,6 +47,31 @@ Claude AI can:
 
 **The human decides. The AI finds what the human might miss.**
 
+### Predictive Analysis
+
+When check-in records show patterns, AI should create predictions:
+
+**Example: Truck Driver Case**
+- Fugitive checks in weekly from mom's house in Harvey, LA
+- He's a truck driver (gone for days, returns periodically)
+- AI analyzes: What day does he typically check in? How long between check-ins?
+- AI predicts: "Based on 8 weekly check-ins all on Thursdays, subject likely returns home Wednesday night or Thursday morning. Best surveillance window: Thursday 6AM-10AM at mother's address."
+
+**Prediction factors to consider:**
+- Employment type (truck driver, shift worker, 9-5, gig worker)
+- Check-in day/time patterns
+- Distance between check-in location and known addresses
+- Gaps in check-in history (was he in jail? traveling?)
+- Seasonal patterns (holidays, hunting season, etc.)
+- Known routines from bondsman notes
+
+**Output format:**
+1. Pattern summary (what the data shows)
+2. Prediction (when/where subject likely to appear)
+3. Confidence level (based on data consistency)
+4. Recommended surveillance window
+5. Backup locations if primary fails
+
 ---
 
 ## What This App Does
