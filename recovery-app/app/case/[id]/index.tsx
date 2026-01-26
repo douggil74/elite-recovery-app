@@ -1191,15 +1191,18 @@ ${result.explanation}`,
           const flags = d.flags || [];
           const recommendations = d.recommendations || [];
 
-          // Build comprehensive intel report for chat
+          // Build TRACE intelligence report
           let intelReport = '';
+          const dAny = d as any;
+          const cosigners = dAny.cosigners || [];
+          const references = dAny.references || [];
+          const checkIns = dAny.checkIns || [];
+          const trace = dAny.traceAnalysis;
 
-          // Check if this is an associate document (not the primary target)
+          // Check if this is an associate document
           const primaryName = getSubjectName();
           const normalizedSubject = normalizeName(subject.fullName);
           const normalizedPrimary = normalizeName(primaryName);
-
-          // Determine if this document is about someone other than the primary target
           const isAboutAssociate = result.isAssociateDocument ||
             (normalizedSubject &&
              normalizedSubject !== 'Unknown' &&
@@ -1209,8 +1212,6 @@ ${result.explanation}`,
 
           if (isAboutAssociate) {
             intelReport += `[REPORT]ASSOCIATE INTEL** (for locating ${primaryName})\n`;
-
-            // ADD this person as a discovered associate
             if (normalizedSubject && normalizedSubject !== 'Unknown') {
               const newAssociate = {
                 name: normalizedSubject,
@@ -1219,29 +1220,19 @@ ${result.explanation}`,
                 currentAddress: addresses.length > 0 ? addresses[0].fullAddress : undefined,
                 source: 'document_analysis',
               };
-
-              console.log('[Associate] Adding discovered associate:', newAssociate);
-
               setDiscoveredAssociates(prev => {
-                // Don't add duplicates
-                const exists = prev.some(a =>
-                  normalizeName(a.name)?.toLowerCase() === normalizedSubject.toLowerCase()
-                );
-                if (exists) {
-                  console.log('[Associate] Already exists, skipping');
-                  return prev;
-                }
-                console.log('[Associate] Added to list');
-                return [...prev, newAssociate];
+                const exists = prev.some(a => normalizeName(a.name)?.toLowerCase() === normalizedSubject.toLowerCase());
+                return exists ? prev : [...prev, newAssociate];
               });
             }
-            intelReport += `This document is about ${normalizedSubject || 'Unknown'}, who may have info on ${primaryName}.\n\n`;
+            intelReport += `Document about ${normalizedSubject || 'Unknown'} - may have intel on ${primaryName}.\n\n`;
           } else {
-            intelReport += `[REPORT]INTEL REPORT EXTRACTED**\n\n`;
+            intelReport += `[REPORT]TRACE ANALYSIS - ${subject.fullName || 'UNKNOWN'}**\n`;
+            intelReport += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
           }
 
-          // Subject Profile
-          intelReport += `[PERSON]${result.isAssociateDocument ? 'ASSOCIATE' : 'SUBJECT'} PROFILE**\n`;
+          // ═══ SUBJECT PROFILE ═══
+          intelReport += `[PERSON]SUBJECT PROFILE**\n`;
           intelReport += `Name: ${subject.fullName || 'Unknown'}\n`;
           if (subject.dob) intelReport += `DOB: ${subject.dob}\n`;
           if (subject.partialSsn) intelReport += `SSN: XXX-XX-${subject.partialSsn}\n`;
@@ -1249,30 +1240,61 @@ ${result.explanation}`,
           if (subject.aliases?.length > 0) intelReport += `AKA: ${subject.aliases.join(', ')}\n`;
           intelReport += `\n`;
 
-          // Charges/Bond from recommendations
-          const bondInfo = recommendations.filter((r: string) => r.includes('Bond') || r.includes('Charge'));
-          if (bondInfo.length > 0) {
+          // ═══ CHARGES & BOND ═══
+          const bondRecs = recommendations.filter((r: string) => r.includes('Bond') || r.includes('Charge'));
+          if (bondRecs.length > 0) {
             intelReport += `[CHARGES]CHARGES & BOND**\n`;
-            bondInfo.forEach((info: string) => { intelReport += `• ${info}\n`; });
+            bondRecs.forEach((info: string) => { intelReport += `• ${info}\n`; });
             intelReport += `\n`;
           }
 
-          // Top Addresses
-          if (addresses.length > 0) {
-            intelReport += `[LOCATION]TOP LOCATIONS (${addresses.length} total)**\n`;
-            addresses.slice(0, 5).forEach((addr: any, i: number) => {
-              const confidence = addr.confidence ? ` (${Math.round(addr.confidence * 100)}%)` : '';
-              intelReport += `${i + 1}. ${addr.fullAddress || addr.address}${confidence}\n`;
-              if (addr.reasons?.[0]) intelReport += `   → ${addr.reasons[0]}\n`;
+          // ═══ EMPLOYMENT ═══
+          if (employment.length > 0) {
+            intelReport += `[EMPLOYMENT]EMPLOYMENT ANALYSIS**\n`;
+            employment.forEach((emp: any) => {
+              intelReport += `• ${emp.employer}`;
+              if (emp.isCurrent) intelReport += ` (CURRENT)`;
+              if (emp.title) intelReport += ` - ${emp.title}`;
+              intelReport += `\n`;
+              if (emp.address) intelReport += `  Address: ${emp.address}\n`;
+              if (emp.phone) intelReport += `  Phone: ${emp.phone}\n`;
             });
             intelReport += `\n`;
           }
 
-          // Contacts/References
-          if (relatives.length > 0) {
-            intelReport += `[CONTACTS]CONTACTS/REFERENCES (${relatives.length})**\n`;
-            relatives.slice(0, 5).forEach((rel: any) => {
-              intelReport += `${rel.name} (${rel.relationship})`;
+          // ═══ COSIGNERS / INDEMNITORS ═══
+          if (cosigners.length > 0) {
+            intelReport += `[COSIGNER]COSIGNERS / INDEMNITORS**\n`;
+            intelReport += `These people put up bail - HIGH leverage contacts:\n\n`;
+            cosigners.forEach((cs: any, i: number) => {
+              intelReport += `${i + 1}. ${cs.name} (${cs.relationship})\n`;
+              if (cs.phone) intelReport += `   Phone: ${cs.phone}\n`;
+              if (cs.address) intelReport += `   Address: ${cs.address}\n`;
+              if (cs.employer) intelReport += `   Employer: ${cs.employer}\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // ═══ REFERENCES ═══
+          if (references.length > 0) {
+            intelReport += `[CONTACTS]REFERENCES**\n`;
+            references.forEach((ref: any, i: number) => {
+              intelReport += `${i + 1}. ${ref.name} (${ref.relationship})`;
+              if (ref.phone) intelReport += ` - ${ref.phone}`;
+              intelReport += `\n`;
+              if (ref.address) intelReport += `   ${ref.address}\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // ═══ OTHER KNOWN ASSOCIATES ═══
+          const otherContacts = relatives.filter((r: any) =>
+            !r.relationship?.includes('COSIGNER') && !r.relationship?.includes('REFERENCE')
+          );
+          if (otherContacts.length > 0) {
+            intelReport += `[CONTACTS]KNOWN ASSOCIATES**\n`;
+            otherContacts.forEach((rel: any) => {
+              intelReport += `• ${rel.name} (${rel.relationship})`;
               if (rel.phones?.[0]) intelReport += ` - ${rel.phones[0]}`;
               intelReport += `\n`;
               if (rel.currentAddress) intelReport += `  ${rel.currentAddress}\n`;
@@ -1280,128 +1302,134 @@ ${result.explanation}`,
             intelReport += `\n`;
           }
 
-          // Vehicles
+          // ═══ VEHICLES ═══
           if (vehicles.length > 0) {
             intelReport += `[VEHICLES]VEHICLES**\n`;
             vehicles.forEach((v: any) => {
               const desc = [v.year, v.make, v.model, v.color].filter(Boolean).join(' ') || v.description || 'Unknown';
               intelReport += `• ${desc}`;
               if (v.plate) intelReport += ` | PLATE: ${v.plate}`;
+              if (v.vin) intelReport += ` | VIN: ${v.vin}`;
               intelReport += `\n`;
             });
             intelReport += `\n`;
           }
 
-          // Employment
-          if (employment.length > 0) {
-            intelReport += `[EMPLOYMENT]EMPLOYMENT**\n`;
-            employment.forEach((emp: any) => {
-              intelReport += `${emp.employer}`;
-              if (emp.isCurrent) intelReport += ` (CURRENT)`;
+          // ═══ CHECK-IN TIMELINE ═══
+          if (checkIns.length > 0) {
+            intelReport += `[TIMELINE]CHECK-IN TIMELINE (${checkIns.length} entries)**\n`;
+            checkIns.slice(0, 20).forEach((ci: any) => {
+              intelReport += `• ${ci.date} - ${ci.location || ci.city || 'Unknown'}`;
+              if (ci.state && !ci.location?.includes(ci.state)) intelReport += `, ${ci.state}`;
+              if (ci.notes) intelReport += ` (${ci.notes})`;
               intelReport += `\n`;
-              if (emp.address) intelReport += `  ${emp.address}\n`;
-              if (emp.phone) intelReport += `  ${emp.phone}\n`;
+            });
+            if (checkIns.length > 20) {
+              intelReport += `  ...and ${checkIns.length - 20} more check-ins\n`;
+            }
+            intelReport += `\n`;
+          }
+
+          // ═══ ANCHOR POINTS ═══
+          if (trace?.anchorPoints?.length > 0) {
+            intelReport += `[ANCHOR]ANCHOR POINTS (High Value)**\n`;
+            intelReport += `Locations subject RETURNS TO - best for apprehension:\n\n`;
+            trace.anchorPoints.forEach((ap: any, i: number) => {
+              intelReport += `${i + 1}. ${ap.location}\n`;
+              intelReport += `   Type: ${ap.type?.replace(/_/g, ' ').toUpperCase()}\n`;
+              if (ap.owner) intelReport += `   Contact: ${ap.owner}\n`;
+              if (ap.checkInCount) intelReport += `   Check-ins: ${ap.checkInCount}x\n`;
+              intelReport += `   Confidence: ${ap.confidence}%\n`;
+              intelReport += `   → ${ap.reason}\n\n`;
+            });
+          }
+
+          // ═══ TRANSIENT LOCATIONS ═══
+          if (trace?.transientLocations?.length > 0) {
+            intelReport += `[SKIP]TRANSIENT LOCATIONS (Filtered Out)**\n`;
+            intelReport += `One-time stops - LOW value for apprehension:\n`;
+            trace.transientLocations.slice(0, 5).forEach((loc: string) => {
+              intelReport += `• ${loc}\n`;
+            });
+            if (trace.transientLocations.length > 5) {
+              intelReport += `  ...and ${trace.transientLocations.length - 5} more\n`;
+            }
+            intelReport += `\n`;
+          }
+
+          // ═══ PATTERN ANALYSIS ═══
+          if (trace?.patternAnalysis) {
+            const pa = trace.patternAnalysis;
+            intelReport += `[PATTERN]PATTERN ANALYSIS**\n`;
+            if (pa.isTruckDriver) intelReport += `TRUCK DRIVER - Most check-in locations are road stops, NOT residences\n`;
+            if (pa.checkInFrequency) intelReport += `Check-in Frequency: ${pa.checkInFrequency}\n`;
+            if (pa.typicalReturnDay) intelReport += `Typical Return: ${pa.typicalReturnDay}\n`;
+            if (pa.routePattern) intelReport += `Route Pattern: ${pa.routePattern}\n`;
+            if (pa.homeBaseLocation) intelReport += `HOME BASE: ${pa.homeBaseLocation}\n`;
+            intelReport += `\n`;
+          }
+
+          // ═══ PREDICTION MODEL ═══
+          if (trace?.predictionModel) {
+            const pm = trace.predictionModel;
+            intelReport += `[PREDICT]PREDICTION MODEL**\n`;
+            if (pm.nextLikelyLocation) intelReport += `Next Likely Location: ${pm.nextLikelyLocation}\n`;
+            if (pm.bestTimeWindow) intelReport += `Best Time Window: ${pm.bestTimeWindow}\n`;
+            if (pm.confidence) intelReport += `Confidence: ${pm.confidence}%\n`;
+            if (pm.reasoning) intelReport += `Reasoning: ${pm.reasoning}\n`;
+            intelReport += `\n`;
+          }
+
+          // ═══ SURVEILLANCE RECOMMENDATIONS ═══
+          if (trace?.surveillanceRecommendations?.length > 0) {
+            intelReport += `[SURVEILLANCE]RECOMMENDED APPREHENSION STRATEGY**\n`;
+            trace.surveillanceRecommendations.forEach((rec: string, i: number) => {
+              intelReport += `${i + 1}. ${rec}\n`;
             });
             intelReport += `\n`;
           }
 
-          // All phones
-          if (phones.length > 1) {
-            intelReport += `[PHONES]ALL PHONE NUMBERS**\n`;
+          // ═══ ALL ADDRESSES (ranked) ═══
+          if (addresses.length > 0) {
+            intelReport += `[LOCATION]ALL KNOWN ADDRESSES (${addresses.length})**\n`;
+            addresses.slice(0, 8).forEach((addr: any, i: number) => {
+              const confidence = addr.confidence ? ` (${Math.round(addr.confidence * 100)}%)` : '';
+              intelReport += `${i + 1}. ${addr.fullAddress || addr.address}${confidence}\n`;
+              if (addr.reasons?.[0]) intelReport += `   → ${addr.reasons[0]}\n`;
+            });
+            intelReport += `\n`;
+          }
+
+          // ═══ ALL PHONES ═══
+          if (phones.length > 0) {
+            intelReport += `[PHONES]PHONE INTELLIGENCE (${phones.length})**\n`;
             phones.forEach((p: any) => {
               intelReport += `• ${p.number} (${p.type || 'unknown'})\n`;
             });
             intelReport += `\n`;
           }
 
-          // Warnings/Flags
+          // ═══ WARNINGS ═══
           if (flags.length > 0) {
-            intelReport += `[WARNING]WARNINGS**\n`;
-            flags.forEach((f: any) => {
-              intelReport += `• ${f.message}\n`;
+            intelReport += `[WARNING]RED FLAGS**\n`;
+            flags.forEach((f: any) => { intelReport += `• ${f.message}\n`; });
+            intelReport += `\n`;
+          }
+
+          // ═══ CRITICAL OBSERVATIONS ═══
+          if (trace?.criticalObservations?.length > 0) {
+            intelReport += `[CRITICAL]CRITICAL OBSERVATIONS**\n`;
+            trace.criticalObservations.forEach((obs: string) => {
+              intelReport += `• ${obs}\n`;
             });
             intelReport += `\n`;
           }
 
-          // Key Intel
+          // ═══ KEY INTEL ═══
           const keyIntel = recommendations.filter((r: string) => !r.includes('Bond') && !r.includes('Charge'));
           if (keyIntel.length > 0) {
             intelReport += `[TIP]KEY INTEL**\n`;
             keyIntel.forEach((note: string) => { intelReport += `• ${note}\n`; });
-            intelReport += `\n`;
-          }
-
-          // TRACE ANALYSIS - Pattern Analysis & Predictions
-          const trace = (d as any).traceAnalysis;
-          if (trace) {
-            // Anchor Points (HIGH VALUE locations)
-            if (trace.anchorPoints?.length > 0) {
-              intelReport += `[ANCHOR]ANCHOR POINTS (High Value)**\n`;
-              intelReport += `These are locations the subject RETURNS TO - best for apprehension:\n\n`;
-              trace.anchorPoints.forEach((ap: any, i: number) => {
-                intelReport += `${i + 1}. ${ap.location}\n`;
-                intelReport += `   Type: ${ap.type?.replace(/_/g, ' ').toUpperCase()}\n`;
-                if (ap.owner) intelReport += `   Contact: ${ap.owner}\n`;
-                if (ap.checkInCount) intelReport += `   Check-ins: ${ap.checkInCount}x\n`;
-                intelReport += `   Confidence: ${ap.confidence}%\n`;
-                intelReport += `   → ${ap.reason}\n\n`;
-              });
-            }
-
-            // Transient Locations (LOW VALUE - filter out)
-            if (trace.transientLocations?.length > 0) {
-              intelReport += `[SKIP]TRANSIENT LOCATIONS (Filtered Out)**\n`;
-              intelReport += `One-time stops - LOW value for apprehension:\n`;
-              trace.transientLocations.slice(0, 5).forEach((loc: string) => {
-                intelReport += `• ${loc}\n`;
-              });
-              if (trace.transientLocations.length > 5) {
-                intelReport += `  ...and ${trace.transientLocations.length - 5} more truck stops/gas stations\n`;
-              }
-              intelReport += `\n`;
-            }
-
-            // Pattern Analysis
-            if (trace.patternAnalysis) {
-              const pa = trace.patternAnalysis;
-              intelReport += `[PATTERN]PATTERN ANALYSIS**\n`;
-              if (pa.isTruckDriver) {
-                intelReport += `⚠️ TRUCK DRIVER - Most check-in locations are road stops, NOT residences\n`;
-              }
-              if (pa.checkInFrequency) intelReport += `Check-in Frequency: ${pa.checkInFrequency}\n`;
-              if (pa.typicalReturnDay) intelReport += `Typical Return: ${pa.typicalReturnDay}\n`;
-              if (pa.routePattern) intelReport += `Route Pattern: ${pa.routePattern}\n`;
-              if (pa.homeBaseLocation) intelReport += `HOME BASE: ${pa.homeBaseLocation}\n`;
-              intelReport += `\n`;
-            }
-
-            // Prediction Model
-            if (trace.predictionModel) {
-              const pm = trace.predictionModel;
-              intelReport += `[PREDICT]PREDICTION MODEL**\n`;
-              if (pm.nextLikelyLocation) intelReport += `Next Likely Location: ${pm.nextLikelyLocation}\n`;
-              if (pm.bestTimeWindow) intelReport += `Best Time Window: ${pm.bestTimeWindow}\n`;
-              if (pm.confidence) intelReport += `Confidence: ${pm.confidence}%\n`;
-              if (pm.reasoning) intelReport += `Reasoning: ${pm.reasoning}\n`;
-              intelReport += `\n`;
-            }
-
-            // Surveillance Recommendations
-            if (trace.surveillanceRecommendations?.length > 0) {
-              intelReport += `[SURVEILLANCE]RECOMMENDED APPREHENSION STRATEGY**\n`;
-              trace.surveillanceRecommendations.forEach((rec: string, i: number) => {
-                intelReport += `${i + 1}. ${rec}\n`;
-              });
-              intelReport += `\n`;
-            }
-
-            // Critical Observations
-            if (trace.criticalObservations?.length > 0) {
-              intelReport += `[CRITICAL]CRITICAL OBSERVATIONS**\n`;
-              trace.criticalObservations.forEach((obs: string) => {
-                intelReport += `⚡ ${obs}\n`;
-              });
-            }
           }
 
           setChatMessages(prev => [...prev, {

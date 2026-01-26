@@ -127,6 +127,25 @@ Return your response as a JSON object with this EXACT structure:
       "source": "which document mentioned this"
     }
   ],
+  "cosigners": [
+    {
+      "name": "Full Name",
+      "relationship": "mother|spouse|friend|etc",
+      "phone": "phone number",
+      "address": "full address",
+      "employer": "employer name",
+      "source": "bail application|indemnitor agreement"
+    }
+  ],
+  "references": [
+    {
+      "name": "Full Name",
+      "relationship": "friend|family|employer|etc",
+      "phone": "phone number",
+      "address": "address if provided",
+      "source": "reference page|application"
+    }
+  ],
   "contacts": [
     {
       "name": "Full Name",
@@ -264,6 +283,21 @@ interface ExtractedIntel {
     zip?: string;
     type: string;
     dateReported?: string;
+    source: string;
+  }[];
+  cosigners?: {
+    name: string;
+    relationship: string;
+    phone?: string;
+    address?: string;
+    employer?: string;
+    source: string;
+  }[];
+  references?: {
+    name: string;
+    relationship: string;
+    phone?: string;
+    address?: string;
     source: string;
   }[];
   contacts?: {
@@ -514,6 +548,8 @@ function mergeIntel(results: ExtractedIntel[]): ExtractedIntel {
     documentTypes: [...new Set(results.flatMap(r => r.documentTypes || []))],
     checkIns: deduplicateCheckIns(results.flatMap(r => r.checkIns || [])),
     addresses: deduplicateByField(results.flatMap(r => r.addresses || []), 'address'),
+    cosigners: deduplicateByField(results.flatMap(r => r.cosigners || []), 'name'),
+    references: deduplicateByField(results.flatMap(r => r.references || []), 'name'),
     contacts: deduplicateByField(results.flatMap(r => r.contacts || []), 'name'),
     vehicles: deduplicateByField(results.flatMap(r => r.vehicles || []), 'plate'),
     employment: deduplicateByField(results.flatMap(r => r.employment || []), 'employer'),
@@ -702,15 +738,54 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
     }
   });
 
-  // Build relatives
-  const relatives: ParsedRelative[] =
-    intel.contacts?.map((contact) => ({
-      name: contact.name,
-      relationship: contact.relationship,
-      currentAddress: contact.address,
-      phones: contact.phone ? [contact.phone] : undefined,
-      confidence: 0.8,
-    })) || [];
+  // Build relatives (merge contacts, cosigners, and references)
+  const relatives: ParsedRelative[] = [];
+  const seenNames = new Set<string>();
+
+  // Cosigners first (highest value contacts)
+  intel.cosigners?.forEach((cs) => {
+    const key = cs.name.toLowerCase().trim();
+    if (!seenNames.has(key)) {
+      seenNames.add(key);
+      relatives.push({
+        name: cs.name,
+        relationship: `COSIGNER - ${cs.relationship}`,
+        currentAddress: cs.address,
+        phones: cs.phone ? [cs.phone] : undefined,
+        confidence: 0.95,
+      });
+    }
+  });
+
+  // References
+  intel.references?.forEach((ref) => {
+    const key = ref.name.toLowerCase().trim();
+    if (!seenNames.has(key)) {
+      seenNames.add(key);
+      relatives.push({
+        name: ref.name,
+        relationship: `REFERENCE - ${ref.relationship}`,
+        currentAddress: ref.address,
+        phones: ref.phone ? [ref.phone] : undefined,
+        confidence: 0.85,
+      });
+    }
+  });
+
+  // Other contacts
+  intel.contacts?.forEach((contact) => {
+    const key = contact.name.toLowerCase().trim();
+    if (!seenNames.has(key)) {
+      seenNames.add(key);
+      relatives.push({
+        name: contact.name,
+        relationship: contact.relationship,
+        currentAddress: contact.address,
+        phones: contact.phone ? [contact.phone] : undefined,
+        confidence: 0.8,
+      });
+    }
+  });
 
   // Build vehicles
   const vehicles: ParsedVehicle[] =
@@ -772,7 +847,10 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
     parseMethod: 'ai',
     parseConfidence: 0.9,
     traceAnalysis: intel.traceAnalysis,
-  } as ParsedReport & { traceAnalysis?: typeof intel.traceAnalysis };
+    cosigners: intel.cosigners,
+    references: intel.references,
+    checkIns: intel.checkIns,
+  } as ParsedReport & { traceAnalysis?: typeof intel.traceAnalysis; cosigners?: typeof intel.cosigners; references?: typeof intel.references; checkIns?: typeof intel.checkIns };
 }
 
 function normalizeAddress(address: string | null | undefined): string {
