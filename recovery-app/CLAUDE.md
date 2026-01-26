@@ -1,7 +1,51 @@
 # Elite Recovery LA - Help Manual & System Reference
 
-> **Last Updated:** January 23, 2026
-> **Version:** 3.1.0
+> **Last Updated:** January 25, 2026
+> **Version:** 3.2.0
+
+---
+
+## TRACE AI - Core Mission
+
+**TRACE (Tactical Recovery Analysis & Case Engine)** is an AI-powered intelligence analyst for bail recovery agents.
+
+### The Problem TRACE Solves
+
+Recovery agents receive massive amounts of documents from bail bondsmen:
+- Bondsman notes about the defendant
+- Check-in records and contact history with the fugitive
+- Delvepoint/TLO skip trace data sheets
+- Social media screenshots and photos
+- Court documents and warrant information
+
+**Humans get overwhelmed.** Details get missed. Patterns go unnoticed.
+
+### How TRACE Works
+
+1. **Agent uploads everything** - Documents, skip trace data, social media pics, bondsman notes
+2. **Claude AI analyzes ALL data** - Cross-references everything, spots patterns humans miss
+3. **AI generates actionable intelligence:**
+   - Prioritize addresses by most likely current location
+   - Map all known addresses with visual pins
+   - Cross-reference associates (check their social media, warrants, etc.)
+   - Phone intelligence (active numbers, carrier type, linked accounts)
+   - Generate surveillance plan (best times/locations to check)
+   - Employment leads (work schedules, employer addresses)
+   - Vehicle tracking tips (where to look based on address history)
+   - Link associates across multiple cases
+   - Spot inconsistencies and lies in check-in records
+   - Identify patterns in social media (regular locations, friends, habits)
+
+### Why AI is Critical
+
+Claude AI can:
+- Process hundreds of pages of documents in seconds
+- Remember every detail and cross-reference instantly
+- Spot patterns that humans miss when tired or distracted
+- Never forget a name, address, or connection
+- Generate fresh investigative angles
+
+**The human decides. The AI finds what the human might miss.**
 
 ---
 
@@ -12,7 +56,8 @@ Elite Recovery LA is a **bail recovery agent tool** for locating individuals who
 1. **Jail Roster Import** - Scrape inmate data from parish jail websites
 2. **FTA Risk Scoring** - Calculate failure-to-appear probability (0-100)
 3. **OSINT Tools** - Username and email searches across hundreds of sites
-4. **AI Analysis** - GPT-4o powered risk assessments and investigation advice
+4. **Photo Analysis** - Extract GPS, identify tattoos/scars, reverse image search
+5. **AI Case Analysis** - Claude-powered pattern recognition and lead generation
 
 ---
 
@@ -82,7 +127,7 @@ Direct search links generated for:
 | Service | URL |
 |---------|-----|
 | Frontend (Vercel) | https://recovery-app-blond.vercel.app |
-| Backend (Render) | https://elite-recovery-osint.onrender.com |
+| Backend (Fly.io) | https://elite-recovery-osint.fly.dev |
 | GitHub (Frontend) | github.com/douggil74/elite-recovery-app |
 | GitHub (Backend) | github.com/douggil74/elite-recovery-osint |
 
@@ -188,13 +233,17 @@ python3 -m uvicorn main:app --reload  # Backend
 
 ## Recent Changes (January 2026)
 
+- Added TRACE AI core mission documentation
+- Added reverse image search (TinEye, Yandex, Google)
+- Added face recognition search (PimEyes, FaceCheck.ID)
+- Added EXIF GPS extraction from photos
+- Migrated backend from Render to Fly.io (faster, always-on)
+- Removed emojis and markdown from chat/reports
+- Fixed target name auto-replacement (human sets name only)
+- Added World Conflict font for TRACE branding
+- Fixed Firebase sync undefined field errors
 - Added FTA score legend to import-roster page
 - Added mugshot photo to FTA result display
-- Fixed duplicate back button on import-roster
-- Left-aligned headers for consistency
-- Disabled slow LA court search in FTA calculation
-- Updated About page to show only working features
-- Reduced prior bookings search for speed (50→10)
 
 ---
 
@@ -205,6 +254,37 @@ python3 -m uvicorn main:app --reload  # Backend
 - Primary jail: St. Tammany Parish (inmates.stpso.revize.com)
 - Needs case numbers and dates for FTA warrants (legal documentation)
 - Prefers dark theme with red accents
+- Uses Delvepoint for skip tracing (manual lookup, paste data into app)
+
+---
+
+## AI Chat Guidelines
+
+When analyzing case data, the AI must:
+
+1. **NO emojis** - Professional output only
+2. **NO markdown formatting** - No asterisks, hashtags, or bullet symbols in chat
+3. **Plain text output** - Clean, readable reports
+4. **Focus on actionable intelligence** - Not fluff, not disclaimers
+5. **THE TARGET NAME IS SET BY THE HUMAN ONLY** - Never auto-change the case name from parsed documents
+6. **Cross-reference everything** - Look for connections between uploaded documents
+7. **Prioritize leads** - Rank addresses/phones by likelihood of finding the subject
+8. **Spot patterns** - Identify habits, routines, frequent locations from data
+9. **Flag inconsistencies** - Note when check-in info contradicts skip trace data
+10. **Generate surveillance recommendations** - Where and when to look
+
+---
+
+## Data Analysis Priorities
+
+When skip trace data is uploaded, analyze in this order:
+
+1. **Current address** - Most likely place to find them NOW
+2. **Phone numbers** - Active cells, who they're calling
+3. **Relatives/associates** - Who's hiding them, who knows where they are
+4. **Vehicles** - What to look for, where it might be parked
+5. **Employment** - Work address, likely schedule
+6. **Social media** - Recent activity, tagged locations, friend connections
 
 ---
 
