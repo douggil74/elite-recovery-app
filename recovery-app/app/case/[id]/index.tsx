@@ -1168,10 +1168,18 @@ ${result.explanation}`,
           continue;
         }
 
-        // STORE the extracted text for follow-up questions
+        // STORE the extracted text for follow-up questions (in state AND AsyncStorage)
         setUploadedFiles(prev => prev.map(f =>
           f.id === fileId ? { ...f, extractedText: extractResult.text } : f
         ));
+        // Persist to AsyncStorage for /reanalyze across reloads
+        try {
+          const storageKey = `case_docs_${id}`;
+          const existing = await AsyncStorage.getItem(storageKey);
+          const docs: { name: string; text: string; date: string }[] = existing ? JSON.parse(existing) : [];
+          docs.push({ name: file.name, text: extractResult.text!, date: new Date().toISOString() });
+          await AsyncStorage.setItem(storageKey, JSON.stringify(docs));
+        } catch (e) { console.warn('[Docs] Failed to persist:', e); }
 
         setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `📝 Extracted ${extractResult.text.length.toLocaleString()} characters. Analyzing with AI...`, timestamp: new Date() }]);
         scrollToBottom();
@@ -1464,19 +1472,33 @@ ${result.explanation}`,
 
     // /reanalyze - re-run analysis on all uploaded documents
     if (userTextLower === '/reanalyze' || userTextLower === '/rerun' || userTextLower === 'reanalyze') {
-      const docsWithText = uploadedFiles.filter(f => f.extractedText);
-      if (docsWithText.length === 0) {
+      // Check in-memory state first, then fall back to AsyncStorage
+      let docsToAnalyze: { name: string; text: string }[] = uploadedFiles
+        .filter(f => f.extractedText)
+        .map(f => ({ name: f.name, text: f.extractedText! }));
+
+      if (docsToAnalyze.length === 0) {
+        try {
+          const stored = await AsyncStorage.getItem(`case_docs_${id}`);
+          if (stored) {
+            const parsed = JSON.parse(stored) as { name: string; text: string }[];
+            docsToAnalyze = parsed;
+          }
+        } catch (e) { console.warn('[Reanalyze] Failed to load stored docs:', e); }
+      }
+
+      if (docsToAnalyze.length === 0) {
         setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: 'No documents with extracted text found. Upload files first.', timestamp: new Date() }]);
         setIsSending(false);
         return;
       }
 
-      setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `Re-analyzing ${docsWithText.length} document(s)...`, timestamp: new Date() }]);
+      setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `Re-analyzing ${docsToAnalyze.length} document(s): ${docsToAnalyze.map(d => d.name).join(', ')}...`, timestamp: new Date() }]);
       scrollToBottom();
 
       // Combine all extracted texts
-      const combinedText = docsWithText
-        .map(f => `\n\n=== DOCUMENT: ${f.name} ===\n\n${f.extractedText}`)
+      const combinedText = docsToAnalyze
+        .map(f => `\n\n=== DOCUMENT: ${f.name} ===\n\n${f.text}`)
         .join('\n');
 
       try {
