@@ -189,13 +189,13 @@ export async function extractTextFromPdf(data: ArrayBuffer | Uint8Array): Promis
 
       try {
         const ocrTexts: string[] = [];
-        const maxPages = Math.min(pdf.numPages, 15); // OCR up to 15 pages for thorough extraction
+        const maxPages = Math.min(pdf.numPages, 30); // OCR entire document
 
-        // Process pages in parallel (2 at a time) for speed
-        for (let i = 1; i <= maxPages; i += 2) {
+        // Process pages in parallel (3 at a time) for speed
+        for (let i = 1; i <= maxPages; i += 3) {
           const promises = [];
 
-          for (let j = i; j <= Math.min(i + 1, maxPages); j++) {
+          for (let j = i; j <= Math.min(i + 2, maxPages); j++) {
             console.log(`OCR processing page ${j}/${maxPages}...`);
             promises.push(
               (async () => {
