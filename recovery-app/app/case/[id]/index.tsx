@@ -1328,6 +1328,80 @@ ${result.explanation}`,
           if (keyIntel.length > 0) {
             intelReport += `[TIP]KEY INTEL**\n`;
             keyIntel.forEach((note: string) => { intelReport += `• ${note}\n`; });
+            intelReport += `\n`;
+          }
+
+          // TRACE ANALYSIS - Pattern Analysis & Predictions
+          const trace = (d as any).traceAnalysis;
+          if (trace) {
+            // Anchor Points (HIGH VALUE locations)
+            if (trace.anchorPoints?.length > 0) {
+              intelReport += `[ANCHOR]ANCHOR POINTS (High Value)**\n`;
+              intelReport += `These are locations the subject RETURNS TO - best for apprehension:\n\n`;
+              trace.anchorPoints.forEach((ap: any, i: number) => {
+                intelReport += `${i + 1}. ${ap.location}\n`;
+                intelReport += `   Type: ${ap.type?.replace(/_/g, ' ').toUpperCase()}\n`;
+                if (ap.owner) intelReport += `   Contact: ${ap.owner}\n`;
+                if (ap.checkInCount) intelReport += `   Check-ins: ${ap.checkInCount}x\n`;
+                intelReport += `   Confidence: ${ap.confidence}%\n`;
+                intelReport += `   → ${ap.reason}\n\n`;
+              });
+            }
+
+            // Transient Locations (LOW VALUE - filter out)
+            if (trace.transientLocations?.length > 0) {
+              intelReport += `[SKIP]TRANSIENT LOCATIONS (Filtered Out)**\n`;
+              intelReport += `One-time stops - LOW value for apprehension:\n`;
+              trace.transientLocations.slice(0, 5).forEach((loc: string) => {
+                intelReport += `• ${loc}\n`;
+              });
+              if (trace.transientLocations.length > 5) {
+                intelReport += `  ...and ${trace.transientLocations.length - 5} more truck stops/gas stations\n`;
+              }
+              intelReport += `\n`;
+            }
+
+            // Pattern Analysis
+            if (trace.patternAnalysis) {
+              const pa = trace.patternAnalysis;
+              intelReport += `[PATTERN]PATTERN ANALYSIS**\n`;
+              if (pa.isTruckDriver) {
+                intelReport += `⚠️ TRUCK DRIVER - Most check-in locations are road stops, NOT residences\n`;
+              }
+              if (pa.checkInFrequency) intelReport += `Check-in Frequency: ${pa.checkInFrequency}\n`;
+              if (pa.typicalReturnDay) intelReport += `Typical Return: ${pa.typicalReturnDay}\n`;
+              if (pa.routePattern) intelReport += `Route Pattern: ${pa.routePattern}\n`;
+              if (pa.homeBaseLocation) intelReport += `HOME BASE: ${pa.homeBaseLocation}\n`;
+              intelReport += `\n`;
+            }
+
+            // Prediction Model
+            if (trace.predictionModel) {
+              const pm = trace.predictionModel;
+              intelReport += `[PREDICT]PREDICTION MODEL**\n`;
+              if (pm.nextLikelyLocation) intelReport += `Next Likely Location: ${pm.nextLikelyLocation}\n`;
+              if (pm.bestTimeWindow) intelReport += `Best Time Window: ${pm.bestTimeWindow}\n`;
+              if (pm.confidence) intelReport += `Confidence: ${pm.confidence}%\n`;
+              if (pm.reasoning) intelReport += `Reasoning: ${pm.reasoning}\n`;
+              intelReport += `\n`;
+            }
+
+            // Surveillance Recommendations
+            if (trace.surveillanceRecommendations?.length > 0) {
+              intelReport += `[SURVEILLANCE]RECOMMENDED APPREHENSION STRATEGY**\n`;
+              trace.surveillanceRecommendations.forEach((rec: string, i: number) => {
+                intelReport += `${i + 1}. ${rec}\n`;
+              });
+              intelReport += `\n`;
+            }
+
+            // Critical Observations
+            if (trace.criticalObservations?.length > 0) {
+              intelReport += `[CRITICAL]CRITICAL OBSERVATIONS**\n`;
+              trace.criticalObservations.forEach((obs: string) => {
+                intelReport += `⚡ ${obs}\n`;
+              });
+            }
           }
 
           setChatMessages(prev => [...prev, {

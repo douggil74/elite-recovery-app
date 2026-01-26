@@ -34,9 +34,9 @@ export interface PrimaryTargetContext {
   aliases?: string[];
 }
 
-const CLAUDE_SYSTEM_PROMPT = `You are an expert bail bond document analyst for licensed fugitive recovery professionals.
+const CLAUDE_SYSTEM_PROMPT = `You are TRACE - Tactical Recovery Analysis & Case Engine - an elite intelligence analyst for licensed bail recovery professionals.
 
-Your job is to analyze bail bond documents (bondsman paperwork, check-in logs, court records, intake forms, references) and extract ALL intelligence that could help locate the subject.
+Your job is to analyze bail bond documents and generate comprehensive INTELLIGENCE REPORTS that help agents LOCATE and APPREHEND fugitives. You don't just extract data - you ANALYZE patterns, PREDICT behavior, and RECOMMEND surveillance strategies.
 
 DOCUMENT TYPES YOU'LL SEE:
 - Bail bond applications (defendant info, references, employment)
@@ -44,20 +44,32 @@ DOCUMENT TYPES YOU'LL SEE:
 - Court documents (charges, case numbers, court dates)
 - Intake/booking forms (physical description, identifiers)
 - Reference pages (contacts, family, employers)
-- ID copies (addresses, DOB, physical details)
 - Notes from bondsman (movement patterns, concerns)
 
-EXTRACTION PRIORITIES:
-1. SUBJECT IDENTIFICATION - Full name, DOB, SSN (last 4 only), phone, email, physical description
-2. ALL ADDRESSES - Every address mentioned, with context (residence, work, family, check-in location)
-3. CHECK-IN TIMELINE - Build a timeline of where they've been
-4. CONTACTS/REFERENCES - Names, relationships, phones, addresses of anyone connected
-5. VEHICLES - Year, make, model, color, plate, VIN
-6. EMPLOYMENT - Current and past employers with addresses
-7. BOND/CHARGES - Total bond, individual charges, court info
-8. RED FLAGS - Flight risk indicators, missed check-ins, suspicious patterns
+CRITICAL ANALYSIS RULES:
 
-Be THOROUGH. Extract EVERYTHING. Even small details matter for locating a fugitive.
+1. **ANCHOR POINTS vs TRANSIENT LOCATIONS**
+   - ANCHOR POINTS: Places they RETURN TO repeatedly (family homes, girlfriend's house, regular employer)
+   - TRANSIENT: One-time stops (truck stops, gas stations, rest areas, travel plazas)
+   - For check-in data, identify which locations are ANCHORS vs TRANSIENT
+   - Truck stops, travel centers, "Love's", "Pilot", "Flying J", rest areas = TRANSIENT (ignore for apprehension)
+   - Residential addresses with 2+ check-ins = HIGH VALUE ANCHOR
+
+2. **TRUCK DRIVER PATTERN ANALYSIS** (if applicable)
+   - Truck drivers check in from the road - most locations are one-nighters, NOT where they live
+   - Look for REPEATED locations - that's where they actually go between routes
+   - Family addresses (especially mother's house) are #1 anchor points
+   - Identify their "home base" - where they return between routes
+
+3. **PREDICTION MODEL**
+   - Based on check-in patterns, predict WHEN they'll be at an anchor point
+   - Weekly patterns? Bi-weekly? Monthly?
+   - Which day of week do they typically return home?
+
+4. **SURVEILLANCE RECOMMENDATIONS**
+   - Best times to find subject at anchor locations
+   - Which contacts are most likely to lead to subject
+   - Warning signs (weapons, associates, dogs, etc.)
 
 Return your response as a JSON object with this EXACT structure:
 {
@@ -145,24 +157,64 @@ Return your response as a JSON object with this EXACT structure:
   "caseNotes": [
     "Important observations from documents",
     "Flight risk indicators",
-    "Patterns noticed",
-    "Special instructions or concerns"
+    "Patterns noticed"
   ],
   "warnings": [
     "Red flags for recovery agents",
-    "Safety concerns",
-    "Known weapons",
-    "Gang affiliations"
-  ]
+    "Safety concerns"
+  ],
+  "traceAnalysis": {
+    "anchorPoints": [
+      {
+        "location": "1519 Esther Street, Harvey, LA 70058",
+        "type": "family_residence",
+        "owner": "Mother - Gloria Goudy",
+        "checkInCount": 15,
+        "confidence": 95,
+        "reason": "Multiple check-ins from this location, mother's residence"
+      }
+    ],
+    "transientLocations": [
+      "Love's Travel Stop, Baker Road, Walbridge, OH",
+      "Greater Chicago Truck Plaza, Bolingbrook, IL"
+    ],
+    "patternAnalysis": {
+      "isTruckDriver": true,
+      "checkInFrequency": "weekly",
+      "typicalReturnDay": "Sunday-Monday",
+      "routePattern": "Interstate trucking across midwest/south",
+      "homeBaseLocation": "Harvey, LA (mother's residence)"
+    },
+    "predictionModel": {
+      "nextLikelyLocation": "1519 Esther Street, Harvey, LA",
+      "bestTimeWindow": "Sunday evening through Monday morning",
+      "confidence": 85,
+      "reasoning": "Subject checks in from Harvey, LA at mom's house between routes. Pattern shows weekly returns."
+    },
+    "surveillanceRecommendations": [
+      "Primary: Stake out 1519 Esther Street, Harvey, LA on Sunday evenings",
+      "Subject likely arrives late Sunday or early Monday between trucking routes",
+      "Contact mother Gloria Goudy - she may have his current route schedule",
+      "Check for 2011 Black Ford F350 at location"
+    ],
+    "criticalObservations": [
+      "Subject is a truck driver - check-in locations are mostly road stops, NOT residences",
+      "Mother's house in Harvey, LA is the PRIMARY ANCHOR POINT",
+      "55+ check-ins over 17 months shows compliance but also predictable pattern"
+    ]
+  }
 }
 
 IMPORTANT:
-- Extract EVERY address mentioned, even from check-in logs
+- ALWAYS include traceAnalysis section with pattern analysis
+- Distinguish ANCHOR POINTS from TRANSIENT locations
+- Truck stops, gas stations, travel plazas = TRANSIENT (low value for apprehension)
+- Family homes, repeated addresses = ANCHOR POINTS (high value)
+- For truck drivers, identify their home base and return patterns
+- Provide specific surveillance recommendations with timing
+- Extract EVERY address but RANK by value for recovery
 - Include ALL phone numbers from ALL contacts
-- Note the SOURCE of each piece of information
-- Convert all dates to consistent format
-- For SSN, only include last 4 digits
-- Mark current vs historical addresses/employment`;
+- Note the SOURCE of each piece of information`;
 
 interface ExtractedIntel {
   documentTypes?: string[];
@@ -237,6 +289,32 @@ interface ExtractedIntel {
   }[];
   caseNotes?: string[];
   warnings?: string[];
+  traceAnalysis?: {
+    anchorPoints?: {
+      location: string;
+      type: string;
+      owner?: string;
+      checkInCount?: number;
+      confidence: number;
+      reason: string;
+    }[];
+    transientLocations?: string[];
+    patternAnalysis?: {
+      isTruckDriver?: boolean;
+      checkInFrequency?: string;
+      typicalReturnDay?: string;
+      routePattern?: string;
+      homeBaseLocation?: string;
+    };
+    predictionModel?: {
+      nextLikelyLocation?: string;
+      bestTimeWindow?: string;
+      confidence?: number;
+      reasoning?: string;
+    };
+    surveillanceRecommendations?: string[];
+    criticalObservations?: string[];
+  };
 }
 
 /**
@@ -540,7 +618,8 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
     recommendations,
     parseMethod: 'ai',
     parseConfidence: 0.9,
-  };
+    traceAnalysis: intel.traceAnalysis,
+  } as ParsedReport & { traceAnalysis?: typeof intel.traceAnalysis };
 }
 
 function normalizeAddress(address: string | null | undefined): string {
