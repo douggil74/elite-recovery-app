@@ -92,7 +92,7 @@ export interface ExtractResult {
 }
 
 // Backend API URL
-const BACKEND_URL = 'https://elite-recovery-osint.onrender.com';
+const BACKEND_URL = 'https://elite-recovery-osint.fly.dev';
 
 // OCR using backend API (no frontend API keys needed)
 async function ocrWithBackend(imageBase64: string, pageNum: number): Promise<string> {
