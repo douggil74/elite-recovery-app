@@ -189,7 +189,7 @@ export async function extractTextFromPdf(data: ArrayBuffer | Uint8Array): Promis
 
       try {
         const ocrTexts: string[] = [];
-        const maxPages = Math.min(pdf.numPages, 5); // Limit to 5 pages for speed
+        const maxPages = Math.min(pdf.numPages, 15); // OCR up to 15 pages for thorough extraction
 
         // Process pages in parallel (2 at a time) for speed
         for (let i = 1; i <= maxPages; i += 2) {
