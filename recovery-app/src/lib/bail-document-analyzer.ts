@@ -9,6 +9,33 @@ import Anthropic from '@anthropic-ai/sdk';
 // Always use Haiku 3.5 - fastest and most cost-effective for document extraction
 const CLAUDE_MODEL = 'claude-3-5-haiku-20241022';
 const CHUNK_SIZE = 90000; // chars per chunk - Haiku 3.5 has 200K context
+const MAX_RETRIES = 3;
+
+// Retry wrapper for Anthropic API calls (handles 429 rate limits)
+async function callClaude(
+  client: Anthropic,
+  params: { model: string; max_tokens: number; messages: any[]; system: string }
+): Promise<Anthropic.Message> {
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await client.messages.create(params);
+    } catch (err: any) {
+      const status = err?.status || err?.error?.status;
+      if (status === 429 && attempt < MAX_RETRIES) {
+        // Parse retry-after header or use exponential backoff
+        const retryAfter = err?.headers?.['retry-after'];
+        const waitMs = retryAfter
+          ? parseInt(retryAfter, 10) * 1000
+          : Math.min(2000 * Math.pow(2, attempt), 60000);
+        console.log(`Rate limited (429). Retrying in ${Math.round(waitMs / 1000)}s... (attempt ${attempt + 1}/${MAX_RETRIES})`);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Max retries exceeded');
+}
 import type {
   ParsedReport,
   Subject,
@@ -534,7 +561,7 @@ DOCUMENT TEXT:
 ${text}`;
   }
 
-  const message = await client.messages.create({
+  const message = await callClaude(client, {
     model: CLAUDE_MODEL,
     max_tokens: 8000,
     messages: [{ role: 'user', content: analysisPrompt }],
@@ -628,7 +655,7 @@ ${summary.slice(0, 45000)}
 Return ONLY a JSON object with the "traceAnalysis" key. No other text.`;
 
   try {
-    const message = await client.messages.create({
+    const message = await callClaude(client, {
       model: CLAUDE_MODEL,
       max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }],
