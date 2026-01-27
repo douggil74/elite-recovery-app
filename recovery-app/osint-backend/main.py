@@ -60,6 +60,77 @@ app.add_middleware(
 # Thread pool for running CLI tools
 executor = ThreadPoolExecutor(max_workers=10)
 
+# IPQS API key for phone line type detection
+IPQS_API_KEY = os.getenv("IPQS_API_KEY", "")
+
+# In-memory cache for IPQS lookups (phone -> {result, timestamp})
+_ipqs_cache: Dict[str, Dict[str, Any]] = {}
+IPQS_CACHE_TTL = 86400  # 24 hours
+
+
+async def ipqs_phone_lookup(phone: str) -> Dict[str, Any]:
+    """Look up phone line type via IPQualityScore API.
+    Returns line_type, carrier, active, voip_provider, fraud_score, city, state.
+    """
+    if not IPQS_API_KEY:
+        return {"error": "IPQS_API_KEY not configured"}
+
+    # Clean phone number
+    clean = phone.replace("-", "").replace(" ", "").replace("(", "").replace(")", "").replace("+", "")
+    if clean.startswith("1") and len(clean) == 11:
+        clean = clean[1:]
+
+    # Check cache
+    now = datetime.now().timestamp()
+    cached = _ipqs_cache.get(clean)
+    if cached and (now - cached["timestamp"]) < IPQS_CACHE_TTL:
+        return cached["result"]
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"https://www.ipqualityscore.com/api/json/phone/{IPQS_API_KEY}/1{clean}",
+                params={"country[]": "US"}
+            )
+            data = resp.json()
+
+        if not data.get("success", True) and data.get("message"):
+            return {"error": data["message"]}
+
+        result = {
+            "line_type": data.get("line_type", "unknown"),
+            "carrier": data.get("carrier", ""),
+            "active": data.get("active", None),
+            "voip_provider": "",
+            "fraud_score": data.get("fraud_score", 0),
+            "city": data.get("city", ""),
+            "state": data.get("region", ""),
+            "country": data.get("country", "US"),
+            "risky": data.get("risky", False),
+            "spammer": data.get("spammer", False),
+            "prepaid": data.get("prepaid", None),
+            "name": data.get("name", ""),
+        }
+
+        # Detect VoIP provider from carrier name
+        carrier_lower = result["carrier"].lower()
+        if "google" in carrier_lower or "voice" in carrier_lower:
+            result["voip_provider"] = "Google Voice"
+        elif "textnow" in carrier_lower:
+            result["voip_provider"] = "TextNow"
+        elif "bandwidth" in carrier_lower:
+            result["voip_provider"] = "Bandwidth.com (VoIP)"
+        elif "vonage" in carrier_lower:
+            result["voip_provider"] = "Vonage"
+        elif "twilio" in carrier_lower:
+            result["voip_provider"] = "Twilio"
+
+        # Cache result
+        _ipqs_cache[clean] = {"result": result, "timestamp": now}
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
 
 # ============================================================================
 # MODELS
@@ -1783,9 +1854,41 @@ async def ignorant_search(request: IgnorantRequest):
 
 @app.post("/api/phone-lookup")
 async def phone_lookup(request: IgnorantRequest):
-    """Comprehensive phone number lookup"""
-    result = await check_phone_accounts(request.phone, request.country_code)
-    return result
+    """Comprehensive phone number lookup with line type detection"""
+    # Run social account check and IPQS line type lookup in parallel
+    social_task = check_phone_accounts(request.phone, request.country_code)
+    ipqs_task = ipqs_phone_lookup(request.phone)
+
+    social_result, ipqs_result = await asyncio.gather(social_task, ipqs_task)
+
+    # Merge IPQS data into the response
+    if ipqs_result and "error" not in ipqs_result:
+        social_result["line_type"] = ipqs_result.get("line_type", "unknown")
+        social_result["carrier"] = ipqs_result.get("carrier", "")
+        social_result["active"] = ipqs_result.get("active")
+        social_result["voip_provider"] = ipqs_result.get("voip_provider", "")
+        social_result["fraud_score"] = ipqs_result.get("fraud_score", 0)
+        social_result["phone_city"] = ipqs_result.get("city", "")
+        social_result["phone_state"] = ipqs_result.get("state", "")
+        social_result["prepaid"] = ipqs_result.get("prepaid")
+        social_result["risky"] = ipqs_result.get("risky", False)
+        social_result["spammer"] = ipqs_result.get("spammer", False)
+        social_result["name"] = ipqs_result.get("name", "")
+
+    return social_result
+
+
+@app.post("/api/phone/type")
+async def phone_type_lookup(request: IgnorantRequest):
+    """Standalone phone line type detection via IPQS"""
+    result = await ipqs_phone_lookup(request.phone)
+    if "error" in result:
+        return {"phone": request.phone, "error": result["error"]}
+    return {
+        "phone": request.phone,
+        "searched_at": datetime.now().isoformat(),
+        **result
+    }
 
 
 # ============================================================================
@@ -6181,6 +6284,61 @@ async def ai_analyze(request: AnalyzeRequest):
             raise HTTPException(status_code=response.status_code, detail=response.text)
 
         return response.json()
+
+
+class OCRRequest(BaseModel):
+    image_base64: str
+    page_number: int = 1
+
+
+@app.post("/api/ocr")
+async def ocr_image(request: OCRRequest):
+    """Extract text from image using GPT-4 Vision OCR"""
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured on server")
+
+    # Strip data URL prefix if present (e.g., "data:image/png;base64,")
+    image_b64 = request.image_base64
+    if ',' in image_b64:
+        image_b64 = image_b64.split(',', 1)[1]
+
+    content = [
+        {
+            "type": "text",
+            "text": "Extract ALL text from this document image. Return ONLY the extracted text, preserving the layout as much as possible. Include all names, addresses, phone numbers, dates, and any other information visible."
+        },
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{image_b64}"}
+        }
+    ]
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": content}],
+                "max_tokens": 4000
+            },
+            timeout=120.0
+        )
+
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=response.text)
+
+        result = response.json()
+        text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        return {
+            "success": True,
+            "text": text,
+            "page_number": request.page_number
+        }
 
 
 @app.post("/api/ai/brief")

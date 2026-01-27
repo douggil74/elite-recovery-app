@@ -1,18 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
-import { DeviceEventEmitter } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Platform } from 'react-native';
 import {
   getAllCases,
   createCase as dbCreateCase,
   deleteCase as dbDeleteCase,
   cleanupExpiredCases,
-  getReportsForCase,
+  pendingDeletes,
   CreateCaseOptions,
 } from '@/lib/database';
+import { getCurrentUserId } from '@/lib/auth-state';
 import { audit } from '@/lib/audit';
 import { deleteCaseDirectory } from '@/lib/storage';
-import { syncCase, deleteSyncedCase, isSyncEnabled, fetchSyncedCases, subscribeToAllCases } from '@/lib/sync';
-import { createCase as dbCreateCaseFromCloud } from '@/lib/database';
+import { isSyncEnabled, subscribeToAllCases } from '@/lib/sync';
 import type { Case, CasePurpose } from '@/types';
 import type { CaseStatus } from '@/components/CaseCard';
 
@@ -40,162 +39,89 @@ export interface UseCasesReturn {
   deleteCase: (id: string) => Promise<void>;
 }
 
+// Lightweight case list — no extra Firestore reads per case
+function toCaseWithStats(c: Case): CaseWithStats {
+  return {
+    ...c,
+    status: 'new' as CaseStatus,
+    addressCount: 0,
+    phoneCount: 0,
+    mugshotUrl: c.mugshotUrl || undefined,
+  };
+}
+
 export function useCases(): UseCasesReturn {
   const [cases, setCases] = useState<CaseWithStats[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const unsubRef = useRef<(() => void) | null>(null);
+  const subscribedForUid = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
 
-      // Cleanup expired cases first
-      await cleanupExpiredCases();
+      // Cleanup expired cases in background (never block)
+      cleanupExpiredCases().catch(() => {});
 
-      // Fetch local cases
-      let allCases = await getAllCases();
-
-      // If cloud sync is enabled, also pull from Firestore (with timeout)
-      // Don't let sync block the UI - timeout after 3 seconds
-      try {
-        const syncPromise = (async () => {
-          const cloudEnabled = await isSyncEnabled();
-          if (!cloudEnabled) return;
-
-          const cloudCases = await fetchSyncedCases();
-          if (cloudCases.length > 0) {
-            const localIds = new Set(allCases.map(c => c.id));
-            const newFromCloud = cloudCases.filter(c => !localIds.has(c.id));
-
-            for (const cloudCase of newFromCloud) {
-              try {
-                await dbCreateCaseFromCloud(
-                  cloudCase.name,
-                  cloudCase.purpose || 'bail_recovery',
-                  cloudCase.internalCaseId,
-                  cloudCase.notes,
-                  cloudCase.ftaScore,
-                  cloudCase.ftaRiskLevel,
-                  { existingId: cloudCase.id, skipSync: true }
-                );
-              } catch (e) {
-                console.warn('Failed to save cloud case locally:', e);
-              }
-            }
-
-            if (newFromCloud.length > 0) {
-              allCases = await getAllCases();
-            }
-          }
-        })();
-
-        // 3 second timeout for cloud sync
-        await Promise.race([
-          syncPromise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Sync timeout')), 3000))
-        ]);
-      } catch (syncErr) {
-        console.warn('Cloud sync skipped:', syncErr);
-        // Continue with local cases
-      }
-
-      // Fetch stats and photos for each case
-      const casesWithStats: CaseWithStats[] = await Promise.all(
-        allCases.map(async (c) => {
-          try {
-            const [reports, mugshotUrl] = await Promise.all([
-              getReportsForCase(c.id),
-              AsyncStorage.getItem(`case_photo_${c.id}`),
-            ]);
-            const latestReport = reports[0];
-            const addressCount = latestReport?.parsedData?.addresses?.length || 0;
-            const phoneCount = latestReport?.parsedData?.phones?.length || 0;
-
-            let status: CaseStatus = 'new';
-            if (latestReport) {
-              status = addressCount > 0 || phoneCount > 0 ? 'has_data' : 'new';
-            }
-
-            return {
-              ...c,
-              status,
-              addressCount,
-              phoneCount,
-              mugshotUrl: mugshotUrl || undefined,
-            };
-          } catch {
-            return { ...c, status: 'new' as CaseStatus, addressCount: 0, phoneCount: 0 };
-          }
-        })
-      );
-
-      setCases(casesWithStats);
+      // Fetch cases from Firestore — cache-first, timeout protected
+      const allCases = await getAllCases();
+      // Filter out any cases with pending deletes so they don't reappear
+      setCases(allCases.filter(c => !pendingDeletes.has(c.id)).map(toCaseWithStats));
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load cases');
     } finally {
       setIsLoading(false);
+    }
+
+    // Set up real-time subscription in background — never blocks loading
+    try {
+      const uid = getCurrentUserId();
+      if (uid && uid !== subscribedForUid.current) {
+        if (unsubRef.current) {
+          unsubRef.current();
+          unsubRef.current = null;
+        }
+        const syncEnabled = await isSyncEnabled();
+        if (syncEnabled) {
+          subscribedForUid.current = uid;
+          unsubRef.current = subscribeToAllCases((cloudCases) => {
+            setCases(cloudCases.filter(c => !pendingDeletes.has(c.id)).map(toCaseWithStats));
+          });
+        }
+      }
+    } catch {
+      // Subscription setup failed — non-critical
     }
   }, []);
 
   useEffect(() => {
     refresh();
 
-    // Listen for sync updates from AuthContext
-    const subscription = DeviceEventEmitter.addListener('casesUpdated', () => {
-      console.log('[useCases] Received casesUpdated event, refreshing...');
-      refresh();
-    });
-
-    // Subscribe to real-time case updates from Firestore
-    // This ensures all devices stay in sync - critical for field safety
-    let unsubscribeRealtime: (() => void) | null = null;
-
-    (async () => {
-      const syncEnabled = await isSyncEnabled();
-      if (syncEnabled) {
-        console.log('[useCases] Subscribing to real-time case updates...');
-        unsubscribeRealtime = subscribeToAllCases(async (cloudCases) => {
-          // Merge cloud cases with local stats
-          const casesWithStats: CaseWithStats[] = await Promise.all(
-            cloudCases.map(async (c) => {
-              try {
-                const [reports, mugshotUrl] = await Promise.all([
-                  getReportsForCase(c.id),
-                  AsyncStorage.getItem(`case_photo_${c.id}`),
-                ]);
-                const latestReport = reports[0];
-                const addressCount = latestReport?.parsedData?.addresses?.length || 0;
-                const phoneCount = latestReport?.parsedData?.phones?.length || 0;
-
-                let status: CaseStatus = 'new';
-                if (latestReport) {
-                  status = addressCount > 0 || phoneCount > 0 ? 'has_data' : 'new';
-                }
-
-                return {
-                  ...c,
-                  status,
-                  addressCount,
-                  phoneCount,
-                  mugshotUrl: mugshotUrl || c.mugshotUrl || undefined,
-                };
-              } catch {
-                return { ...c, status: 'new' as CaseStatus, addressCount: 0, phoneCount: 0 };
-              }
-            })
-          );
-
-          setCases(casesWithStats);
-          setIsLoading(false);
-        });
-      }
-    })();
+    // On web: refresh when the tab becomes visible again after being backgrounded.
+    // The Firestore WebSocket gets throttled/closed in background tabs, so data
+    // can be stale when the user returns. This gives immediate fresh-from-cache data.
+    let handleVisibility: (() => void) | undefined;
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      handleVisibility = () => {
+        if (document.visibilityState === 'visible') {
+          console.log('[useCases] Tab visible — refreshing');
+          refresh().catch(() => {});
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
 
     return () => {
-      subscription.remove();
-      if (unsubscribeRealtime) {
-        unsubscribeRealtime();
+      if (handleVisibility) {
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
+      if (unsubRef.current) {
+        unsubRef.current();
+        unsubRef.current = null;
+        subscribedForUid.current = null;
       }
     };
   }, [refresh]);
@@ -210,21 +136,17 @@ export function useCases(): UseCasesReturn {
       ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK',
       options?: Partial<CreateCaseOptions>
     ): Promise<Case> => {
+      // createCase in database.ts writes directly to Firestore
       const newCase = await dbCreateCase(name, purpose, internalCaseId, notes, ftaScore, ftaRiskLevel, options);
 
-      await audit('case_created', {
+      // Non-blocking: audit and refresh in background so navigation isn't delayed
+      audit('case_created', {
         caseId: newCase.id,
         caseName: name,
         additionalInfo: `Purpose: ${purpose}`,
-      });
+      }).catch(() => {});
+      refresh().catch(() => {});
 
-      // Sync to cloud
-      const cloudEnabled = await isSyncEnabled();
-      if (cloudEnabled) {
-        await syncCase(newCase);
-      }
-
-      await refresh();
       return newCase;
     },
     [refresh]
@@ -237,24 +159,11 @@ export function useCases(): UseCasesReturn {
       // OPTIMISTIC UPDATE - Remove from UI immediately
       setCases(prev => prev.filter(c => c.id !== id));
 
-      // Delete everything in background (don't await)
+      // Delete from Firestore (handles subcollections) and local files in parallel
       Promise.all([
         dbDeleteCase(id),
         deleteCaseDirectory(id),
-        AsyncStorage.multiRemove([
-          `case_chat_${id}`,
-          `case_photo_${id}`,
-          `case_squad_${id}`,
-          `case_social_${id}`,
-          `case_all_photo_intel_${id}`,
-          `case_face_${id}`,
-        ]),
-      ]).catch(err => console.error('Delete cleanup error:', err));
-
-      // Cloud sync and audit in background
-      isSyncEnabled().then(enabled => {
-        if (enabled) deleteSyncedCase(id).catch(() => {});
-      });
+      ]).catch(err => console.error('Delete error:', err));
 
       audit('case_deleted', {
         caseId: id,

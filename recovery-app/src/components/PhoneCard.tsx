@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Linking, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Linking, Alert, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '@/constants';
 import { maskPhone } from '@/lib/encryption';
@@ -11,6 +11,7 @@ interface PhoneCardProps {
   rank: number;
   caseId?: string;
   showMasked?: boolean;
+  googleVoiceNumber?: string;
 }
 
 export function PhoneCard({
@@ -18,6 +19,7 @@ export function PhoneCard({
   rank,
   caseId,
   showMasked = true,
+  googleVoiceNumber,
 }: PhoneCardProps) {
   const [isRevealed, setIsRevealed] = useState(!showMasked);
 
@@ -66,6 +68,21 @@ export function PhoneCard({
 
     const cleaned = phone.number.replace(/\D/g, '');
     Linking.openURL(`sms:${cleaned}`);
+  };
+
+  const handleGVText = () => {
+    if (!isRevealed) {
+      Alert.alert('Reveal First', 'Please reveal the number before texting.');
+      return;
+    }
+
+    const cleaned = phone.number.replace(/\D/g, '');
+    const gvUrl = `https://voice.google.com/u/0/messages?itemId=t.+1${cleaned}`;
+    if (Platform.OS === 'web') {
+      window.open(gvUrl, '_blank');
+    } else {
+      Linking.openURL(gvUrl);
+    }
   };
 
   return (
@@ -122,6 +139,12 @@ export function PhoneCard({
           <Ionicons name="chatbubble" size={18} color={COLORS.primary} />
           <Text style={[styles.actionText, { color: COLORS.primary }]}>Text</Text>
         </TouchableOpacity>
+        {googleVoiceNumber && (
+          <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#f59e0b' + '15' }]} onPress={handleGVText}>
+            <Ionicons name="chatbubble-ellipses" size={18} color="#f59e0b" />
+            <Text style={[styles.actionText, { color: '#f59e0b' }]}>GV Text</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );

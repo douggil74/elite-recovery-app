@@ -94,6 +94,17 @@ export interface Subject {
   partialSsn?: string; // Last 4 only, masked
   personId?: string;
   deceasedIndicator?: boolean;
+  height?: string;
+  weight?: string;
+  race?: string;
+  sex?: string;
+  hairColor?: string;
+  eyeColor?: string;
+  tattoos?: string[];
+  scars?: string[];
+  driversLicense?: string;
+  phone?: string;
+  email?: string;
 }
 
 export interface ParsedAddress {
@@ -248,6 +259,9 @@ export interface AppSettings {
   // AI API Keys
   anthropicApiKey?: string; // Claude API key (preferred)
   openaiApiKey?: string;    // OpenAI API key (fallback)
+  // Google integrations
+  googleVoiceNumber?: string;  // User's GV number for texting
+  googleMapsApiKey?: string;   // Google Maps Embed API key
   // Firebase cloud sync
   firebaseConfig?: string; // JSON string of FirebaseConfig
   userId?: string; // User ID for multi-device sync

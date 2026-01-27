@@ -2,6 +2,14 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from '@/constants';
 import type { AppSettings } from '@/types';
+import { getCurrentUserId } from './auth-state';
+import {
+  getDb,
+  doc,
+  setDoc,
+  getDoc,
+  serverTimestamp,
+} from './firebase';
 
 const isWeb = Platform.OS === 'web';
 
@@ -238,9 +246,33 @@ export async function readPdfAsBase64(filePath: string): Promise<string> {
   });
 }
 
-// Settings storage
+// Settings storage - cloud-first with AsyncStorage cache
 export async function getSettings(): Promise<AppSettings> {
   try {
+    const userId = getCurrentUserId();
+
+    // Try Firestore first if user is logged in
+    if (userId) {
+      try {
+        const db = await getDb();
+        if (db) {
+          const settingsRef = doc(db, 'users', userId, 'data', 'settings');
+          const snap = await getDoc(settingsRef);
+          if (snap.exists()) {
+            const data = snap.data();
+            const { syncedAt, ...cloudSettings } = data;
+            const merged = { ...DEFAULT_SETTINGS, ...cloudSettings } as AppSettings;
+            // Update local cache
+            await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(merged));
+            return merged;
+          }
+        }
+      } catch (e) {
+        console.warn('[Settings] Firestore read failed, using local cache:', e);
+      }
+    }
+
+    // Fall back to AsyncStorage cache
     const stored = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
     if (stored) {
       return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
@@ -252,9 +284,49 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 export async function saveSettings(settings: Partial<AppSettings>): Promise<void> {
-  const current = await getSettings();
+  const current = await getSettingsFromCache();
   const updated = { ...current, ...settings };
+
+  // Write to Firestore first if user is logged in
+  const userId = getCurrentUserId();
+  if (userId) {
+    try {
+      const db = await getDb();
+      if (db) {
+        const settingsRef = doc(db, 'users', userId, 'data', 'settings');
+        // Don't sync passcode-related settings for security
+        const { passcode, ...safeSettings } = settings as any;
+        const cleanSettings: Record<string, any> = {};
+        for (const [key, value] of Object.entries(safeSettings)) {
+          if (value !== undefined) {
+            cleanSettings[key] = value;
+          }
+        }
+        await setDoc(settingsRef, {
+          ...cleanSettings,
+          syncedAt: serverTimestamp(),
+        }, { merge: true });
+      }
+    } catch (e) {
+      console.warn('[Settings] Firestore write failed:', e);
+    }
+  }
+
+  // Update AsyncStorage cache
   await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(updated));
+}
+
+// Read settings from local cache only (no Firestore call)
+async function getSettingsFromCache(): Promise<AppSettings> {
+  try {
+    const stored = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
+    if (stored) {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+    }
+    return DEFAULT_SETTINGS;
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
 }
 
 export async function hasCompletedOnboarding(): Promise<boolean> {
@@ -348,28 +420,37 @@ export async function getStorageUsage(): Promise<{
   }
 }
 
-// Clear all data
+// Clear all data (local cache + cloud)
 export async function clearAllData(): Promise<void> {
+  // Clear local file/PDF storage
   if (isWeb) {
-    // Clear web PDF storage
     await AsyncStorage.removeItem(WEB_PDF_STORAGE_KEY);
-    // Clear async storage (except settings)
-    const keys = await AsyncStorage.getAllKeys();
-    const keysToRemove = keys.filter((k) => k !== STORAGE_KEYS.SETTINGS);
-    await AsyncStorage.multiRemove(keysToRemove);
-    return;
+  } else {
+    const FileSystem = await import('expo-file-system');
+    const DOCUMENTS_DIR = FileSystem.documentDirectory + 'cases/';
+    const info = await FileSystem.getInfoAsync(DOCUMENTS_DIR);
+    if (info.exists) {
+      await FileSystem.deleteAsync(DOCUMENTS_DIR, { idempotent: true });
+    }
   }
 
-  // Clear file storage
-  const FileSystem = await import('expo-file-system');
-  const DOCUMENTS_DIR = FileSystem.documentDirectory + 'cases/';
-  const info = await FileSystem.getInfoAsync(DOCUMENTS_DIR);
-  if (info.exists) {
-    await FileSystem.deleteAsync(DOCUMENTS_DIR, { idempotent: true });
-  }
-
-  // Clear async storage (except settings)
+  // Clear AsyncStorage cache (except settings)
   const keys = await AsyncStorage.getAllKeys();
   const keysToRemove = keys.filter((k) => k !== STORAGE_KEYS.SETTINGS);
   await AsyncStorage.multiRemove(keysToRemove);
+
+  // Clear Firestore data for current user
+  const userId = getCurrentUserId();
+  if (userId) {
+    try {
+      const { deleteCase } = await import('./database');
+      const { getAllCases } = await import('./database');
+      const cases = await getAllCases();
+      for (const c of cases) {
+        await deleteCase(c.id);
+      }
+    } catch (e) {
+      console.warn('[Storage] Failed to clear cloud data:', e);
+    }
+  }
 }

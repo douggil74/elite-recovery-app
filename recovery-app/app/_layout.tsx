@@ -16,7 +16,7 @@ export default function RootLayout() {
     async function loadFonts() {
       try {
         await Font.loadAsync({
-          'WorldConflict': require('../assets/fonts/WorldConflict.ttf'),
+          'Rajdhani': require('../assets/fonts/Rajdhani-Bold.ttf'),
         });
         setFontsLoaded(true);
       } catch (err) {

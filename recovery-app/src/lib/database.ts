@@ -1,120 +1,66 @@
-import { Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+/**
+ * Cloud-first Database Module
+ * All CRUD operations go directly to Firebase Firestore.
+ * No local SQLite or AsyncStorage for case/report data.
+ */
+
 import uuid from 'react-native-uuid';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Case, Report, AuditLogEntry, CasePurpose, AuditAction, ParsedReport } from '@/types';
-import { syncCase, syncReport, deleteSyncedCase, isSyncEnabled } from './sync';
+import { getCurrentUserId } from './auth-state';
+import {
+  getDb,
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  deleteDoc,
+  query,
+  where,
+  serverTimestamp,
+} from './firebase';
 
-// Web uses AsyncStorage, native uses SQLite
-const isWeb = Platform.OS === 'web';
-
-// Storage keys for web
-const STORAGE_KEYS = {
+// Old AsyncStorage keys from pre-cloud database.ts
+const LEGACY_KEYS = {
   CASES: 'bail_recovery_cases',
   REPORTS: 'bail_recovery_reports',
   AUDIT_LOG: 'bail_recovery_audit',
 };
 
-// In-memory cache for web
-let casesCache: Case[] = [];
-let reportsCache: Report[] = [];
-let auditCache: AuditLogEntry[] = [];
-let initialized = false;
-
-async function initWeb() {
-  if (initialized) return;
-
-  try {
-    const casesJson = await AsyncStorage.getItem(STORAGE_KEYS.CASES);
-    casesCache = casesJson ? JSON.parse(casesJson) : [];
-
-    const reportsJson = await AsyncStorage.getItem(STORAGE_KEYS.REPORTS);
-    reportsCache = reportsJson ? JSON.parse(reportsJson) : [];
-
-    const auditJson = await AsyncStorage.getItem(STORAGE_KEYS.AUDIT_LOG);
-    auditCache = auditJson ? JSON.parse(auditJson) : [];
-
-    initialized = true;
-  } catch (e) {
-    console.error('Failed to init web storage:', e);
-    casesCache = [];
-    reportsCache = [];
-    auditCache = [];
-    initialized = true;
+// Helper to get the current user ID or throw
+function requireUserId(): string {
+  const uid = getCurrentUserId();
+  if (!uid) {
+    throw new Error('User must be logged in to access data');
   }
+  return uid;
 }
 
-async function saveWebData() {
-  try {
-    await AsyncStorage.setItem(STORAGE_KEYS.CASES, JSON.stringify(casesCache));
-    await AsyncStorage.setItem(STORAGE_KEYS.REPORTS, JSON.stringify(reportsCache));
-    await AsyncStorage.setItem(STORAGE_KEYS.AUDIT_LOG, JSON.stringify(auditCache));
-  } catch (e) {
-    console.error('Failed to save web data:', e);
+// Deep-strip undefined values from an object so Firestore doesn't reject it.
+// Firestore throws on any undefined value at any nesting depth.
+function stripUndefined(obj: any): any {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) return obj.map(stripUndefined);
+  if (typeof obj === 'object' && !(obj instanceof Date)) {
+    const clean: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        clean[key] = stripUndefined(value);
+      }
+    }
+    return clean;
   }
+  return obj;
 }
 
-// SQLite for native platforms
-let db: any = null;
-
-async function getDatabase(): Promise<any> {
-  if (isWeb) {
-    await initWeb();
-    return null;
+// Helper to get Firestore or throw
+async function requireDb() {
+  const db = await getDb();
+  if (!db) {
+    throw new Error('Database not initialized');
   }
-
-  if (db) return db;
-
-  // Dynamic import for native only
-  const SQLite = await import('expo-sqlite');
-  db = await SQLite.openDatabaseAsync('bailrecovery.db');
-  await initializeDatabase(db);
   return db;
-}
-
-async function initializeDatabase(database: any): Promise<void> {
-  await database.execAsync(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-
-    CREATE TABLE IF NOT EXISTS cases (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      internal_case_id TEXT,
-      purpose TEXT NOT NULL,
-      notes TEXT,
-      attestation_accepted INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      auto_delete_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS reports (
-      id TEXT PRIMARY KEY,
-      case_id TEXT NOT NULL,
-      pdf_path TEXT,
-      raw_text_hash TEXT,
-      parsed_data TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS audit_log (
-      id TEXT PRIMARY KEY,
-      case_id TEXT,
-      action TEXT NOT NULL,
-      details TEXT,
-      timestamp TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_reports_case_id ON reports(case_id);
-    CREATE INDEX IF NOT EXISTS idx_audit_case_id ON audit_log(case_id);
-    CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
-  `);
 }
 
 // Cases CRUD
@@ -135,8 +81,6 @@ export interface CreateCaseOptions {
     charges: Record<string, any>[];
     bonds: Record<string, any>[];
   };
-  existingId?: string; // Used for syncing from cloud to preserve case ID
-  skipSync?: boolean; // Skip cloud sync (used when pulling from cloud)
 }
 
 export async function createCase(
@@ -148,8 +92,9 @@ export async function createCase(
   ftaRiskLevel?: 'LOW RISK' | 'MODERATE RISK' | 'HIGH RISK' | 'VERY HIGH RISK',
   options?: Partial<CreateCaseOptions>
 ): Promise<Case> {
-  // Use existingId if provided (for cloud sync) or generate new
-  const id = options?.existingId || (uuid.v4() as string);
+  const userId = requireUserId();
+  const db = await requireDb();
+  const id = uuid.v4() as string;
   const now = new Date().toISOString();
 
   const newCase: Case = {
@@ -163,7 +108,6 @@ export async function createCase(
     attestationAccepted: false,
     createdAt: now,
     updatedAt: now,
-    // Roster data
     mugshotUrl: options?.mugshotUrl,
     bookingNumber: options?.bookingNumber,
     jailSource: options?.jailSource,
@@ -172,169 +116,153 @@ export async function createCase(
     rosterData: options?.rosterData,
   };
 
-  if (isWeb) {
-    await initWeb();
-    casesCache.push(newCase);
-    await saveWebData();
-  } else {
-    const database = await getDatabase();
-    await database.runAsync(
-      `INSERT INTO cases (id, name, internal_case_id, purpose, notes, attestation_accepted, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
-      [id, name, internalCaseId || null, purpose, notes || null, now, now]
-    );
-  }
+  // Deep-strip undefined values for Firestore
+  const firestoreData = { ...stripUndefined(newCase), userId, syncedAt: serverTimestamp() };
 
-  // Auto-sync to cloud (skip if pulled from cloud)
-  if (!options?.skipSync) {
-    syncCase(newCase).catch(err => console.warn('Auto-sync failed:', err));
-  }
+  console.log('[DB] Creating case:', id, name, 'userId:', userId);
+  // Fire-and-forget: setDoc writes to local cache immediately but its Promise
+  // waits for server ACK which can hang if WebSocket is connecting.
+  // The onSnapshot subscription will pick up the local write instantly.
+  const writePromise = setDoc(doc(db, 'cases', id), firestoreData);
+  writePromise
+    .then(() => console.log('[DB] Case server-confirmed:', id))
+    .catch(err => console.error('[DB] Case write failed (will retry):', id, err));
 
   return newCase;
 }
 
 export async function getCase(id: string): Promise<Case | null> {
-  if (isWeb) {
-    await initWeb();
-    return casesCache.find(c => c.id === id) || null;
+  try {
+    const db = await requireDb();
+    const caseRef = doc(db, 'cases', id);
+
+    // Simple read with timeout — Firestore SDK handles cache internally
+    const snap = await Promise.race([
+      getDoc(caseRef),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]);
+
+    if (!snap || !snap.exists()) return null;
+
+    const data = snap.data();
+    return {
+      ...data,
+      id: snap.id,
+      createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+      updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
+    } as Case;
+  } catch (error: any) {
+    console.warn('[DB] getCase failed:', error?.message || error);
+    return null;
   }
-
-  const database = await getDatabase();
-  const row = await database.getFirstAsync<{
-    id: string;
-    name: string;
-    internal_case_id: string | null;
-    purpose: CasePurpose;
-    notes: string | null;
-    attestation_accepted: number;
-    created_at: string;
-    updated_at: string;
-    auto_delete_at: string | null;
-  }>('SELECT * FROM cases WHERE id = ?', [id]);
-
-  if (!row) return null;
-
-  return {
-    id: row.id,
-    name: row.name,
-    internalCaseId: row.internal_case_id || undefined,
-    purpose: row.purpose,
-    notes: row.notes || undefined,
-    attestationAccepted: row.attestation_accepted === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    autoDeleteAt: row.auto_delete_at || undefined,
-  };
 }
 
 export async function getAllCases(): Promise<Case[]> {
-  if (isWeb) {
-    await initWeb();
-    return [...casesCache].sort((a, b) =>
-      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    );
+  const userId = getCurrentUserId();
+  if (!userId) {
+    console.log('[DB] getAllCases: no userId yet, returning empty');
+    return [];
   }
+  const db = await getDb();
+  if (!db) {
+    console.log('[DB] getAllCases: no db yet, returning empty');
+    return [];
+  }
+  console.log('[DB] getAllCases for userId:', userId);
 
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<{
-    id: string;
-    name: string;
-    internal_case_id: string | null;
-    purpose: CasePurpose;
-    notes: string | null;
-    attestation_accepted: number;
-    created_at: string;
-    updated_at: string;
-    auto_delete_at: string | null;
-  }>('SELECT * FROM cases ORDER BY updated_at DESC');
+  // Simple query without orderBy to avoid needing a composite index
+  const casesQuery = query(
+    collection(db, 'cases'),
+    where('userId', '==', userId)
+  );
 
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    internalCaseId: row.internal_case_id || undefined,
-    purpose: row.purpose,
-    notes: row.notes || undefined,
-    attestationAccepted: row.attestation_accepted === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    autoDeleteAt: row.auto_delete_at || undefined,
-  }));
+  try {
+    // Simple query with timeout — Firestore SDK handles cache internally.
+    // onSnapshot in useCases provides real-time updates after this initial load.
+    const snapshot = await Promise.race([
+      getDocs(casesQuery),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]);
+
+    if (!snapshot) {
+      console.warn('[DB] getAllCases timed out — onSnapshot will catch up');
+      return [];
+    }
+
+    console.log('[DB] getAllCases:', snapshot.docs.length, 'cases');
+
+    const cases = snapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return {
+        ...data,
+        id: docSnap.id,
+        createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+        updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt,
+      } as Case;
+    });
+
+    // Sort client-side (newest first)
+    cases.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    return cases;
+  } catch (error: any) {
+    console.warn('[DB] getAllCases failed:', error?.message || error);
+    return [];
+  }
 }
 
 export async function updateCase(
   id: string,
-  updates: Partial<Pick<Case, 'name' | 'internalCaseId' | 'notes' | 'attestationAccepted' | 'autoDeleteAt'>>
+  updates: Partial<Pick<Case, 'name' | 'internalCaseId' | 'notes' | 'attestationAccepted' | 'autoDeleteAt' | 'primaryTarget'>>
 ): Promise<void> {
+  const db = await requireDb();
   const now = new Date().toISOString();
 
-  if (isWeb) {
-    await initWeb();
-    const idx = casesCache.findIndex(c => c.id === id);
-    if (idx !== -1) {
-      casesCache[idx] = {
-        ...casesCache[idx],
-        ...updates,
-        updatedAt: now,
-      };
-      await saveWebData();
-      // Auto-sync to cloud
-      syncCase(casesCache[idx]).catch(err => console.warn('Auto-sync failed:', err));
-    }
-    return;
-  }
+  // Deep-strip undefined values for Firestore
+  const firestoreUpdates = {
+    ...stripUndefined(updates),
+    updatedAt: now,
+    syncedAt: serverTimestamp(),
+  };
 
-  const database = await getDatabase();
-  const setClauses: string[] = ['updated_at = ?'];
-  const values: (string | number | null)[] = [now];
-
-  if (updates.name !== undefined) {
-    setClauses.push('name = ?');
-    values.push(updates.name);
-  }
-  if (updates.internalCaseId !== undefined) {
-    setClauses.push('internal_case_id = ?');
-    values.push(updates.internalCaseId || null);
-  }
-  if (updates.notes !== undefined) {
-    setClauses.push('notes = ?');
-    values.push(updates.notes || null);
-  }
-  if (updates.attestationAccepted !== undefined) {
-    setClauses.push('attestation_accepted = ?');
-    values.push(updates.attestationAccepted ? 1 : 0);
-  }
-  if (updates.autoDeleteAt !== undefined) {
-    setClauses.push('auto_delete_at = ?');
-    values.push(updates.autoDeleteAt || null);
-  }
-
-  values.push(id);
-  await database.runAsync(
-    `UPDATE cases SET ${setClauses.join(', ')} WHERE id = ?`,
-    values
-  );
-
-  // Auto-sync to cloud - fetch updated case and sync
-  const updatedCase = await getCase(id);
-  if (updatedCase) {
-    syncCase(updatedCase).catch(err => console.warn('Auto-sync failed:', err));
-  }
+  await setDoc(doc(db, 'cases', id), firestoreUpdates, { merge: true });
 }
 
 export async function deleteCase(id: string): Promise<void> {
-  if (isWeb) {
-    await initWeb();
-    casesCache = casesCache.filter(c => c.id !== id);
-    reportsCache = reportsCache.filter(r => r.caseId !== id);
-    await saveWebData();
-  } else {
-    const database = await getDatabase();
-    await database.runAsync('DELETE FROM cases WHERE id = ?', [id]);
-  }
+  const db = await requireDb();
 
-  // Auto-delete from cloud
-  deleteSyncedCase(id).catch(err => console.warn('Cloud delete failed:', err));
+  // Mark as pending delete so onSnapshot callbacks can filter it out
+  pendingDeletes.add(id);
+
+  try {
+    // Delete subcollections in parallel — all with .catch so nothing blocks
+    const subDeletes: Promise<void>[] = [
+      deleteDoc(doc(db, 'cases', id, 'chat', 'history')).catch(() => {}),
+      deleteDoc(doc(db, 'cases', id, 'photo', 'target')).catch(() => {}),
+    ];
+
+    // Delete reports subcollection — timeout so it can't hang
+    try {
+      const reportsSnap = await Promise.race([
+        getDocs(collection(db, 'cases', id, 'reports')),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+      ]);
+      if (reportsSnap) {
+        for (const reportDoc of reportsSnap.docs) {
+          subDeletes.push(deleteDoc(reportDoc.ref).catch(() => {}));
+        }
+      }
+    } catch { /* no reports */ }
+
+    // Fire all subcollection deletes, then delete the case doc
+    await Promise.all(subDeletes);
+    await deleteDoc(doc(db, 'cases', id));
+  } finally {
+    pendingDeletes.delete(id);
+  }
 }
+
+/** Case IDs currently being deleted — used by sync to filter onSnapshot results */
+export const pendingDeletes = new Set<string>();
 
 // Reports CRUD
 export async function createReport(
@@ -342,6 +270,7 @@ export async function createReport(
   parsedData: ParsedReport,
   pdfPath?: string
 ): Promise<Report> {
+  const db = await requireDb();
   const id = uuid.v4() as string;
   const now = new Date().toISOString();
 
@@ -353,217 +282,295 @@ export async function createReport(
     createdAt: now,
   };
 
-  if (isWeb) {
-    await initWeb();
-    reportsCache.push(newReport);
-    // Update case timestamp
-    const caseIdx = casesCache.findIndex(c => c.id === caseId);
-    if (caseIdx !== -1) {
-      casesCache[caseIdx].updatedAt = now;
-      // Auto-sync case to cloud
-      syncCase(casesCache[caseIdx]).catch(err => console.warn('Auto-sync failed:', err));
-    }
-    await saveWebData();
-  } else {
-    const database = await getDatabase();
-    const encryptedData = JSON.stringify(parsedData); // Skip encryption for simplicity on native too
+  // Write report to subcollection — deep-strip undefined values
+  // (parsedData can have nested undefined fields like subject.dob)
+  const reportData = { ...stripUndefined(newReport), syncedAt: serverTimestamp() };
+  await setDoc(doc(db, 'cases', caseId, 'reports', id), reportData);
 
-    await database.runAsync(
-      `INSERT INTO reports (id, case_id, pdf_path, parsed_data, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [id, caseId, pdfPath || null, encryptedData, now]
-    );
-
-    await database.runAsync(
-      'UPDATE cases SET updated_at = ? WHERE id = ?',
-      [now, caseId]
-    );
-  }
-
-  // Auto-sync report to cloud
-  syncReport(caseId, newReport).catch(err => console.warn('Report auto-sync failed:', err));
+  // Update case timestamp
+  await setDoc(doc(db, 'cases', caseId), {
+    updatedAt: now,
+    syncedAt: serverTimestamp(),
+  }, { merge: true });
 
   return newReport;
 }
 
 export async function getReportsForCase(caseId: string): Promise<Report[]> {
-  if (isWeb) {
-    await initWeb();
-    return reportsCache
-      .filter(r => r.caseId === caseId)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  try {
+    const db = await requireDb();
+    const reportsRef = collection(db, 'cases', caseId, 'reports');
+
+    // Simple query with timeout — Firestore SDK handles cache internally
+    const snapshot = await Promise.race([
+      getDocs(reportsRef),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]);
+
+    if (!snapshot) {
+      console.warn('[DB] getReportsForCase timed out');
+      return [];
+    }
+
+    console.log('[DB] getReportsForCase:', snapshot.docs.length, 'reports');
+
+    const reports = snapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return {
+        id: docSnap.id,
+        caseId: data.caseId,
+        pdfPath: data.pdfPath || undefined,
+        parsedData: data.parsedData,
+        createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+      } as Report;
+    });
+
+    reports.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    return reports;
+  } catch (error: any) {
+    console.warn('[DB] getReportsForCase failed:', error?.message || error);
+    return [];
   }
-
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<{
-    id: string;
-    case_id: string;
-    pdf_path: string | null;
-    parsed_data: string;
-    created_at: string;
-  }>('SELECT * FROM reports WHERE case_id = ? ORDER BY created_at DESC', [caseId]);
-
-  return rows.map((row) => ({
-    id: row.id,
-    caseId: row.case_id,
-    pdfPath: row.pdf_path || undefined,
-    parsedData: JSON.parse(row.parsed_data),
-    createdAt: row.created_at,
-  }));
 }
 
-export async function deleteReport(id: string): Promise<void> {
-  if (isWeb) {
-    await initWeb();
-    reportsCache = reportsCache.filter(r => r.id !== id);
-    await saveWebData();
+export async function deleteReport(id: string, caseId?: string): Promise<void> {
+  if (!caseId) {
+    console.warn('deleteReport called without caseId - cannot delete from Firestore');
     return;
   }
-
-  const database = await getDatabase();
-  await database.runAsync('DELETE FROM reports WHERE id = ?', [id]);
+  const db = await requireDb();
+  await deleteDoc(doc(db, 'cases', caseId, 'reports', id));
 }
 
-// Audit Log
+// Audit Log - now stored in Firestore under users/{uid}/audit
 export async function logAudit(
   action: AuditAction,
   caseId?: string,
   details?: string
 ): Promise<void> {
-  const id = uuid.v4() as string;
-  const now = new Date().toISOString();
+  try {
+    const userId = getCurrentUserId();
+    if (!userId) return; // Can't log audit without a user
 
-  const entry: AuditLogEntry = {
-    id,
-    caseId,
-    action,
-    details,
-    timestamp: now,
-  };
+    const db = await requireDb();
+    const id = uuid.v4() as string;
+    const now = new Date().toISOString();
 
-  if (isWeb) {
-    await initWeb();
-    auditCache.push(entry);
-    // Keep only last 500 entries
-    if (auditCache.length > 500) {
-      auditCache = auditCache.slice(-500);
-    }
-    await saveWebData();
-    return;
+    const entry: Record<string, any> = {
+      id,
+      action,
+      timestamp: now,
+      syncedAt: serverTimestamp(),
+    };
+    if (caseId) entry.caseId = caseId;
+    if (details) entry.details = details;
+
+    await setDoc(doc(db, 'users', userId, 'audit', id), entry);
+  } catch (error) {
+    // Don't let audit failures break the app
+    console.warn('Audit log failed:', error);
   }
-
-  const database = await getDatabase();
-  await database.runAsync(
-    `INSERT INTO audit_log (id, case_id, action, details, timestamp)
-     VALUES (?, ?, ?, ?, ?)`,
-    [id, caseId || null, action, details || null, now]
-  );
 }
 
 export async function getAuditLog(
   limit: number = 100,
   caseId?: string
 ): Promise<AuditLogEntry[]> {
-  if (isWeb) {
-    await initWeb();
-    let filtered = caseId
-      ? auditCache.filter(a => a.caseId === caseId)
-      : auditCache;
-    return filtered
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, limit);
+  try {
+    const userId = getCurrentUserId();
+    if (!userId) return [];
+
+    const db = await requireDb();
+
+    let auditQuery;
+    if (caseId) {
+      auditQuery = query(
+        collection(db, 'users', userId, 'audit'),
+        where('caseId', '==', caseId)
+      );
+    } else {
+      auditQuery = query(collection(db, 'users', userId, 'audit'));
+    }
+
+    const snapshot = await getDocs(auditQuery);
+
+    const entries = snapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return {
+        id: data.id || docSnap.id,
+        caseId: data.caseId || undefined,
+        action: data.action,
+        details: data.details || undefined,
+        timestamp: data.timestamp,
+      } as AuditLogEntry;
+    });
+
+    // Sort client-side and apply limit
+    entries.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+    return entries.slice(0, limit);
+  } catch (error) {
+    console.warn('Failed to get audit log:', error);
+    return [];
   }
-
-  const database = await getDatabase();
-  let query = 'SELECT * FROM audit_log';
-  const params: (string | number)[] = [];
-
-  if (caseId) {
-    query += ' WHERE case_id = ?';
-    params.push(caseId);
-  }
-
-  query += ' ORDER BY timestamp DESC LIMIT ?';
-  params.push(limit);
-
-  const rows = await database.getAllAsync<{
-    id: string;
-    case_id: string | null;
-    action: AuditAction;
-    details: string | null;
-    timestamp: string;
-  }>(query, params);
-
-  return rows.map((row) => ({
-    id: row.id,
-    caseId: row.case_id || undefined,
-    action: row.action,
-    details: row.details || undefined,
-    timestamp: row.timestamp,
-  }));
 }
 
 export async function clearAuditLogForCase(caseId: string): Promise<void> {
-  if (isWeb) {
-    await initWeb();
-    auditCache = auditCache.filter(a => a.caseId !== caseId);
-    await saveWebData();
-    return;
-  }
+  try {
+    const userId = getCurrentUserId();
+    if (!userId) return;
 
-  const database = await getDatabase();
-  await database.runAsync('DELETE FROM audit_log WHERE case_id = ?', [caseId]);
+    const db = await requireDb();
+    const auditQuery = query(
+      collection(db, 'users', userId, 'audit'),
+      where('caseId', '==', caseId)
+    );
+
+    const snapshot = await getDocs(auditQuery);
+    for (const docSnap of snapshot.docs) {
+      await deleteDoc(docSnap.ref);
+    }
+  } catch (error) {
+    console.warn('Failed to clear audit log:', error);
+  }
 }
 
-// Settings
-export async function getSetting(key: string): Promise<string | null> {
-  if (isWeb) {
-    return AsyncStorage.getItem(`setting_${key}`);
+
+/**
+ * Migrate old AsyncStorage cases/reports to Firestore.
+ * Called on login to recover any data that was only stored locally.
+ * Also claims any orphaned Firestore cases that have no userId.
+ */
+export async function migrateLocalDataToFirestore(): Promise<number> {
+  const userId = getCurrentUserId();
+  if (!userId) return 0;
+
+  let migrated = 0;
+
+  try {
+    const db = await getDb();
+    if (!db) return 0;
+
+    // Step 1: Migrate old AsyncStorage cases
+    const casesJson = await AsyncStorage.getItem(LEGACY_KEYS.CASES);
+    if (casesJson) {
+      const localCases: Case[] = JSON.parse(casesJson);
+      console.log('[Migration] Found', localCases.length, 'local cases to migrate');
+
+      // Also load reports
+      const reportsJson = await AsyncStorage.getItem(LEGACY_KEYS.REPORTS);
+      const localReports: Report[] = reportsJson ? JSON.parse(reportsJson) : [];
+
+      for (const c of localCases) {
+        try {
+          // Check if case already exists in Firestore
+          const existingDoc = await getDoc(doc(db, 'cases', c.id));
+          if (existingDoc.exists()) {
+            // Case exists - make sure it has our userId
+            const data = existingDoc.data();
+            if (!data.userId) {
+              await setDoc(doc(db, 'cases', c.id), { userId, syncedAt: serverTimestamp() }, { merge: true });
+              console.log('[Migration] Claimed orphan case:', c.id, c.name);
+              migrated++;
+            }
+            continue;
+          }
+
+          // Write case to Firestore
+          const firestoreData: Record<string, any> = { userId, syncedAt: serverTimestamp() };
+          for (const [key, value] of Object.entries(c)) {
+            if (value !== undefined) {
+              firestoreData[key] = value;
+            }
+          }
+          await setDoc(doc(db, 'cases', c.id), firestoreData);
+          console.log('[Migration] Migrated case:', c.id, c.name);
+          migrated++;
+
+          // Migrate reports for this case
+          const caseReports = localReports.filter(r => r.caseId === c.id);
+          for (const r of caseReports) {
+            try {
+              const reportData: Record<string, any> = { syncedAt: serverTimestamp() };
+              for (const [key, value] of Object.entries(r)) {
+                if (value !== undefined) {
+                  reportData[key] = value;
+                }
+              }
+              await setDoc(doc(db, 'cases', c.id, 'reports', r.id), reportData);
+              console.log('[Migration] Migrated report:', r.id, 'for case:', c.id);
+            } catch (e) {
+              console.warn('[Migration] Failed to migrate report:', r.id, e);
+            }
+          }
+        } catch (e) {
+          console.warn('[Migration] Failed to migrate case:', c.id, e);
+        }
+      }
+
+      // Clear old AsyncStorage data after successful migration
+      if (migrated > 0) {
+        await AsyncStorage.removeItem(LEGACY_KEYS.CASES);
+        await AsyncStorage.removeItem(LEGACY_KEYS.REPORTS);
+        await AsyncStorage.removeItem(LEGACY_KEYS.AUDIT_LOG);
+        console.log('[Migration] Cleared legacy AsyncStorage data');
+      }
+    }
+
+    // Step 2: Claim any orphaned Firestore cases (cases with no userId)
+    // This handles cases that were synced to Firestore but without a userId field
+    try {
+      const allCasesSnap = await getDocs(collection(db, 'cases'));
+      for (const docSnap of allCasesSnap.docs) {
+        const data = docSnap.data();
+        if (!data.userId) {
+          await setDoc(doc(db, 'cases', docSnap.id), { userId, syncedAt: serverTimestamp() }, { merge: true });
+          console.log('[Migration] Claimed orphan Firestore case:', docSnap.id, data.name);
+          migrated++;
+        }
+      }
+    } catch (e) {
+      console.warn('[Migration] Failed to scan for orphan cases:', e);
+    }
+
+  } catch (error) {
+    console.error('[Migration] Migration failed:', error);
   }
 
-  const database = await getDatabase();
-  const row = await database.getFirstAsync<{ value: string }>(
-    'SELECT value FROM settings WHERE key = ?',
-    [key]
-  );
-  return row?.value || null;
-}
-
-export async function setSetting(key: string, value: string): Promise<void> {
-  if (isWeb) {
-    await AsyncStorage.setItem(`setting_${key}`, value);
-    return;
+  if (migrated > 0) {
+    console.log('[Migration] Total migrated/claimed:', migrated);
   }
-
-  const database = await getDatabase();
-  await database.runAsync(
-    `INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`,
-    [key, value]
-  );
+  return migrated;
 }
 
 // Cleanup for auto-delete
 export async function cleanupExpiredCases(): Promise<number> {
-  const now = new Date().toISOString();
+  try {
+    const userId = getCurrentUserId();
+    if (!userId) return 0;
 
-  if (isWeb) {
-    await initWeb();
-    const before = casesCache.length;
-    casesCache = casesCache.filter(c =>
-      !c.autoDeleteAt || c.autoDeleteAt >= now
+    const db = await getDb();
+    if (!db) return 0;
+    const now = new Date().toISOString();
+
+    const casesQuery = query(
+      collection(db, 'cases'),
+      where('userId', '==', userId)
     );
-    const deleted = before - casesCache.length;
-    if (deleted > 0) {
-      await saveWebData();
+
+    const snapshot = await getDocs(casesQuery);
+    let deleted = 0;
+
+    for (const docSnap of snapshot.docs) {
+      const data = docSnap.data();
+      if (data.autoDeleteAt && data.autoDeleteAt < now) {
+        await deleteCase(docSnap.id);
+        deleted++;
+      }
     }
+
     return deleted;
+  } catch (error) {
+    console.warn('Cleanup failed:', error);
+    return 0;
   }
-
-  const database = await getDatabase();
-  const result = await database.runAsync(
-    'DELETE FROM cases WHERE auto_delete_at IS NOT NULL AND auto_delete_at < ?',
-    [now]
-  );
-
-  return result.changes;
 }

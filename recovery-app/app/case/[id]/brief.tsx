@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,25 +12,34 @@ import { Ionicons } from '@expo/vector-icons';
 import { Card, Button, WarningBanner } from '@/components';
 import { useCase } from '@/hooks/useCase';
 import { COLORS } from '@/constants';
+import { loadCaseIntel, type CaseIntel } from '@/lib/case-intel';
 
 export default function BriefScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { caseData, reports, refresh, getBrief } = useCase(id!);
   const [refreshing, setRefreshing] = useState(false);
+  const [caseIntel, setCaseIntel] = useState<CaseIntel | null>(null);
 
   const brief = getBrief();
   const latestReport = reports[0];
 
+  // Load case intelligence
+  useEffect(() => {
+    if (id) loadCaseIntel(id).then(setCaseIntel);
+  }, [id]);
+
   useFocusEffect(
     useCallback(() => {
       refresh();
-    }, [refresh])
+      if (id) loadCaseIntel(id).then(setCaseIntel);
+    }, [refresh, id])
   );
 
   const handleRefresh = async () => {
     setRefreshing(true);
     await refresh();
+    if (id) setCaseIntel(await loadCaseIntel(id));
     setRefreshing(false);
   };
 
@@ -54,13 +63,50 @@ export default function BriefScreen() {
   // Get all data from parsed report
   const parsedData = latestReport?.parsedData;
   const subject = parsedData?.subject || {};
-  const addresses = parsedData?.addresses || [];
+  const rawAddresses = parsedData?.addresses || [];
   const phones = parsedData?.phones || [];
-  const relatives = parsedData?.relatives || [];
-  const vehicles = parsedData?.vehicles || [];
+  const rawRelatives = parsedData?.relatives || [];
+  const rawVehicles = parsedData?.vehicles || [];
   const employment = parsedData?.employment || [];
-  const flags = parsedData?.flags || [];
+  const rawFlags = parsedData?.flags || [];
   const recommendations = parsedData?.recommendations || [];
+
+  // Merge case intel with parsed report data
+  const excludePatterns = caseIntel?.excludePatterns || [];
+  const shouldExclude = (text: string) => excludePatterns.some(p => text.toLowerCase().includes(p));
+
+  // Addresses: parsed + intel-added, minus excluded
+  const intelAddresses = (caseIntel?.addresses || []).map(a => ({
+    fullAddress: a.address, address: a.address, confidence: a.important ? 1 : 0.7,
+    reasons: [a.note || a.type].filter(Boolean), _intelType: a.type, _important: a.important,
+  }));
+  const addresses = [...intelAddresses, ...rawAddresses.filter(
+    (a: any) => !shouldExclude(a.fullAddress || a.address || '') &&
+      !intelAddresses.some(ia => (a.fullAddress || a.address || '').toLowerCase().includes(ia.fullAddress.toLowerCase().slice(0, 15)))
+  )];
+
+  // Contacts: parsed + intel-added
+  const intelContacts = (caseIntel?.contacts || []).map(c => ({
+    name: c.name, relationship: c.relationship, phone: c.phone,
+    phones: c.phone ? [c.phone] : [], currentAddress: c.address,
+    _note: c.note, _important: c.important,
+  }));
+  const relatives = [...intelContacts, ...rawRelatives.filter(
+    (r: any) => !intelContacts.some(ic => ic.name.toLowerCase() === (r.name || '').toLowerCase())
+  )];
+
+  // Vehicles: parsed + intel-added
+  const intelVehicles = (caseIntel?.vehicles || []).map(v => ({
+    description: v.description, plate: v.plate, vin: v.vin, _note: v.note,
+  }));
+  const vehicles = [...intelVehicles, ...rawVehicles];
+
+  // Flags: parsed + intel custom flags
+  const customFlags = (caseIntel?.customFlags || []).map(f => ({ type: 'warning', message: f, severity: 'high' }));
+  const flags = [...customFlags, ...rawFlags];
+
+  // Investigation notes from AI chat
+  const intelNotes = caseIntel?.notes || [];
 
   // Get brief data for action plan
   const { actionPlan, likelyLocations, contactStrategy } = brief as any;
@@ -361,6 +407,26 @@ export default function BriefScreen() {
               <View key={idx} style={styles.phoneItem}>
                 <Text style={styles.phoneNumber}>{phone.number}</Text>
                 <Text style={styles.phoneType}>{phone.type || 'unknown'}</Text>
+              </View>
+            ))}
+          </Card>
+        </View>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* INVESTIGATION NOTES (from AI chat) */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {intelNotes.length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="document-text" size={20} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>INVESTIGATION NOTES</Text>
+          </View>
+          <Card style={styles.card}>
+            {intelNotes.map((note, idx) => (
+              <View key={idx} style={styles.intelItem}>
+                <Text style={styles.bulletPoint}>•</Text>
+                <Text style={styles.intelText}>{note.text}</Text>
               </View>
             ))}
           </Card>

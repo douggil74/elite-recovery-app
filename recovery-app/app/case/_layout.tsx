@@ -1,11 +1,11 @@
 import { Stack } from 'expo-router';
 
-// Dark theme colors
+// Dark theme colors — match COLORS from constants
 const DARK = {
-  bg: '#0f1419',
-  surface: '#1c2128',
-  text: '#e6edf3',
-  border: '#30363d',
+  bg: '#000000',
+  surface: '#0a0a0a',
+  text: '#fafafa',
+  border: '#27272a',
 };
 
 export default function CaseLayout() {
@@ -29,9 +29,7 @@ export default function CaseLayout() {
       <Stack.Screen
         name="new"
         options={{
-          title: 'New Case',
-          presentation: 'modal',
-          headerBackTitle: 'Cancel',
+          headerShown: false,
         }}
       />
       <Stack.Screen
@@ -68,6 +66,13 @@ export default function CaseLayout() {
           title: 'Export Brief',
           presentation: 'modal',
           headerBackTitle: 'Cancel',
+        }}
+      />
+      <Stack.Screen
+        name="[id]/wanted"
+        options={{
+          title: 'Wanted Poster',
+          headerBackTitle: 'Case',
         }}
       />
     </Stack>

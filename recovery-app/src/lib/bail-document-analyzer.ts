@@ -659,6 +659,17 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
     dob: intel.subject?.dob,
     partialSsn: intel.subject?.ssn,
     personId: intel.subject?.cid,
+    height: intel.subject?.height,
+    weight: intel.subject?.weight,
+    race: intel.subject?.race,
+    sex: intel.subject?.sex || intel.subject?.gender,
+    hairColor: intel.subject?.hairColor,
+    eyeColor: intel.subject?.eyeColor,
+    tattoos: intel.subject?.tattoos,
+    scars: intel.subject?.scars,
+    driversLicense: intel.subject?.driversLicense,
+    phone: intel.subject?.phone,
+    email: intel.subject?.email,
   };
 
   // Build addresses

@@ -1,25 +1,26 @@
 /**
  * Authentication Context
- * Manages user authentication state across the app
+ * Manages user authentication state across the app.
+ * With cloud-first architecture, login just sets the userId for Firestore access.
  */
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { DeviceEventEmitter } from 'react-native';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   AuthUser,
   signIn as firebaseSignIn,
   signUp as firebaseSignUp,
   signOut as firebaseSignOut,
   signInWithGoogle as firebaseSignInWithGoogle,
-  getCurrentUser,
   subscribeToAuthChanges,
   resetPassword,
   initializeFirebase,
   getUserOrganization,
   Organization,
 } from '@/lib/firebase';
-import { setUserIdForSync, fetchSyncedSettings, syncSettings, migrateCasesToUser, pullCasesFromCloud } from '@/lib/sync';
-import { createCase as dbCreateCase, getAllCases, getCase } from '@/lib/database';
-import { getSettings, saveSettings } from '@/lib/storage';
+import { setCurrentUserId } from '@/lib/auth-state';
+import { saveSettings, getSettings } from '@/lib/storage';
+import { migrateLocalDataToFirestore } from '@/lib/database';
+import { STORAGE_KEYS } from '@/constants';
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -34,89 +35,34 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Sync settings and cases when user logs in
+// Set up auth state — fast, no blocking Firestore reads
 async function handleUserLogin(authUser: AuthUser): Promise<void> {
-  // Set user ID in local settings for sync to work - this is critical
-  await setUserIdForSync(authUser.uid);
-  console.log('[Auth] User ID set for sync:', authUser.uid);
+  // Set userId in auth-state module so database.ts and storage.ts can access Firestore
+  setCurrentUserId(authUser.uid);
 
-  // Run sync operations in background - don't block login
-  setTimeout(async () => {
-    try {
-      // 1. Migrate any cases stored under deviceId to this userId
-      console.log('[Auth] Migrating cases to user account...');
-      await migrateCasesToUser(authUser.uid);
-
-      // 2. Pull cases from cloud and save locally
-      console.log('[Auth] Pulling cases from cloud...');
-      const cloudCases = await Promise.race([
-        pullCasesFromCloud(authUser.uid),
-        new Promise<[]>((_, reject) => setTimeout(() => reject(new Error('Cases sync timeout')), 10000))
-      ]);
-
-      if (cloudCases && cloudCases.length > 0) {
-        // Get local case IDs to avoid duplicates
-        const localCases = await getAllCases();
-        const localIds = new Set(localCases.map(c => c.id));
-        let newCount = 0;
-
-        // Save each case to local storage if not already there
-        for (const cloudCase of cloudCases) {
-          // Skip if case already exists locally
-          if (localIds.has(cloudCase.id)) {
-            continue;
-          }
-
-          try {
-            await dbCreateCase(
-              cloudCase.name,
-              cloudCase.purpose || 'bail_recovery',
-              cloudCase.internalCaseId,
-              cloudCase.notes,
-              cloudCase.ftaScore,
-              cloudCase.ftaRiskLevel,
-              {
-                existingId: cloudCase.id,
-                skipSync: true,
-                mugshotUrl: cloudCase.mugshotUrl,
-                bookingNumber: cloudCase.bookingNumber,
-                jailSource: cloudCase.jailSource,
-                charges: cloudCase.charges,
-                bondAmount: cloudCase.bondAmount,
-                rosterData: cloudCase.rosterData,
-              }
-            );
-            newCount++;
-          } catch (e: any) {
-            console.warn('[Auth] Failed to save cloud case locally:', cloudCase.id, e);
-          }
-        }
-        console.log(`[Auth] Synced ${newCount} new cases from cloud (${cloudCases.length} total in cloud)`);
-        // Emit event to refresh cases list
-        DeviceEventEmitter.emit('casesUpdated');
-      }
-
-      // 3. Sync settings from cloud
-      const cloudSettings = await Promise.race([
-        fetchSyncedSettings(authUser.uid),
-        new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Settings sync timeout')), 5000))
-      ]);
-
-      if (cloudSettings) {
-        await saveSettings(cloudSettings);
-        console.log('[Auth] Loaded settings from cloud');
-      } else {
-        // No cloud settings, push local settings to cloud
-        const localSettings = await getSettings();
-        if (localSettings.anthropicApiKey || localSettings.openaiApiKey) {
-          await syncSettings(authUser.uid, localSettings);
-          console.log('[Auth] Pushed local settings to cloud');
-        }
-      }
-    } catch (e) {
-      console.warn('[Auth] Sync operations failed:', e);
+  // Read settings from LOCAL cache only (instant) — no Firestore wait
+  try {
+    const stored = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
+    if (stored) {
+      const settings = JSON.parse(stored);
+      console.log('[Auth] Settings from cache. API key present:', !!settings.openaiApiKey);
+    } else {
+      console.log('[Auth] No cached settings yet');
     }
-  }, 100);
+  } catch (e) {
+    console.warn('[Auth] Failed to read local settings:', e);
+  }
+
+  // Background: sync settings from Firestore (updates cache for next time)
+  getSettings().catch(e => console.warn('[Auth] Background settings sync failed:', e));
+  // Background: migrate old local data
+  migrateLocalDataToFirestore()
+    .then(migrated => { if (migrated > 0) console.log('[Auth] Migrated', migrated, 'cases'); })
+    .catch(e => console.warn('[Auth] Migration failed:', e));
+  // Background: save userId
+  saveSettings({ userId: authUser.uid }).catch(() => {});
+
+  console.log('[Auth] User logged in:', authUser.uid);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -126,44 +72,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    let isFirstCallback = true;
 
     const initAuth = async () => {
       await initializeFirebase();
 
-      // Check for existing session
-      const currentUser = await getCurrentUser();
-      if (currentUser) {
-        setUser(currentUser);
-        if (currentUser.organizationId) {
-          const org = await getUserOrganization(currentUser.organizationId);
-          setOrganization(org);
-        }
-        // Sync settings for existing session
-        await handleUserLogin(currentUser);
-      }
-
-      // Subscribe to auth changes
+      // Use onAuthStateChanged as the SINGLE source of truth for auth state.
+      // The first callback fires once Firebase has restored the session from
+      // IndexedDB — only then do we know if the user is logged in or not.
+      // This avoids the race where getCurrentUser() returns null because
+      // auth restoration hasn't completed yet.
       unsubscribe = subscribeToAuthChanges(async (firebaseUser) => {
         if (firebaseUser) {
-          const authUser = await getCurrentUser();
+          const authUser: AuthUser = {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            displayName: firebaseUser.displayName,
+            role: 'agent',
+          };
           setUser(authUser);
-          if (authUser?.organizationId) {
-            const org = await getUserOrganization(authUser.organizationId);
-            setOrganization(org);
+          await handleUserLogin(authUser);
+          // Load org and extended profile in background
+          if (authUser.organizationId) {
+            getUserOrganization(authUser.organizationId)
+              .then(org => setOrganization(org)).catch(() => {});
           }
         } else {
           setUser(null);
           setOrganization(null);
+          setCurrentUserId(null);
         }
-        setLoading(false);
-      });
 
-      setLoading(false);
+        // Only set loading=false after the first callback (auth state resolved)
+        if (isFirstCallback) {
+          isFirstCallback = false;
+          setLoading(false);
+        }
+      });
     };
 
     initAuth();
 
+    // Safety: if auth restoration takes longer than 5s, stop blocking the UI.
+    // The user will see the login screen and can sign in manually.
+    const safetyTimeout = setTimeout(() => {
+      if (isFirstCallback) {
+        console.warn('[Auth] Auth state took >5s to resolve, unblocking UI');
+        isFirstCallback = false;
+        setLoading(false);
+      }
+    }, 5000);
+
     return () => {
+      clearTimeout(safetyTimeout);
       if (unsubscribe) unsubscribe();
     };
   }, []);
@@ -172,12 +133,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const result = await firebaseSignIn(email, password);
     if (result.user) {
       setUser(result.user);
-      if (result.user.organizationId) {
-        const org = await getUserOrganization(result.user.organizationId);
-        setOrganization(org);
-      }
-      // Sync settings from cloud
       await handleUserLogin(result.user);
+      // Org lookup in background
+      if (result.user.organizationId) {
+        getUserOrganization(result.user.organizationId)
+          .then(org => setOrganization(org)).catch(() => {});
+      }
       return { success: true, error: null };
     }
     return { success: false, error: result.error };
@@ -187,12 +148,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const result = await firebaseSignInWithGoogle();
     if (result.user) {
       setUser(result.user);
-      if (result.user.organizationId) {
-        const org = await getUserOrganization(result.user.organizationId);
-        setOrganization(org);
-      }
-      // Sync settings from cloud
       await handleUserLogin(result.user);
+      if (result.user.organizationId) {
+        getUserOrganization(result.user.organizationId)
+          .then(org => setOrganization(org)).catch(() => {});
+      }
       return { success: true, error: null };
     }
     return { success: false, error: result.error };
@@ -202,12 +162,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const result = await firebaseSignUp(email, password, displayName, organizationName);
     if (result.user) {
       setUser(result.user);
-      if (result.user.organizationId) {
-        const org = await getUserOrganization(result.user.organizationId);
-        setOrganization(org);
-      }
-      // Sync settings from cloud (will push local to cloud for new user)
       await handleUserLogin(result.user);
+      if (result.user.organizationId) {
+        getUserOrganization(result.user.organizationId)
+          .then(org => setOrganization(org)).catch(() => {});
+      }
       return { success: true, error: null };
     }
     return { success: false, error: result.error };
@@ -217,6 +176,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await firebaseSignOut();
     setUser(null);
     setOrganization(null);
+    setCurrentUserId(null);
+    // Clear local cache on sign out but PRESERVE settings (API keys)
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const keysToRemove = keys.filter(k => k !== STORAGE_KEYS.SETTINGS);
+      if (keysToRemove.length > 0) {
+        await AsyncStorage.multiRemove(keysToRemove);
+      }
+    } catch (e) {
+      console.warn('[Auth] Failed to clear local cache:', e);
+    }
   };
 
   return (

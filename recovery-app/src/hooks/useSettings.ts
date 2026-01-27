@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getSettings, saveSettings as storageSaveSettings } from '@/lib/storage';
-import { syncSettings, isSyncEnabled } from '@/lib/sync';
 import type { AppSettings } from '@/types';
 import { DEFAULT_SETTINGS } from '@/constants';
 
@@ -34,19 +33,8 @@ export function useSettings(): UseSettingsReturn {
   const updateSettings = useCallback(async (updates: Partial<AppSettings>) => {
     const updated = { ...settings, ...updates };
     setSettings(updated);
+    // saveSettings now writes to Firestore first, then AsyncStorage cache
     await storageSaveSettings(updates);
-
-    // Sync to cloud if enabled and user is logged in
-    try {
-      const syncEnabled = await isSyncEnabled();
-      const currentSettings = await getSettings();
-      if (syncEnabled && currentSettings.userId) {
-        await syncSettings(currentSettings.userId, updates);
-        console.log('[Settings] Synced to cloud');
-      }
-    } catch (e) {
-      console.warn('[Settings] Cloud sync failed:', e);
-    }
   }, [settings]);
 
   const resetSettings = useCallback(async () => {

@@ -16,12 +16,12 @@ import { useCases } from '@/hooks/useCases';
 import { confirm } from '@/lib/confirm';
 import { COLORS } from '@/constants';
 
-// Load Black Ops One font for web
+// Load Rajdhani font for web
 if (Platform.OS === 'web' && typeof document !== 'undefined') {
   const link = document.createElement('link');
-  link.href = 'https://fonts.googleapis.com/css2?family=Black+Ops+One&display=swap';
+  link.href = 'https://fonts.googleapis.com/css2?family=Rajdhani:wght@700&display=swap';
   link.rel = 'stylesheet';
-  if (!document.head.querySelector('link[href*="Black+Ops+One"]')) {
+  if (!document.head.querySelector('link[href*="Rajdhani"]')) {
     document.head.appendChild(link);
   }
 }
@@ -240,14 +240,14 @@ const styles = StyleSheet.create({
     textShadowRadius: 20,
   },
   brandTitle: {
-    fontSize: 48,
-    fontWeight: '400',
+    fontSize: 44,
+    fontWeight: '700',
     color: THEME.primary,
-    letterSpacing: 8,
+    letterSpacing: 12,
     textShadowColor: THEME.primary,
     textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 25,
-    fontFamily: 'WorldConflict',
+    textShadowRadius: 15,
+    fontFamily: 'Rajdhani',
   },
   brandAcronym: {
     fontSize: 12,

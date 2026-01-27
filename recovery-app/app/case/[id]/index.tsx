@@ -10,16 +10,19 @@ import {
   Linking,
   ActivityIndicator,
   Image,
+  Modal,
   useWindowDimensions,
+  RefreshControl,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCase } from '@/hooks/useCase';
+import { useSettings } from '@/hooks/useSettings';
 import { deleteCase, updateCase } from '@/lib/database';
 import { deleteCaseDirectory } from '@/lib/storage';
 import { confirm } from '@/lib/confirm';
-import { syncChat, syncPhoto, fetchSyncedChat, fetchSyncedPhoto, isSyncEnabled, deleteSyncedCase } from '@/lib/sync';
+import { syncChat, syncPhoto, fetchSyncedChat, fetchSyncedPhoto, isSyncEnabled } from '@/lib/sync';
 import {
   // AISquadOrchestrator disabled - using backend proxy
   type AgentMessage,
@@ -55,6 +58,15 @@ import {
   type InvestigationResult,
 } from '@/lib/python-osint';
 import { buildTracePrompt } from '@/prompts';
+import {
+  loadCaseIntel,
+  saveCaseIntel,
+  parseActions,
+  applyAction,
+  applyActions,
+  intelSummary,
+  type CaseIntel,
+} from '@/lib/case-intel';
 
 const DARK = {
   bg: '#000000',
@@ -98,27 +110,18 @@ interface SocialProfile {
   status: 'found' | 'searching' | 'not_found';
 }
 
-interface ReverseImageSearch {
-  name: string;
-  url: string;
-  note: string;
+interface AgentInsight {
+  id: string;
+  messageId: string;
+  preview: string;
+  fullText: string;
+  capturedAt: string;
+  addedToReport: boolean;
 }
 
-// Generate reverse image search URLs
-const generateReverseImageSearchUrls = (imageBase64: string): ReverseImageSearch[] => {
-  // Note: For client-side, we generate URLs that prompt the user to upload
-  // A backend would be needed for automatic searching
-  return [
-    { name: 'Google Images', url: 'https://images.google.com/', note: 'Click camera icon' },
-    { name: 'Yandex (Best for faces)', url: 'https://yandex.com/images/', note: 'Click camera icon' },
-    { name: 'TinEye', url: 'https://tineye.com/', note: 'Upload image' },
-    { name: 'PimEyes (Face)', url: 'https://pimeyes.com/', note: 'Face recognition' },
-    { name: 'FaceCheck.ID', url: 'https://facecheck.id/', note: 'Face search' },
-  ];
-};
-
 // Generate comprehensive social search profiles
-const generateSocialProfiles = (fullName: string): SocialProfile[] => {
+const generateSocialProfiles = (rawName: string): SocialProfile[] => {
+  const fullName = normalizeName(rawName) || rawName;
   const nameParts = fullName.toLowerCase().split(' ').filter(p => p.length > 0);
   const first = nameParts[0] || '';
   const last = nameParts[nameParts.length - 1] || '';
@@ -268,6 +271,7 @@ export default function CaseDetailScreen() {
   const { width: screenWidth } = useWindowDimensions();
   const isMobile = screenWidth < 768;
   const { caseData, reports, refresh, analyzeText } = useCase(id!);
+  const { settings } = useSettings();
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatLoaded, setChatLoaded] = useState(false);
   const [inputText, setInputText] = useState('');
@@ -293,19 +297,19 @@ export default function CaseDetailScreen() {
   const [isAnalyzingSubject, setIsAnalyzingSubject] = useState(false);
   const [tacticalAdvice, setTacticalAdvice] = useState<string[]>([]);
   const [selectedLinkNode, setSelectedLinkNode] = useState<string | null>(null); // For link analysis interactivity
+  const [editingLinkRel, setEditingLinkRel] = useState<string | null>(null); // Which node is editing relationship
+  const [showAddAssociate, setShowAddAssociate] = useState(false);
+  const [newAssocName, setNewAssocName] = useState('');
+  const [newAssocRel, setNewAssocRel] = useState('associate');
   const [pythonBackendAvailable, setPythonBackendAvailable] = useState(false);
-  const [imageSearchUrls, setImageSearchUrls] = useState<{
-    google_lens?: string;
-    yandex?: string;
-    tineye?: string;
-    bing?: string;
-  } | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatInputRef = useRef<TextInput>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
+  const [showPhotoPicker, setShowPhotoPicker] = useState(false);
+  const profilePhotoInputRef = useRef<HTMLInputElement>(null);
 
   const latestReport = reports[0];
   const parsedData = latestReport?.parsedData;
@@ -316,81 +320,169 @@ export default function CaseDetailScreen() {
   // Discovered associates from analyzing associate documents (stored separately)
   const [discoveredAssociates, setDiscoveredAssociates] = useState<any[]>([]);
 
+  // Case intelligence - persistent store for AI/user modifications
+  const [caseIntel, setCaseIntel] = useState<CaseIntel | null>(null);
+  const [intelRefreshing, setIntelRefreshing] = useState(false);
+
+  // Agent Insights - auto-captured substantive AI messages
+  const [agentInsights, setAgentInsights] = useState<AgentInsight[]>([]);
+  const [insightsExpanded, setInsightsExpanded] = useState(!isMobile);
+  const [expandedInsightId, setExpandedInsightId] = useState<string | null>(null);
+  const insightsCapturedRef = useRef<Set<string>>(new Set());
+
   // Merge base relatives with discovered associates for display
   const relatives = [...baseRelatives, ...discoveredAssociates].filter(
     (rel, idx, arr) => arr.findIndex(r => r.name?.toLowerCase() === rel.name?.toLowerCase()) === idx
   );
 
-  // Load saved data
+  // --- Agent Insight capture logic ---
+  const PROCESSING_PREFIXES = ['Extracting', 'Analyzing', 'Re-analyzing', 'Searching', 'Comparing', 'Processing', 'Running'];
+  const STATUS_PREFIXES = ['[ERROR]', '[WARN]', '[OK]', '[FOUND]'];
+
+  const shouldCaptureInsight = useCallback((msg: ChatMessage): boolean => {
+    if (msg.role !== 'agent') return false;
+    if (msg.content.length <= 150) return false;
+    const trimmed = msg.content.trimStart();
+    if (PROCESSING_PREFIXES.some(p => trimmed.startsWith(p))) return false;
+    if (STATUS_PREFIXES.some(p => trimmed.startsWith(p))) return false;
+    if (trimmed.includes('FACE BIOMETRICS EXTRACTED')) return false;
+    return true;
+  }, []);
+
+  const extractPreview = useCallback((text: string): string => {
+    // Split on sentence boundaries and take first 2 sentences
+    const sentences = text.match(/[^.!?\n]+[.!?]+[\s]*/g);
+    if (sentences && sentences.length >= 2) {
+      return (sentences[0] + sentences[1]).trim();
+    }
+    if (sentences && sentences.length === 1) {
+      return sentences[0].trim();
+    }
+    // Fallback: first 200 chars
+    return text.slice(0, 200).trim() + (text.length > 200 ? '...' : '');
+  }, []);
+
+  // Auto-capture insights from new agent messages
+  useEffect(() => {
+    if (chatMessages.length === 0) return;
+    const lastMsg = chatMessages[chatMessages.length - 1];
+    if (insightsCapturedRef.current.has(lastMsg.id)) return;
+    if (!shouldCaptureInsight(lastMsg)) return;
+    insightsCapturedRef.current.add(lastMsg.id);
+    setAgentInsights(prev => [...prev, {
+      id: uniqueId(),
+      messageId: lastMsg.id,
+      preview: extractPreview(lastMsg.content),
+      fullText: lastMsg.content,
+      capturedAt: new Date().toISOString(),
+      addedToReport: false,
+    }]);
+  }, [chatMessages, shouldCaptureInsight, extractPreview]);
+
+  const formatInsightTime = useCallback((iso: string): string => {
+    const d = new Date(iso);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const hours = d.getHours();
+    const mins = d.getMinutes().toString().padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const h = hours % 12 || 12;
+    if (sameDay) return `${h}:${mins} ${ampm}`;
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${months[d.getMonth()]} ${d.getDate()}, ${h}:${mins} ${ampm}`;
+  }, []);
+
+  const addInsightToReport = useCallback(async (insight: AgentInsight) => {
+    if (!caseIntel || !id || insight.addedToReport) return;
+    const { intel: updated } = applyAction(caseIntel, { type: 'ADD_NOTE', text: insight.fullText });
+    await saveCaseIntel(updated);
+    setCaseIntel(updated);
+    setAgentInsights(prev => prev.map(i =>
+      i.id === insight.id ? { ...i, addedToReport: true } : i
+    ));
+  }, [caseIntel, id]);
+
+  // Load saved data — all local reads in parallel for speed
   useEffect(() => {
     if (id) {
       const loadData = async () => {
-        const localPhoto = await AsyncStorage.getItem(`case_photo_${id}`);
-        if (localPhoto) setSubjectPhoto(localPhoto);
+        // Parallel local reads (instant from AsyncStorage)
+        const [localPhoto, localChat, localSocial, localPhotoIntel, localAssociates, intel, localInsights] =
+          await Promise.all([
+            AsyncStorage.getItem(`case_photo_${id}`),
+            AsyncStorage.getItem(`case_chat_${id}`),
+            AsyncStorage.getItem(`case_social_${id}`),
+            AsyncStorage.getItem(`case_all_photo_intel_${id}`),
+            AsyncStorage.getItem(`case_associates_${id}`),
+            loadCaseIntel(id),
+            AsyncStorage.getItem(`case_insights_${id}`),
+          ]);
 
-        const localChat = await AsyncStorage.getItem(`case_chat_${id}`);
+        if (localPhoto) setSubjectPhoto(localPhoto);
         if (localChat) {
           try {
             const parsed = JSON.parse(localChat);
             setChatMessages(parsed.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) })));
           } catch (e) {}
         }
-
-        // Load social profiles
-        const localSocial = await AsyncStorage.getItem(`case_social_${id}`);
-        if (localSocial) {
+        if (localSocial) { try { setSocialProfiles(JSON.parse(localSocial)); } catch (e) {} }
+        if (localPhotoIntel) { try { setAllPhotoIntel(JSON.parse(localPhotoIntel)); } catch (e) {} }
+        if (localAssociates) { try { setDiscoveredAssociates(JSON.parse(localAssociates)); } catch (e) {} }
+        if (localInsights) {
           try {
-            setSocialProfiles(JSON.parse(localSocial));
+            const parsed = JSON.parse(localInsights) as AgentInsight[];
+            setAgentInsights(parsed);
+            // Mark their message IDs as already captured
+            parsed.forEach(i => insightsCapturedRef.current.add(i.messageId));
           } catch (e) {}
         }
+        setCaseIntel(intel);
+        setChatLoaded(true);
 
-        // Load all photo intelligence results
-        const localPhotoIntel = await AsyncStorage.getItem(`case_all_photo_intel_${id}`);
-        if (localPhotoIntel) {
-          try {
-            setAllPhotoIntel(JSON.parse(localPhotoIntel));
-          } catch (e) {}
-        }
-
-        // Load discovered associates
-        const localAssociates = await AsyncStorage.getItem(`case_associates_${id}`);
-        if (localAssociates) {
-          try {
-            setDiscoveredAssociates(JSON.parse(localAssociates));
-          } catch (e) {}
-        }
-
-        const cloudEnabled = await isSyncEnabled();
-        if (cloudEnabled) {
-          const cloudChat = await fetchSyncedChat(id);
+        // Cloud sync in background — don't block UI
+        isSyncEnabled().then(async (cloudEnabled) => {
+          if (!cloudEnabled) return;
+          const [cloudChat, cloudPhoto] = await Promise.all([
+            fetchSyncedChat(id).catch(() => null),
+            fetchSyncedPhoto(id).catch(() => null),
+          ]);
           if (cloudChat && cloudChat.length > 0) {
             const localMsgs = localChat ? JSON.parse(localChat) : [];
             if (cloudChat.length > localMsgs.length) {
               setChatMessages(cloudChat.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) })));
-              await AsyncStorage.setItem(`case_chat_${id}`, JSON.stringify(cloudChat));
+              AsyncStorage.setItem(`case_chat_${id}`, JSON.stringify(cloudChat)).catch(() => {});
             }
           }
-          const cloudPhoto = await fetchSyncedPhoto(id);
           if (cloudPhoto && !localPhoto) {
             setSubjectPhoto(cloudPhoto);
-            await AsyncStorage.setItem(`case_photo_${id}`, cloudPhoto);
+            AsyncStorage.setItem(`case_photo_${id}`, cloudPhoto).catch(() => {});
           }
-        }
-        setChatLoaded(true);
+        }).catch(() => {});
       };
       loadData();
     }
   }, [id]);
 
-  // Save chat
+  // Save chat (debounced — don't write on every single message)
   useEffect(() => {
-    if (id && chatLoaded && chatMessages.length > 0) {
-      AsyncStorage.setItem(`case_chat_${id}`, JSON.stringify(chatMessages));
+    if (!id || !chatLoaded || chatMessages.length === 0) return;
+    const timer = setTimeout(() => {
+      AsyncStorage.setItem(`case_chat_${id}`, JSON.stringify(chatMessages)).catch(() => {});
       isSyncEnabled().then((enabled) => {
         if (enabled) syncChat(id, chatMessages);
-      });
-    }
+      }).catch(() => {});
+    }, 1000);
+    return () => clearTimeout(timer);
   }, [id, chatMessages, chatLoaded]);
+
+  // Save agent insights (debounced)
+  useEffect(() => {
+    if (!id || agentInsights.length === 0) return;
+    const timer = setTimeout(() => {
+      AsyncStorage.setItem(`case_insights_${id}`, JSON.stringify(agentInsights)).catch(() => {});
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [id, agentInsights]);
 
   // Save social profiles
   useEffect(() => {
@@ -491,13 +583,6 @@ export default function CaseDetailScreen() {
     };
     checkPythonBackend();
   }, []);
-
-  // Upload image for reverse image search when subject photo is set
-  useEffect(() => {
-    if (subjectPhoto) {
-      uploadImageForSearch(subjectPhoto);
-    }
-  }, [subjectPhoto]);
 
   // Extract facial features when photo is set
   useEffect(() => {
@@ -783,14 +868,15 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
     // Priority: USER-ENTERED CASE NAME > primaryTarget > roster data > 'Subject'
     // We NEVER use parsedData.subject.fullName because documents may have
     // different name formats (Last, First) that break OSINT searches.
+    // All returns are normalized to "First Last" format for OSINT/social URLs.
     if (caseData?.name && isValidSubjectName(caseData.name)) {
-      return caseData.name;
+      return normalizeName(caseData.name) || caseData.name;
     }
     if (caseData?.primaryTarget?.fullName && isValidSubjectName(caseData.primaryTarget.fullName)) {
-      return caseData.primaryTarget.fullName;
+      return normalizeName(caseData.primaryTarget.fullName) || caseData.primaryTarget.fullName;
     }
     if (caseData?.rosterData?.inmate?.name && isValidSubjectName(caseData.rosterData.inmate.name)) {
-      return caseData.rosterData.inmate.name;
+      return normalizeName(caseData.rosterData.inmate.name) || caseData.rosterData.inmate.name;
     }
     return 'Subject';
   }, [caseData]);
@@ -832,23 +918,6 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
 
   const openUrl = (url: string) => {
     Linking.openURL(url);
-  };
-
-  // Upload image to backend for reverse image search
-  const uploadImageForSearch = async (imageBase64: string) => {
-    try {
-      const response = await fetch('https://elite-recovery-osint.fly.dev/api/image/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_base64: imageBase64 }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setImageSearchUrls(data.search_urls);
-      }
-    } catch (error) {
-      console.error('Failed to upload image for search:', error);
-    }
   };
 
   // Analyze photo for investigative intelligence
@@ -1103,9 +1172,9 @@ ${result.explanation}`,
               return; // Don't save as subject photo
             }
 
-            // If we already have a subject photo, this might be an associate photo
+            // If we already have a subject photo, ask: replace subject or add associate?
             if (subjectPhoto) {
-              console.log('[PhotoUpload] Subject photo exists - treating as potential associate photo');
+              console.log('[PhotoUpload] Subject photo exists - asking user for intent');
 
               // Store temporarily and ask for details
               const tempAssociateId = uniqueId();
@@ -1119,13 +1188,13 @@ ${result.explanation}`,
               setChatMessages(prev => [...prev, {
                 id: uniqueId(),
                 role: 'agent',
-                content: `NEW PHOTO RECEIVED\n\nIs this someone connected to ${getSubjectName()}?\n\nWho is this? (Type their name, e.g., "John Smith")`,
+                content: `NEW PHOTO RECEIVED\n\nType "subject" to replace the current subject photo, or type a name to add as an associate.`,
                 timestamp: new Date(),
               }]);
               scrollToBottom();
 
-              // Mark that we're waiting for associate name
-              await AsyncStorage.setItem(`case_waiting_associate_name_${id}`, 'true');
+              // Mark that we're waiting for photo choice (subject replacement or associate name)
+              await AsyncStorage.setItem(`case_waiting_photo_choice_${id}`, 'true');
             } else {
               // No subject photo yet - save as subject photo
               console.log('[PhotoUpload] Saving subject photo:', currentFileName);
@@ -1461,6 +1530,42 @@ ${result.explanation}`,
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  // Handle profile photo selection from device
+  const handleProfilePhotoChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0 || !id) return;
+    const file = files[0];
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const rawDataUrl = e.target?.result as string;
+      if (rawDataUrl) {
+        const dataUrl = await compressImage(rawDataUrl, 400, 0.7);
+        setSubjectPhoto(dataUrl);
+        try { await AsyncStorage.setItem(`case_photo_${id}`, dataUrl); } catch {}
+        setShowPhotoPicker(false);
+      }
+    };
+    reader.readAsDataURL(file);
+    if (profilePhotoInputRef.current) profilePhotoInputRef.current.value = '';
+  };
+
+  // Set subject photo from an existing photo intel thumbnail
+  const handleSelectPhotoFromIntel = async (thumbnailBase64: string) => {
+    if (!id) return;
+    setSubjectPhoto(thumbnailBase64);
+    try { await AsyncStorage.setItem(`case_photo_${id}`, thumbnailBase64); } catch {}
+    setShowPhotoPicker(false);
+  };
+
+  // Remove subject photo
+  const handleRemovePhoto = async () => {
+    if (!id) return;
+    setSubjectPhoto(null);
+    try { await AsyncStorage.removeItem(`case_photo_${id}`); } catch {}
+    setShowPhotoPicker(false);
+  };
+
   const sendMessage = async () => {
     if (!inputText.trim() || isSending) return;
     const userText = inputText.trim();
@@ -1521,7 +1626,7 @@ ${result.explanation}`,
 
           let intelReport = `[REPORT]TRACE ANALYSIS - ${subject.fullName || 'UNKNOWN'} (CROSS-REFERENCED)**\n`;
           intelReport += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-          intelReport += `Sources: ${docsWithText.map(f => f.name).join(' + ')}\n\n`;
+          intelReport += `Sources: ${docsToAnalyze.map(f => f.name).join(' + ')}\n\n`;
 
           // Subject
           intelReport += `[PERSON]SUBJECT PROFILE**\n`;
@@ -1695,13 +1800,37 @@ ${result.explanation}`,
       return;
     }
 
-    // CHECK: Are we waiting for an associate name after photo drop?
-    const waitingForAssocName = await AsyncStorage.getItem(`case_waiting_associate_name_${id}`);
-    if (waitingForAssocName === 'true' && userText.length > 1 && userText.length < 50 && !userText.includes(' as ')) {
-      // User is providing the name for the dropped photo
+    // CHECK: Are we waiting for photo choice (subject replacement or associate name)?
+    const waitingForPhotoChoice = await AsyncStorage.getItem(`case_waiting_photo_choice_${id}`);
+    if (waitingForPhotoChoice === 'true' && userText.length > 0 && userText.length < 50 && !userText.includes(' as ')) {
       const tempPhotoData = await AsyncStorage.getItem(`case_temp_associate_photo_${id}`);
       if (tempPhotoData) {
         const { photoUrl, fileName } = JSON.parse(tempPhotoData);
+        const isSubjectReplacement = userTextLower === 'subject' || userTextLower === 'replace';
+
+        if (isSubjectReplacement) {
+          // Replace the subject photo
+          setSubjectPhoto(photoUrl);
+          try { await AsyncStorage.setItem(`case_photo_${id}`, photoUrl); } catch {}
+
+          // Clear temp state
+          await AsyncStorage.removeItem(`case_temp_associate_photo_${id}`);
+          await AsyncStorage.removeItem(`case_waiting_photo_choice_${id}`);
+
+          setChatMessages(prev => [...prev, {
+            id: uniqueId(),
+            role: 'agent',
+            content: `Subject photo replaced with ${fileName}.`,
+            timestamp: new Date(),
+          }]);
+
+          setIsSending(false);
+          scrollToBottom();
+          chatInputRef.current?.focus();
+          return;
+        }
+
+        // Otherwise treat as associate name
         const associateName = userText.charAt(0).toUpperCase() + userText.slice(1);
 
         // Save associate with photo
@@ -1722,7 +1851,7 @@ ${result.explanation}`,
 
         // Clear temp state
         await AsyncStorage.removeItem(`case_temp_associate_photo_${id}`);
-        await AsyncStorage.removeItem(`case_waiting_associate_name_${id}`);
+        await AsyncStorage.removeItem(`case_waiting_photo_choice_${id}`);
 
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
@@ -2088,6 +2217,87 @@ ${result.explanation}`,
     }
 
     try {
+      // === DIRECT COMMAND PARSER ===
+      // Parse user commands and apply to case intel IMMEDIATELY (don't rely on AI)
+      if (id) {
+        const detectedActions: import('@/lib/case-intel').IntelAction[] = [];
+        const lower = userTextLower;
+
+        // "add [address] as important" or "add [address] to the case" or "add [address]"
+        // Detect address-like patterns (number + street words)
+        const addressMatch = userText.match(/(?:add|save|keep|mark)\s+(.+?)(?:\s+(?:as\s+(?:important|anchor|family|work|associate)|to\s+(?:the\s+)?(?:case|report|file|important)))?$/i);
+        const hasAddressKeyword = /\d+\s+\w+\s+(?:st|street|ave|avenue|rd|road|dr|drive|ln|lane|ct|court|way|blvd|boulevard|cir|circle|pl|place|hwy|highway)\b/i;
+
+        // "add [name] as [relationship]"
+        const contactMatch = userText.match(/(?:add|save)\s+(.+?)\s+as\s+(.+?)$/i);
+
+        // "remove/take off [pattern]" or "exclude [pattern]"
+        const removeMatch = userText.match(/(?:remove|take\s+off|exclude|filter\s+out|get\s+rid\s+of|drop)\s+(.+?)(?:\s+from.*)?$/i);
+
+        // "mark [text] as important"
+        const markMatch = userText.match(/(?:mark|flag)\s+(.+?)\s+(?:as\s+)?important/i);
+
+        // "note: [text]" or "add note [text]"
+        const noteMatch = userText.match(/(?:^note[:\s]+|add\s+(?:a\s+)?note[:\s]+)(.+)$/i);
+
+        // "flag: [text]" or "add flag [text]" or "warning: [text]"
+        const flagMatch = userText.match(/(?:^(?:flag|warning)[:\s]+|add\s+(?:a\s+)?(?:flag|warning)[:\s]+)(.+)$/i);
+
+        if (markMatch) {
+          detectedActions.push({ type: 'MARK_IMPORTANT', address: markMatch[1].trim() });
+        } else if (flagMatch) {
+          detectedActions.push({ type: 'ADD_FLAG', text: flagMatch[1].trim() });
+        } else if (noteMatch) {
+          detectedActions.push({ type: 'ADD_NOTE', text: noteMatch[1].trim() });
+        } else if (removeMatch) {
+          const pattern = removeMatch[1].trim().toLowerCase();
+          // Check if it looks like removing a contact or an address pattern
+          if (/gas\s*station|truck\s*stop|love'?s|pilot|flying\s*j|rest\s*area|travel\s*(center|plaza)/i.test(pattern)) {
+            detectedActions.push({ type: 'EXCLUDE_PATTERN', pattern });
+          } else if (hasAddressKeyword.test(removeMatch[1])) {
+            detectedActions.push({ type: 'REMOVE_ADDRESS', address: removeMatch[1].trim() });
+          } else {
+            // Could be a contact name or a general exclusion
+            detectedActions.push({ type: 'REMOVE_CONTACT', name: removeMatch[1].trim() });
+            detectedActions.push({ type: 'EXCLUDE_PATTERN', pattern });
+          }
+        } else if (contactMatch && !hasAddressKeyword.test(contactMatch[1])) {
+          // "add Shecondra as possible ex-wife" — name doesn't look like an address
+          detectedActions.push({
+            type: 'ADD_CONTACT',
+            name: contactMatch[1].trim(),
+            relationship: contactMatch[2].trim(),
+          });
+        } else if (addressMatch && hasAddressKeyword.test(addressMatch[1])) {
+          // "add 42 Megehee Ct Westwego LA 70094"
+          const addrType = lower.includes('family') ? 'family'
+            : lower.includes('work') ? 'work'
+            : lower.includes('anchor') ? 'anchor'
+            : lower.includes('associate') ? 'associate' : 'anchor';
+          detectedActions.push({
+            type: 'ADD_ADDRESS',
+            address: addressMatch[1].trim(),
+            addressType: addrType,
+            important: true,
+            note: 'Added by agent',
+          });
+        }
+
+        // Apply any detected actions
+        if (detectedActions.length > 0) {
+          const { intel: updatedIntel, descriptions } = await applyActions(id, detectedActions);
+          setCaseIntel(updatedIntel);
+          const confirmMsg = descriptions.map(d => `> ${d}`).join('\n');
+          setChatMessages(prev => [...prev, {
+            id: uniqueId(),
+            role: 'system',
+            content: `[CASE FILE UPDATED]\n${confirmMsg}`,
+            timestamp: new Date(),
+          }]);
+          scrollToBottom();
+        }
+      }
+
       // Build context about the case for AI
       const contextParts: string[] = [];
       // Prioritize: parsed report name > case name > roster data name > 'Subject'
@@ -2147,6 +2357,7 @@ ${result.explanation}`,
         knownAddresses: displayAddresses.slice(0, 5).map(a => a.fullAddress),
         documentContents,
         recentMessages: chatMessages.slice(-15).map(m => `${m.role}: ${m.content.slice(0, 800)}`).join('\n'),
+        caseIntelSummary: caseIntel ? intelSummary(caseIntel) : undefined,
       });
 
       const response = await fetch('https://elite-recovery-osint.fly.dev/api/ai/chat', {
@@ -2158,23 +2369,45 @@ ${result.explanation}`,
             { role: 'user', content: userText },
           ],
           model: 'gpt-4o',
-          max_tokens: 1500,
+          max_tokens: 2500,
         }),
       });
 
       if (response.ok) {
         const data = await response.json();
         const aiResponse = data.choices?.[0]?.message?.content || 'No response';
+
+        // Parse action blocks from AI response
+        const { cleanText, actions } = parseActions(aiResponse);
+
+        // Show the clean conversational text (without action blocks)
         setChatMessages(prev => [...prev, {
           id: uniqueId(),
           role: 'agent',
-          content: aiResponse,
+          content: cleanText || aiResponse,
           timestamp: new Date(),
         }]);
 
-        // Extract addresses from AI response and add to locations
+        // Apply any actions to case intel
+        if (actions.length > 0 && id) {
+          console.log('[CaseIntel] Applying', actions.length, 'actions:', actions);
+          const { intel: updatedIntel, descriptions } = await applyActions(id, actions);
+          setCaseIntel(updatedIntel);
+
+          // Show confirmation of what was done
+          const confirmMsg = descriptions.map(d => `> ${d}`).join('\n');
+          setChatMessages(prev => [...prev, {
+            id: uniqueId(),
+            role: 'system',
+            content: `[UPDATED CASE FILE]\n${confirmMsg}`,
+            timestamp: new Date(),
+          }]);
+        }
+
+        // Also extract addresses from AI response and add to locations (existing behavior)
         const addressPattern = /(\d+\s+[A-Za-z0-9\s,.]+(?:Street|St|Avenue|Ave|Drive|Dr|Road|Rd|Lane|Ln|Court|Ct|Way|Boulevard|Blvd|Circle|Cir|Place|Pl)[^,]*,?\s*[A-Za-z\s]+,?\s*(?:LA|Louisiana|TX|Texas|MS|FL|AL|GA)?[,\s]*\d{5}(?:-\d{4})?)/gi;
-        const foundAddresses = aiResponse.match(addressPattern);
+        const textToScan = cleanText || aiResponse;
+        const foundAddresses = textToScan.match(addressPattern);
         if (foundAddresses && foundAddresses.length > 0) {
           const newLocations: RankedLocation[] = foundAddresses.map((addr: string, idx: number) => ({
             rank: idx + 1,
@@ -2208,6 +2441,44 @@ ${result.explanation}`,
     scrollToBottom();
     // Refocus the chat input
     setTimeout(() => chatInputRef.current?.focus(), 100);
+  };
+
+  // --- Link Analysis editing helpers ---
+  const RELATIONSHIP_OPTIONS = ['associate', 'friend', 'brother', 'sister', 'mother', 'father', 'spouse', 'girlfriend', 'boyfriend', 'employer', 'coworker', 'co-signer', 'roommate', 'cousin', 'uncle', 'aunt', 'unknown'];
+
+  const updateAssociateRelationship = async (name: string, newRel: string) => {
+    setDiscoveredAssociates(prev => prev.map(a => a.name === name ? { ...a, relationship: newRel } : a));
+    const stored = await AsyncStorage.getItem(`case_associates_${id}`);
+    if (stored) {
+      const list = JSON.parse(stored);
+      const updated = list.map((a: any) => a.name === name ? { ...a, relationship: newRel } : a);
+      await AsyncStorage.setItem(`case_associates_${id}`, JSON.stringify(updated));
+    }
+    setEditingLinkRel(null);
+  };
+
+  const removeAssociate = async (name: string) => {
+    setDiscoveredAssociates(prev => prev.filter(a => a.name !== name));
+    const stored = await AsyncStorage.getItem(`case_associates_${id}`);
+    if (stored) {
+      const list = JSON.parse(stored);
+      await AsyncStorage.setItem(`case_associates_${id}`, JSON.stringify(list.filter((a: any) => a.name !== name)));
+    }
+    setSelectedLinkNode(null);
+  };
+
+  const addManualAssociate = async () => {
+    if (!newAssocName.trim()) return;
+    const name = newAssocName.trim();
+    const newAssoc = { name, relationship: newAssocRel, source: 'manual' };
+    setDiscoveredAssociates(prev => [...prev, newAssoc]);
+    const stored = await AsyncStorage.getItem(`case_associates_${id}`);
+    const list = stored ? JSON.parse(stored) : [];
+    list.push(newAssoc);
+    await AsyncStorage.setItem(`case_associates_${id}`, JSON.stringify(list));
+    setNewAssocName('');
+    setNewAssocRel('associate');
+    setShowAddAssociate(false);
   };
 
   const updateSocialStatus = (platform: string, status: 'found' | 'not_found') => {
@@ -2292,29 +2563,30 @@ ${result.explanation}`,
           </div>
         ` : '';
 
-        // === CONTACTS/RELATIVES ===
-        const relatives = parsedData?.relatives || [];
-        const contactsHtml = relatives.length > 0 ? `
-          <h2>Contacts & References</h2>
+        // === CONTACTS/RELATIVES (merged with case intel) ===
+        const reportRelatives = displayRelatives;
+        const contactsHtml = reportRelatives.length > 0 ? `
+          <h2>Contacts & References (${reportRelatives.length})</h2>
           <div class="section">
-            ${relatives.map(r => `
-              <div class="relative-card">
-                <div class="relative-name">${r.name} ${r.relationship ? `<span class="relationship">(${r.relationship})</span>` : ''}</div>
-                ${r.phones?.length ? `<div class="relative-phone">${r.phones.join(', ')}</div>` : ''}
-                ${r.currentAddress ? `<div class="relative-address">${r.currentAddress}</div>` : ''}
+            ${reportRelatives.map((r: any) => `
+              <div class="relative-card"${r._intel ? ' style="border-left-color: #22c55e;"' : ''}>
+                <div class="relative-name">${r.name} ${r.relationship ? `<span class="relationship">(${r.relationship})</span>` : ''}${r._intel ? ' <span style="background:#22c55e;color:white;padding:1px 4px;border-radius:3px;font-size:9px;">ADDED</span>' : ''}</div>
+                ${r.phones?.length ? `<div class="relative-phone">${r.phones.join(', ')}</div>` : r.phone ? `<div class="relative-phone">${r.phone}</div>` : ''}
+                ${r.currentAddress || r.address ? `<div class="relative-address">${r.currentAddress || r.address}</div>` : ''}
+                ${r._note ? `<div style="font-size:10px;color:#6b7280;margin-top:2px;">Note: ${r._note}</div>` : ''}
               </div>
             `).join('')}
           </div>
         ` : '';
 
-        // === VEHICLES ===
-        const vehicles = parsedData?.vehicles || [];
-        const vehiclesHtml = vehicles.length > 0 ? `
-          <h2>Vehicles</h2>
+        // === VEHICLES (merged with case intel) ===
+        const reportVehicles = displayVehicles;
+        const vehiclesHtml = reportVehicles.length > 0 ? `
+          <h2>Vehicles (${reportVehicles.length})</h2>
           <div class="section">
-            ${vehicles.map(v => `
+            ${reportVehicles.map((v: any) => `
               <div class="vehicle-card">
-                <div class="vehicle-info">${[v.year, v.color, v.make, v.model].filter(Boolean).join(' ')}</div>
+                <div class="vehicle-info">${v.description || [v.year, v.color, v.make, v.model].filter(Boolean).join(' ')}</div>
                 ${v.plate ? `<div class="vehicle-plate">Plate: <strong>${v.plate}</strong>${v.state ? ` (${v.state})` : ''}</div>` : ''}
                 ${v.vin ? `<div class="vehicle-vin">VIN: ${v.vin}</div>` : ''}
               </div>
@@ -2338,29 +2610,39 @@ ${result.explanation}`,
           </div>
         ` : '';
 
-        // === WARNINGS/FLAGS ===
+        // === WARNINGS/FLAGS (merged with case intel) ===
         const flags = parsedData?.flags || [];
-        const warningsHtml = flags.length > 0 ? `
+        const intelFlags = caseIntel?.customFlags || [];
+        const allFlags = [
+          ...intelFlags.map(f => ({ message: f, severity: 'high' })),
+          ...flags,
+        ];
+        const warningsHtml = allFlags.length > 0 ? `
           <h2>Warnings & Safety Notes</h2>
           <div class="section">
-            ${flags.map(f => `
-              <div class="warning-item warning-${f.severity}">
+            ${allFlags.map((f: any) => `
+              <div class="warning-item warning-${f.severity || 'medium'}">
                 ${f.message}
               </div>
             `).join('')}
           </div>
         ` : '';
 
-        // === CASE NOTES ===
+        // === CASE NOTES (merged with case intel) ===
         const caseNotes = parsedData?.recommendations?.filter(r =>
           !r.toLowerCase().includes('bond') &&
           !r.toLowerCase().includes('charge') &&
           !r.toLowerCase().includes('case:')
         ) || [];
-        const notesHtml = caseNotes.length > 0 ? `
-          <h2>Case Notes</h2>
+        const intelNotes = caseIntel?.notes || [];
+        const allNotes = [
+          ...intelNotes.map(n => n.text),
+          ...caseNotes,
+        ];
+        const notesHtml = allNotes.length > 0 ? `
+          <h2>Case Notes & Investigation Intel</h2>
           <div class="section">
-            ${caseNotes.map(note => `<div class="case-note">${note}</div>`).join('')}
+            ${allNotes.map(note => `<div class="case-note">${note}</div>`).join('')}
           </div>
         ` : '';
 
@@ -2574,13 +2856,27 @@ ${result.explanation}`,
                 .case-note { padding: 6px 10px; margin: 3px 0; background: #f9fafb; border-radius: 4px; font-size: 12px; color: #374151; }
                 /* Location reasons */
                 .location-reasons { font-size: 10px; color: #6b7280; margin-top: 2px; }
+                .print-bar { position: fixed; top: 0; left: 0; right: 0; background: #18181b; padding: 10px 30px; display: flex; gap: 10px; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+                .print-bar button { padding: 8px 20px; border: none; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; }
+                .print-btn { background: #dc2626; color: white; }
+                .print-btn:hover { background: #b91c1c; }
+                .pdf-btn { background: #3b82f6; color: white; }
+                .pdf-btn:hover { background: #2563eb; }
+                .close-btn { background: #27272a; color: #a1a1aa; margin-left: auto; }
+                .close-btn:hover { background: #3f3f46; }
+                .header { margin-top: 50px; }
                 @media print {
                   body { margin: 0; }
-                  .header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                  .header { -webkit-print-color-adjust: exact; print-color-adjust: exact; margin-top: 0; }
+                  .print-bar { display: none !important; }
                 }
               </style>
             </head>
             <body>
+              <div class="print-bar">
+                <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
+                <button class="close-btn" onclick="window.close()">Close</button>
+              </div>
               <div class="header">
                 <div class="case-id">Elite Recovery System • Case File</div>
                 <h1>${(parsedData?.subject?.fullName && parsedData.subject.fullName !== 'Unknown') ? parsedData.subject.fullName : caseData?.name}</h1>
@@ -2598,7 +2894,7 @@ ${result.explanation}`,
                     <div class="label">Locations</div>
                   </div>
                   <div class="meta-card">
-                    <div class="value">${(parsedData?.relatives?.length || 0) + (parsedData?.phones?.length || 0)}</div>
+                    <div class="value">${displayRelatives.length + (parsedData?.phones?.length || 0)}</div>
                     <div class="label">Contacts</div>
                   </div>
                 </div>
@@ -2650,7 +2946,6 @@ ${result.explanation}`,
           `);
           printWindow.document.close();
           printWindow.focus();
-          setTimeout(() => printWindow.print(), 300);
         }
       }
     } catch (err) {
@@ -2688,12 +2983,8 @@ ${result.explanation}`,
       Promise.all([
         deleteCase(id!),
         deleteCaseDirectory(id!),
-        AsyncStorage.multiRemove([`case_chat_${id}`, `case_photo_${id}`, `case_squad_${id}`, `case_social_${id}`, `case_all_photo_intel_${id}`, `case_face_${id}`]),
+        AsyncStorage.multiRemove([`case_chat_${id}`, `case_photo_${id}`, `case_squad_${id}`, `case_social_${id}`, `case_all_photo_intel_${id}`, `case_face_${id}`, `case_insights_${id}`]),
       ]).catch(err => console.error('Delete error:', err));
-
-      isSyncEnabled().then(enabled => {
-        if (enabled) deleteSyncedCase(id!).catch(() => {});
-      });
     }
   };
 
@@ -2701,7 +2992,42 @@ ${result.explanation}`,
     return <View style={styles.loading}><ActivityIndicator size="large" color={DARK.primary} /></View>;
   }
 
-  const displayAddresses = addresses.length > 0 ? addresses : squadLocations.map(l => ({ fullAddress: l.address, probability: l.probability }));
+  // Merge case intel into display data
+  const excludePatterns = caseIntel?.excludePatterns || [];
+  const shouldExclude = (text: string) => excludePatterns.some(p => text.toLowerCase().includes(p));
+
+  // Addresses: intel-added first, then parsed, filter exclusions
+  const intelAddrs = (caseIntel?.addresses || []).map(a => ({
+    fullAddress: a.address, address: a.address, confidence: a.important ? 1 : 0.7,
+    reasons: [a.note || a.type].filter(Boolean), isCurrent: a.important, _intel: true,
+  }));
+  const mergedAddresses = [
+    ...intelAddrs,
+    ...addresses.filter((a: any) =>
+      !shouldExclude(a.fullAddress || a.address || '') &&
+      !intelAddrs.some(ia => (a.fullAddress || a.address || '').toLowerCase().includes(ia.fullAddress.toLowerCase().slice(0, 15)))
+    ),
+  ];
+  const displayAddresses = mergedAddresses.length > 0 ? mergedAddresses : squadLocations.map(l => ({ fullAddress: l.address, probability: l.probability }));
+
+  // Contacts: intel-added first, then parsed relatives
+  const intelContacts = (caseIntel?.contacts || []).map(c => ({
+    name: c.name, relationship: c.relationship, phone: c.phone,
+    phones: c.phone ? [c.phone] : [], currentAddress: c.address, _intel: true,
+  }));
+  const displayRelatives = [
+    ...intelContacts,
+    ...relatives.filter((r: any) =>
+      !intelContacts.some(ic => ic.name.toLowerCase() === (r.name || '').toLowerCase())
+    ),
+  ];
+
+  // Vehicles: intel-added + parsed
+  const intelVehicles = (caseIntel?.vehicles || []).map(v => ({
+    year: '', make: '', model: '', color: '', description: v.description,
+    plate: v.plate, vin: v.vin, _intel: true,
+  }));
+  const displayVehicles = [...intelVehicles, ...(parsedData?.vehicles || [])];
 
   const getPlatformColor = (platform: string) => {
     const colors: Record<string, string> = {
@@ -2719,7 +3045,10 @@ ${result.explanation}`,
   return (
     <View style={styles.container}>
       {isWeb && (
-        <input ref={fileInputRef as any} type="file" accept=".pdf,.txt,.doc,.docx,image/*" multiple onChange={handleFileChange as any} style={{ display: 'none' }} />
+        <>
+          <input ref={fileInputRef as any} type="file" accept=".pdf,.txt,.doc,.docx,image/*" multiple onChange={handleFileChange as any} style={{ display: 'none' }} />
+          <input ref={profilePhotoInputRef as any} type="file" accept="image/*" onChange={handleProfilePhotoChange as any} style={{ display: 'none' }} />
+        </>
       )}
 
       {/* Header */}
@@ -2731,7 +3060,7 @@ ${result.explanation}`,
         >
           <Ionicons name="chevron-back" size={24} color={DARK.text} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.photoBox} onPress={() => fileInputRef.current?.click()}>
+        <TouchableOpacity style={styles.photoBox} onPress={() => setShowPhotoPicker(true)}>
           {subjectPhoto ? <Image source={{ uri: subjectPhoto }} style={styles.photoImg} /> : <Ionicons name="person" size={20} color={DARK.textMuted} />}
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
@@ -2763,6 +3092,10 @@ ${result.explanation}`,
         <TouchableOpacity onPress={generateFullReport} disabled={isGeneratingReport} style={[styles.reportBtn, isGeneratingReport && { opacity: 0.5 }]}>
           {isGeneratingReport ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="document-text" size={18} color="#fff" />}
           <Text style={styles.reportBtnText}>Report</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push(`/case/${id}/wanted`)} style={[styles.reportBtn, { backgroundColor: '#dc2626' }]}>
+          <Ionicons name="warning" size={18} color="#fff" />
+          <Text style={styles.reportBtnText}>Wanted</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={handleDelete} style={styles.headerBtn}>
           <Ionicons name="trash-outline" size={20} color={DARK.danger} />
@@ -2818,8 +3151,8 @@ ${result.explanation}`,
             contentContainerStyle={{ padding: 8 }}
           >
             {chatMessages.map((msg) => (
-              <View key={msg.id} style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.agentBubble]}>
-                <Text style={[styles.bubbleText, msg.role === 'user' && { color: '#fff' }]}>{msg.content}</Text>
+              <View key={msg.id} style={[styles.bubble, msg.role === 'user' ? styles.userBubble : msg.role === 'system' ? styles.systemBubble : styles.agentBubble]}>
+                <Text style={[styles.bubbleText, msg.role === 'user' && { color: '#fff' }, msg.role === 'system' && { color: DARK.success, fontSize: 12 }]}>{msg.content}</Text>
               </View>
             ))}
             {(isSending || isProcessingFile) && (
@@ -2856,15 +3189,127 @@ ${result.explanation}`,
           isMobile && { height: 400 }
         ]}>
           <Text style={styles.colTitle}>CASE INTELLIGENCE</Text>
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8 }}>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ padding: 8 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={intelRefreshing}
+                onRefresh={async () => {
+                  setIntelRefreshing(true);
+                  if (id) {
+                    const freshIntel = await loadCaseIntel(id);
+                    setCaseIntel(freshIntel);
+                  }
+                  await refresh();
+                  setIntelRefreshing(false);
+                }}
+                tintColor={DARK.primary}
+                colors={[DARK.primary]}
+              />
+            }
+          >
+            {/* AGENT INSIGHTS - auto-captured AI analysis */}
+            {agentInsights.length > 0 && (
+              <View style={styles.insightsWrapper}>
+                <TouchableOpacity
+                  style={styles.insightsHeader}
+                  onPress={() => setInsightsExpanded(!insightsExpanded)}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Ionicons
+                      name={insightsExpanded ? 'chevron-down' : 'chevron-forward'}
+                      size={14}
+                      color="#8b5cf6"
+                    />
+                    <Text style={styles.insightsTitle}>AGENT INSIGHTS ({agentInsights.length})</Text>
+                  </View>
+                </TouchableOpacity>
+                {insightsExpanded && (
+                  <ScrollView
+                    style={[styles.insightsContainer, isMobile && { maxHeight: 200 }]}
+                    nestedScrollEnabled
+                  >
+                    {agentInsights.map((insight) => {
+                      const isExpanded = expandedInsightId === insight.id;
+                      return (
+                        <View key={insight.id} style={styles.insightCard}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <Text style={styles.insightTime}>{formatInsightTime(insight.capturedAt)}</Text>
+                            <TouchableOpacity
+                              onPress={() => addInsightToReport(insight)}
+                              disabled={insight.addedToReport}
+                              style={insight.addedToReport ? styles.insightAddedBtn : styles.insightAddBtn}
+                            >
+                              <Ionicons
+                                name={insight.addedToReport ? 'checkmark' : 'add'}
+                                size={16}
+                                color={insight.addedToReport ? DARK.success : '#8b5cf6'}
+                              />
+                            </TouchableOpacity>
+                          </View>
+                          <TouchableOpacity
+                            onPress={() => setExpandedInsightId(isExpanded ? null : insight.id)}
+                            activeOpacity={0.7}
+                          >
+                            <Text
+                              style={isExpanded ? styles.insightFull : styles.insightPreview}
+                              numberOfLines={isExpanded ? undefined : 3}
+                            >
+                              {isExpanded ? insight.fullText : insight.preview}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+              </View>
+            )}
+
             {/* PRIMARY TARGET Info */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>PRIMARY TARGET</Text>
               <View style={styles.intelCard}>
                 <Text style={styles.intelName}>{getSubjectName()}</Text>
-                {parsedData?.subject?.dateOfBirth && <Text style={styles.intelDetail}>DOB: {parsedData.subject.dateOfBirth}</Text>}
-                {parsedData?.subject?.ssn && <Text style={styles.intelDetail}>SSN: ***-**-{parsedData.subject.ssn.slice(-4)}</Text>}
-                {parsedData?.subject?.aliases?.length > 0 && <Text style={styles.intelDetail}>AKA: {parsedData.subject.aliases.join(', ')}</Text>}
+                {(parsedData?.subject?.dob || caseData?.primaryTarget?.dob || caseData?.rosterData?.inmate?.dob) && (
+                  <Text style={styles.intelDetail}>DOB: {parsedData?.subject?.dob || caseData?.primaryTarget?.dob || caseData?.rosterData?.inmate?.dob}</Text>
+                )}
+                {(parsedData?.subject?.height || parsedData?.subject?.weight || caseData?.rosterData?.inmate?.height || caseData?.rosterData?.inmate?.weight) && (
+                  <Text style={styles.intelDetail}>
+                    {[
+                      (parsedData?.subject?.height || caseData?.rosterData?.inmate?.height) ? `Height: ${parsedData?.subject?.height || caseData?.rosterData?.inmate?.height}` : null,
+                      (parsedData?.subject?.weight || caseData?.rosterData?.inmate?.weight) ? `Weight: ${parsedData?.subject?.weight || caseData?.rosterData?.inmate?.weight}` : null,
+                    ].filter(Boolean).join('  |  ')}
+                  </Text>
+                )}
+                {(parsedData?.subject?.race || parsedData?.subject?.sex || caseData?.rosterData?.inmate?.race || caseData?.rosterData?.inmate?.sex) && (
+                  <Text style={styles.intelDetail}>
+                    {[
+                      (parsedData?.subject?.race || caseData?.rosterData?.inmate?.race) ? `Race: ${parsedData?.subject?.race || caseData?.rosterData?.inmate?.race}` : null,
+                      (parsedData?.subject?.sex || caseData?.rosterData?.inmate?.sex) ? `Sex: ${parsedData?.subject?.sex || caseData?.rosterData?.inmate?.sex}` : null,
+                    ].filter(Boolean).join('  |  ')}
+                  </Text>
+                )}
+                {(parsedData?.subject?.hairColor || parsedData?.subject?.eyeColor || caseData?.rosterData?.inmate?.hair || caseData?.rosterData?.inmate?.eyes) && (
+                  <Text style={styles.intelDetail}>
+                    {[
+                      (parsedData?.subject?.hairColor || caseData?.rosterData?.inmate?.hair) ? `Hair: ${parsedData?.subject?.hairColor || caseData?.rosterData?.inmate?.hair}` : null,
+                      (parsedData?.subject?.eyeColor || caseData?.rosterData?.inmate?.eyes) ? `Eyes: ${parsedData?.subject?.eyeColor || caseData?.rosterData?.inmate?.eyes}` : null,
+                    ].filter(Boolean).join('  |  ')}
+                  </Text>
+                )}
+                {(parsedData?.subject?.driversLicense) && (
+                  <Text style={styles.intelDetail}>DL: {parsedData.subject.driversLicense}</Text>
+                )}
+                {parsedData?.subject?.partialSsn && <Text style={styles.intelDetail}>SSN: ***-**-{parsedData.subject.partialSsn.slice(-4)}</Text>}
+                {(parsedData?.subject?.phone) && (
+                  <Text style={styles.intelDetail}>Phone: {parsedData.subject.phone}</Text>
+                )}
+                {(parsedData?.subject?.email) && (
+                  <Text style={styles.intelDetail}>Email: {parsedData.subject.email}</Text>
+                )}
+                {parsedData?.subject?.aliases && parsedData.subject.aliases.length > 0 && <Text style={styles.intelDetail}>AKA: {parsedData.subject.aliases.join(', ')}</Text>}
               </View>
             </View>
 
@@ -2876,7 +3321,9 @@ ${result.explanation}`,
                 <TouchableOpacity onPress={() => openMaps(displayAddresses[0].fullAddress)} style={styles.compactMap}>
                   {isWeb ? (
                     <iframe
-                      src={`https://www.google.com/maps?q=${encodeURIComponent(displayAddresses[0].fullAddress)}&output=embed&z=14`}
+                      src={settings.googleMapsApiKey
+                        ? `https://www.google.com/maps/embed/v1/place?key=${settings.googleMapsApiKey}&q=${encodeURIComponent(displayAddresses[0].fullAddress)}&zoom=14`
+                        : `https://www.google.com/maps?q=${encodeURIComponent(displayAddresses[0].fullAddress)}&output=embed&z=14`}
                       style={{ width: '100%', height: '100%', border: 'none', borderRadius: 6 }}
                       loading="lazy"
                     />
@@ -2924,20 +3371,23 @@ ${result.explanation}`,
 
                 {/* Connection lines container */}
                 <View style={styles.linkConnections}>
-                  {/* Relatives/Associates - use merged list */}
-                  {relatives.slice(0, 4).map((rel: any, idx: number) => {
+                  {/* Relatives/Associates - use merged list with intel */}
+                  {displayRelatives.slice(0, 6).map((rel: any, idx: number) => {
                     const nodeId = `rel-${idx}`;
                     const isSelected = selectedLinkNode === nodeId;
+                    const isEditing = editingLinkRel === nodeId;
                     const displayName = normalizeName(rel.name) || 'Unknown';
                     return (
                       <TouchableOpacity
                         key={nodeId}
                         style={styles.linkNode}
                         onPress={() => {
+                          if (isEditing) return;
                           if (isSelected && rel.phones?.[0]) {
                             Linking.openURL(`tel:${rel.phones[0]}`);
                           } else {
                             setSelectedLinkNode(isSelected ? null : nodeId);
+                            setEditingLinkRel(null);
                           }
                         }}
                       >
@@ -2945,10 +3395,34 @@ ${result.explanation}`,
                         <View style={[styles.linkBubble, { backgroundColor: '#3b82f620', borderColor: '#3b82f6' }, isSelected && styles.linkBubbleSelected]}>
                           <Ionicons name="people" size={isSelected ? 16 : 12} color="#3b82f6" />
                           <Text style={[styles.linkLabel, isSelected && styles.linkLabelSelected]} numberOfLines={isSelected ? 3 : 1}>{displayName}</Text>
-                          <Text style={styles.linkType}>{rel.relationship || 'associate'}</Text>
+                          {isEditing ? (
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row', marginTop: 4, maxWidth: 200 }}>
+                              {RELATIONSHIP_OPTIONS.map(r => (
+                                <TouchableOpacity
+                                  key={r}
+                                  onPress={() => updateAssociateRelationship(rel.name, r)}
+                                  style={[styles.relOption, rel.relationship === r && styles.relOptionActive]}
+                                >
+                                  <Text style={[styles.relOptionText, rel.relationship === r && styles.relOptionTextActive]}>{r}</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </ScrollView>
+                          ) : (
+                            <Text style={styles.linkType}>{rel.relationship || 'associate'}</Text>
+                          )}
                           {rel.phones?.[0] && <Text style={styles.linkPhone}>{rel.phones[0]}</Text>}
                           {isSelected && rel.currentAddress && <Text style={styles.linkAddress}>{rel.currentAddress}</Text>}
-                          {isSelected && <Text style={styles.linkTapHint}>Tap to call</Text>}
+                          {isSelected && !isEditing && (
+                            <View style={styles.linkActions}>
+                              <TouchableOpacity onPress={() => setEditingLinkRel(nodeId)} style={styles.linkActionBtn}>
+                                <Ionicons name="pencil" size={12} color="#3b82f6" />
+                              </TouchableOpacity>
+                              <TouchableOpacity onPress={() => removeAssociate(rel.name)} style={styles.linkActionBtn}>
+                                <Ionicons name="close" size={12} color="#ef4444" />
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                          {isSelected && !isEditing && rel.phones?.[0] && <Text style={styles.linkTapHint}>Tap to call</Text>}
                         </View>
                       </TouchableOpacity>
                     );
@@ -2984,7 +3458,7 @@ ${result.explanation}`,
                   })}
 
                   {/* Vehicles */}
-                  {(parsedData?.vehicles || []).slice(0, 2).map((v: any, idx: number) => {
+                  {displayVehicles.slice(0, 2).map((v: any, idx: number) => {
                     const nodeId = `veh-${idx}`;
                     const isSelected = selectedLinkNode === nodeId;
                     return (
@@ -2996,7 +3470,7 @@ ${result.explanation}`,
                         <View style={styles.linkLine} />
                         <View style={[styles.linkBubble, { backgroundColor: '#f59e0b20', borderColor: '#f59e0b' }, isSelected && styles.linkBubbleSelected]}>
                           <Ionicons name="car" size={isSelected ? 16 : 12} color="#f59e0b" />
-                          <Text style={[styles.linkLabel, isSelected && styles.linkLabelSelected]} numberOfLines={isSelected ? 3 : 1}>{v.year} {v.make} {v.model}</Text>
+                          <Text style={[styles.linkLabel, isSelected && styles.linkLabelSelected]} numberOfLines={isSelected ? 3 : 1}>{v.description || `${v.year} ${v.make} ${v.model}`.trim()}</Text>
                           {v.plate && <Text style={[styles.linkType, { fontWeight: '700' }]}>{v.plate}</Text>}
                           {isSelected && v.color && <Text style={styles.linkPhone}>Color: {v.color}</Text>}
                           {isSelected && v.vin && <Text style={styles.linkPhone}>VIN: {v.vin}</Text>}
@@ -3035,8 +3509,46 @@ ${result.explanation}`,
                   })}
                 </View>
 
-                {parsedData?.relatives?.length === 0 && parsedData?.employment?.length === 0 && displayAddresses.length === 0 && (
+                {displayRelatives.length === 0 && (parsedData?.employment || []).length === 0 && displayAddresses.length === 0 && (
                   <Text style={styles.linkEmpty}>Upload documents to build relationship map</Text>
+                )}
+
+                {/* Add Associate */}
+                {showAddAssociate ? (
+                  <View style={styles.addAssocForm}>
+                    <TextInput
+                      style={styles.addAssocInput}
+                      placeholder="Name"
+                      placeholderTextColor={DARK.textMuted}
+                      value={newAssocName}
+                      onChangeText={setNewAssocName}
+                      autoFocus
+                    />
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
+                      {RELATIONSHIP_OPTIONS.slice(0, 8).map(r => (
+                        <TouchableOpacity
+                          key={r}
+                          onPress={() => setNewAssocRel(r)}
+                          style={[styles.relOption, newAssocRel === r && styles.relOptionActive]}
+                        >
+                          <Text style={[styles.relOptionText, newAssocRel === r && styles.relOptionTextActive]}>{r}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                      <TouchableOpacity onPress={addManualAssociate} style={styles.addAssocConfirm}>
+                        <Text style={styles.addAssocConfirmText}>Add</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => { setShowAddAssociate(false); setNewAssocName(''); }} style={styles.addAssocCancel}>
+                        <Text style={styles.addAssocCancelText}>Cancel</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.addAssocBtn} onPress={() => setShowAddAssociate(true)}>
+                    <Ionicons name="add-circle-outline" size={16} color={DARK.textMuted} />
+                    <Text style={styles.addAssocBtnText}>Add Associate</Text>
+                  </TouchableOpacity>
                 )}
               </View>
             </View>
@@ -3069,13 +3581,13 @@ ${result.explanation}`,
             )}
 
             {/* Vehicles */}
-            {parsedData?.vehicles && parsedData.vehicles.length > 0 && (
+            {displayVehicles.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>VEHICLES ({parsedData.vehicles.length})</Text>
-                {parsedData.vehicles.map((v: any, idx: number) => (
+                <Text style={styles.sectionTitle}>VEHICLES ({displayVehicles.length})</Text>
+                {displayVehicles.map((v: any, idx: number) => (
                   <View key={idx} style={styles.vehicleRow}>
                     <Ionicons name="car" size={14} color={DARK.warning} />
-                    <Text style={styles.vehicleText}>{v.year} {v.make} {v.model}</Text>
+                    <Text style={styles.vehicleText}>{v.description || `${v.year} ${v.make} ${v.model}`.trim()}</Text>
                     {v.plate && <Text style={styles.plateText}>{v.plate}</Text>}
                   </View>
                 ))}
@@ -3091,6 +3603,30 @@ ${result.explanation}`,
                     <Ionicons name="person" size={14} color={DARK.textSecondary} />
                     <Text style={styles.associateName}>{a.name || a}</Text>
                     {a.relationship && <Text style={styles.associateRel}>{a.relationship}</Text>}
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Investigation Notes from AI chat */}
+            {(caseIntel?.notes || []).length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>NOTES ({caseIntel!.notes.length})</Text>
+                {caseIntel!.notes.map((n, idx) => (
+                  <View key={idx} style={styles.noteRow}>
+                    <Text style={{ fontSize: 12, color: DARK.text, lineHeight: 16 }}>{n.text}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Custom Flags */}
+            {(caseIntel?.customFlags || []).length > 0 && (
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, { color: DARK.danger }]}>FLAGS</Text>
+                {caseIntel!.customFlags.map((f, idx) => (
+                  <View key={idx} style={[styles.noteRow, { borderLeftWidth: 2, borderLeftColor: DARK.danger, paddingLeft: 6 }]}>
+                    <Text style={{ fontSize: 12, color: DARK.danger, lineHeight: 16 }}>{f}</Text>
                   </View>
                 ))}
               </View>
@@ -3224,31 +3760,6 @@ ${result.explanation}`,
               </TouchableOpacity>
             ))}
 
-            {/* Reverse Image Search - Auto-populated with subject photo */}
-            {subjectPhoto && (
-              <>
-                <Text style={styles.osintSectionTitle}>Image Search</Text>
-                {imageSearchUrls ? (
-                  <>
-                    <TouchableOpacity style={styles.recordLink} onPress={() => openUrl(imageSearchUrls.google_lens!)}>
-                      <Text style={styles.recordLinkText}>Google Lens</Text>
-                      <Ionicons name="search" size={14} color={DARK.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.recordLink} onPress={() => openUrl(imageSearchUrls.yandex!)}>
-                      <Text style={styles.recordLinkText}>Yandex (Faces)</Text>
-                      <Ionicons name="search" size={14} color={DARK.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.recordLink} onPress={() => openUrl(imageSearchUrls.tineye!)}>
-                      <Text style={styles.recordLinkText}>TinEye</Text>
-                      <Ionicons name="search" size={14} color={DARK.primary} />
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  <Text style={{ color: DARK.textMuted, fontSize: 11, padding: 4 }}>Loading search links...</Text>
-                )}
-              </>
-            )}
-
             {/* Network - Associates with clickable social search */}
             {relatives.length > 0 && (
               <>
@@ -3305,9 +3816,227 @@ ${result.explanation}`,
           </ScrollView>
         </View>
       </View>
+
+      {/* Photo Picker Modal */}
+      <Modal
+        visible={showPhotoPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPhotoPicker(false)}
+      >
+        <TouchableOpacity
+          style={ppStyles.overlay}
+          activeOpacity={1}
+          onPress={() => setShowPhotoPicker(false)}
+        >
+          <View style={ppStyles.modal} onStartShouldSetResponder={() => true}>
+            <View style={ppStyles.header}>
+              <Text style={ppStyles.title}>Subject Photo</Text>
+              <TouchableOpacity onPress={() => setShowPhotoPicker(false)}>
+                <Ionicons name="close" size={22} color={DARK.text} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Current photo */}
+            {subjectPhoto && (
+              <View style={ppStyles.currentSection}>
+                <Image source={{ uri: subjectPhoto }} style={ppStyles.currentPhoto} />
+                <TouchableOpacity style={ppStyles.removeBtn} onPress={handleRemovePhoto}>
+                  <Ionicons name="trash-outline" size={16} color="#fff" />
+                  <Text style={ppStyles.removeBtnText}>Remove</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Photos from case */}
+            {allPhotoIntel.filter(p => p.thumbnailBase64).length > 0 && (
+              <View style={ppStyles.section}>
+                <Text style={ppStyles.sectionLabel}>CASE PHOTOS</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={ppStyles.photoRow}>
+                  {allPhotoIntel.filter(p => p.thumbnailBase64).map((intel, idx) => (
+                    <TouchableOpacity
+                      key={intel.imageId || idx}
+                      style={[
+                        ppStyles.thumbWrap,
+                        subjectPhoto === intel.thumbnailBase64 && ppStyles.thumbSelected,
+                      ]}
+                      onPress={() => handleSelectPhotoFromIntel(intel.thumbnailBase64!)}
+                    >
+                      <Image source={{ uri: intel.thumbnailBase64 }} style={ppStyles.thumb} />
+                      {intel.sourceFileName && (
+                        <Text style={ppStyles.thumbLabel} numberOfLines={1}>{intel.sourceFileName}</Text>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* Mugshot URL fallback */}
+            {caseData?.mugshotUrl && caseData.mugshotUrl !== subjectPhoto && (
+              <View style={ppStyles.section}>
+                <Text style={ppStyles.sectionLabel}>MUGSHOT</Text>
+                <TouchableOpacity
+                  style={ppStyles.thumbWrap}
+                  onPress={() => handleSelectPhotoFromIntel(caseData.mugshotUrl!)}
+                >
+                  <Image source={{ uri: caseData.mugshotUrl }} style={ppStyles.thumb} />
+                  <Text style={ppStyles.thumbLabel}>Jail mugshot</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Choose from device */}
+            <TouchableOpacity
+              style={ppStyles.deviceBtn}
+              onPress={() => {
+                if (isWeb) {
+                  profilePhotoInputRef.current?.click();
+                } else {
+                  // Native: use expo-image-picker
+                  (async () => {
+                    try {
+                      const ImagePicker = await import('expo-image-picker');
+                      const result = await ImagePicker.launchImageLibraryAsync({
+                        mediaTypes: ['images'],
+                        quality: 0.7,
+                        base64: true,
+                      });
+                      if (!result.canceled && result.assets?.[0]) {
+                        const asset = result.assets[0];
+                        const dataUrl = asset.base64
+                          ? `data:image/jpeg;base64,${asset.base64}`
+                          : asset.uri;
+                        setSubjectPhoto(dataUrl);
+                        if (id) {
+                          try { await AsyncStorage.setItem(`case_photo_${id}`, dataUrl); } catch {}
+                        }
+                        setShowPhotoPicker(false);
+                      }
+                    } catch (err) {
+                      console.log('Image picker error:', err);
+                    }
+                  })();
+                }
+              }}
+            >
+              <Ionicons name="images-outline" size={20} color={DARK.primary} />
+              <Text style={ppStyles.deviceBtnText}>Choose from device</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
+
+const ppStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modal: {
+    backgroundColor: DARK.surface,
+    borderRadius: 12,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    borderWidth: 1,
+    borderColor: DARK.border,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: DARK.text,
+  },
+  currentSection: {
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 10,
+  },
+  currentPhoto: {
+    width: 100,
+    height: 120,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: DARK.primary,
+  },
+  removeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: DARK.danger,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  removeBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  section: {
+    marginBottom: 16,
+  },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: DARK.primary,
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  photoRow: {
+    flexDirection: 'row',
+  },
+  thumbWrap: {
+    marginRight: 10,
+    alignItems: 'center',
+    borderRadius: 6,
+    padding: 3,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  thumbSelected: {
+    borderColor: DARK.primary,
+  },
+  thumb: {
+    width: 70,
+    height: 84,
+    borderRadius: 4,
+  },
+  thumbLabel: {
+    fontSize: 9,
+    color: DARK.textMuted,
+    marginTop: 3,
+    maxWidth: 70,
+    textAlign: 'center',
+  },
+  deviceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: DARK.border,
+    backgroundColor: DARK.surfaceHover,
+  },
+  deviceBtnText: {
+    color: DARK.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: DARK.bg },
@@ -3364,6 +4093,7 @@ const styles = StyleSheet.create({
   bubble: { padding: 10, borderRadius: 10, marginBottom: 6, maxWidth: '90%' },
   userBubble: { backgroundColor: DARK.primary, alignSelf: 'flex-end' },
   agentBubble: { backgroundColor: DARK.surface, alignSelf: 'flex-start', borderWidth: 1, borderColor: DARK.border },
+  systemBubble: { backgroundColor: '#0a1a0a', alignSelf: 'center', borderWidth: 1, borderColor: '#1a3a1a', maxWidth: '90%' },
   bubbleText: { fontSize: 14, color: DARK.text, lineHeight: 20 },
   inputRow: { flexDirection: 'row', alignItems: 'center', padding: 8, borderTopWidth: 1, borderTopColor: DARK.border, gap: 6 },
   attachBtn: { padding: 4 },
@@ -3411,6 +4141,7 @@ const styles = StyleSheet.create({
   phoneNum: { fontSize: 14, color: DARK.text },
   phoneType: { fontSize: 12, color: DARK.textMuted },
   fileRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4 },
+  noteRow: { paddingVertical: 4, paddingHorizontal: 6, backgroundColor: DARK.surface, borderRadius: 4, marginBottom: 3 },
   fileName: { fontSize: 13, color: DARK.text, flex: 1 },
 
   // Intel Card
@@ -3439,12 +4170,6 @@ const styles = StyleSheet.create({
   faceBioLabel: { fontSize: 12, color: DARK.textMuted, width: 55 },
   faceBioValue: { fontSize: 12, color: DARK.text, flex: 1 },
   faceBioNote: { fontSize: 11, color: DARK.success, marginTop: 8, fontStyle: 'italic' },
-  reverseSearchSection: { width: '100%', marginTop: 8 },
-  reverseSearchTitle: { fontSize: 12, fontWeight: '700', color: DARK.warning, marginBottom: 8, textAlign: 'center' },
-  reverseSearchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: DARK.surface, padding: 8, borderRadius: 6, marginBottom: 4, gap: 8 },
-  reverseSearchName: { flex: 1, fontSize: 13, fontWeight: '600', color: DARK.text },
-  reverseSearchNote: { fontSize: 11, color: DARK.textMuted },
-  reverseSearchTip: { fontSize: 11, color: DARK.textMuted, marginTop: 8, textAlign: 'center', fontStyle: 'italic' },
   usernameSearchBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: DARK.primary, padding: 12, borderRadius: 8, gap: 8, marginBottom: 12 },
   usernameSearchText: { fontSize: 13, fontWeight: '600', color: '#fff', flex: 1 },
   osintSectionTitle: { fontSize: 12, fontWeight: '700', color: DARK.textMuted, marginTop: 12, marginBottom: 8 },
@@ -3490,4 +4215,32 @@ const styles = StyleSheet.create({
   quickLinkFound: { borderColor: DARK.success, backgroundColor: DARK.success + '15' },
   recordLink: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, backgroundColor: DARK.surface, borderRadius: 6, marginBottom: 4, gap: 8 },
   recordLinkText: { flex: 1, fontSize: 14, color: DARK.text },
+
+  // Agent Insights
+  // Link Analysis editing
+  linkActions: { flexDirection: 'row', gap: 6, marginTop: 6 },
+  linkActionBtn: { width: 24, height: 24, borderRadius: 12, backgroundColor: DARK.bg, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: DARK.border },
+  relOption: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: DARK.bg, borderWidth: 1, borderColor: DARK.border, marginRight: 4 },
+  relOptionActive: { borderColor: '#3b82f6', backgroundColor: '#3b82f620' },
+  relOptionText: { fontSize: 10, color: DARK.textMuted },
+  relOptionTextActive: { color: '#3b82f6', fontWeight: '600' },
+  addAssocBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, marginTop: 8 },
+  addAssocBtnText: { fontSize: 12, color: DARK.textMuted },
+  addAssocForm: { backgroundColor: DARK.surface, borderRadius: 8, padding: 10, marginTop: 8, borderWidth: 1, borderColor: DARK.border },
+  addAssocInput: { backgroundColor: DARK.bg, color: DARK.text, fontSize: 13, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: DARK.border },
+  addAssocConfirm: { backgroundColor: '#3b82f6', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 6 },
+  addAssocConfirmText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  addAssocCancel: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: DARK.border },
+  addAssocCancelText: { color: DARK.textMuted, fontSize: 12 },
+
+  insightsWrapper: { marginBottom: 8, borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#8b5cf630' },
+  insightsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#8b5cf610', paddingHorizontal: 10, paddingVertical: 8 },
+  insightsTitle: { fontSize: 11, fontWeight: '700', color: '#8b5cf6', letterSpacing: 1 },
+  insightsContainer: { maxHeight: 250 },
+  insightCard: { backgroundColor: DARK.surface, borderLeftWidth: 3, borderLeftColor: '#8b5cf6', padding: 10, marginHorizontal: 6, marginVertical: 3, borderRadius: 6 },
+  insightPreview: { fontSize: 12, color: DARK.textSecondary, lineHeight: 17 },
+  insightFull: { fontSize: 12, color: DARK.text, lineHeight: 17 },
+  insightTime: { fontSize: 10, color: DARK.textMuted },
+  insightAddBtn: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#8b5cf615', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#8b5cf640' },
+  insightAddedBtn: { width: 26, height: 26, borderRadius: 13, backgroundColor: DARK.success + '20', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: DARK.success + '40' },
 });

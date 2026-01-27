@@ -13,6 +13,7 @@ import {
 import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useCase } from '@/hooks/useCase';
+import { useSettings } from '@/hooks/useSettings';
 import { audit } from '@/lib/audit';
 
 // Dark theme
@@ -32,6 +33,7 @@ const DARK = {
 export default function JourneyScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { caseData, reports, refresh } = useCase(id!);
+  const { settings } = useSettings();
 
   const [startingLocation, setStartingLocation] = useState('');
   const [selectedAddresses, setSelectedAddresses] = useState<Set<number>>(new Set());
@@ -111,9 +113,12 @@ export default function JourneyScreen() {
     );
   }
 
-  // Build embed URL for a single address
+  // Build embed URL for a single address - uses Embed API when key available
   const buildMapEmbedUrl = (address: string) => {
     const encoded = encodeURIComponent(address);
+    if (settings.googleMapsApiKey) {
+      return `https://www.google.com/maps/embed/v1/place?key=${settings.googleMapsApiKey}&q=${encoded}&zoom=15`;
+    }
     return `https://maps.google.com/maps?q=${encoded}&z=15&output=embed`;
   };
 

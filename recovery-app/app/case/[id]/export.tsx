@@ -17,8 +17,21 @@ import { COLORS, PURPOSE_LABELS } from '@/constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { RankedLocation, CrossReference } from '@/lib/ai-squad';
 import type { PhotoIntelligence } from '@/lib/photo-intelligence';
+import { loadCaseIntel, type CaseIntel } from '@/lib/case-intel';
 
 const isWeb = Platform.OS === 'web';
+
+// Normalize name from "LAST, First Middle" to "First Middle Last"
+const normalizeName = (name: string): string => {
+  if (!name) return '';
+  if (name.includes(',')) {
+    const parts = name.split(',').map(p => p.trim());
+    if (parts.length >= 2) {
+      return `${parts.slice(1).join(' ')} ${parts[0]}`.trim();
+    }
+  }
+  return name.trim();
+};
 
 export default function ExportScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -30,6 +43,7 @@ export default function ExportScreen() {
   const [subjectPhoto, setSubjectPhoto] = useState<string | null>(null);
   const [socialProfiles, setSocialProfiles] = useState<any[]>([]);
   const [photoIntel, setPhotoIntel] = useState<PhotoIntelligence | null>(null);
+  const [caseIntel, setCaseIntel] = useState<CaseIntel | null>(null);
 
   const latestReport = reports[0];
   const brief = getBrief();
@@ -39,6 +53,10 @@ export default function ExportScreen() {
     const loadAllData = async () => {
       if (!id) return;
       try {
+        // Load case intelligence
+        const intel = await loadCaseIntel(id);
+        setCaseIntel(intel);
+
         // Load AI Squad data
         const squadData = await AsyncStorage.getItem(`case_squad_${id}`);
         if (squadData) {
@@ -57,8 +75,8 @@ export default function ExportScreen() {
         if (social) setSocialProfiles(JSON.parse(social));
 
         // Load photo intelligence (if stored)
-        const intel = await AsyncStorage.getItem(`case_photo_intel_${id}`);
-        if (intel) setPhotoIntel(JSON.parse(intel));
+        const photoIntelData = await AsyncStorage.getItem(`case_photo_intel_${id}`);
+        if (photoIntelData) setPhotoIntel(JSON.parse(photoIntelData));
       } catch (e) {
         console.log('Error loading case data:', e);
       }
@@ -69,12 +87,46 @@ export default function ExportScreen() {
   const generatePdfHtml = (maskSensitive: boolean) => {
     if (!caseData || !latestReport) return '';
 
-    const { subject, addresses, phones, relatives } = latestReport.parsedData;
+    const { subject, addresses: rawAddresses, phones, relatives: rawRelatives } = latestReport.parsedData;
 
     const formatAddress = (addr: string) =>
       maskSensitive ? maskAddress(addr) : addr;
     const formatPhone = (phone: string) =>
       maskSensitive ? maskPhone(phone) : phone;
+
+    // Merge case intel
+    const excludePatterns = caseIntel?.excludePatterns || [];
+    const shouldExclude = (text: string) => excludePatterns.some(p => text.toLowerCase().includes(p));
+
+    // Intel addresses first (user-curated), then parsed, minus excluded
+    const intelAddrs = (caseIntel?.addresses || []).map(a => ({
+      fullAddress: a.address, isCurrent: a.important, confidence: a.important ? 1 : 0.7,
+      reasons: [a.note || a.type].filter(Boolean), fromDate: '', toDate: '',
+    }));
+    const addresses = [...intelAddrs, ...rawAddresses.filter(
+      (a: any) => !shouldExclude(a.fullAddress || '') &&
+        !intelAddrs.some(ia => (a.fullAddress || '').toLowerCase().includes(ia.fullAddress.toLowerCase().slice(0, 15)))
+    )];
+
+    // Intel contacts first, then parsed
+    const intelContacts = (caseIntel?.contacts || []).map(c => ({
+      name: c.name, relationship: c.relationship, phones: c.phone ? [c.phone] : [],
+      currentAddress: c.address,
+    }));
+    const relatives = [...intelContacts, ...rawRelatives.filter(
+      (r: any) => !intelContacts.some(ic => ic.name.toLowerCase() === (r.name || '').toLowerCase())
+    )];
+
+    // Intel vehicles
+    const intelVehicles = (caseIntel?.vehicles || []).map(v => ({
+      year: '', make: '', model: '', color: '', plate: v.plate || '-',
+      description: v.description, vin: v.vin,
+    }));
+    const allVehicles = [...intelVehicles, ...(latestReport.parsedData.vehicles || [])];
+
+    // Intel notes and flags
+    const intelNotes = caseIntel?.notes || [];
+    const customFlags = caseIntel?.customFlags || [];
 
     return `
 <!DOCTYPE html>
@@ -228,18 +280,16 @@ export default function ExportScreen() {
     </table>
   </div>` : ''}
 
-  ${latestReport.parsedData.vehicles.length > 0 ? `
+  ${allVehicles.length > 0 ? `
   <h2>Vehicles</h2>
   <div class="section">
     <table>
-      <tr><th>Year</th><th>Make</th><th>Model</th><th>Color</th><th>Plate</th></tr>
-      ${latestReport.parsedData.vehicles.slice(0, 3).map((veh) => `
+      <tr><th>Description</th><th>Plate</th><th>VIN</th></tr>
+      ${allVehicles.slice(0, 5).map((veh: any) => `
       <tr>
-        <td>${veh.year || '-'}</td>
-        <td>${veh.make || '-'}</td>
-        <td>${veh.model || '-'}</td>
-        <td>${veh.color || '-'}</td>
+        <td>${veh.description || [veh.year, veh.color, veh.make, veh.model].filter(Boolean).join(' ') || '-'}</td>
         <td>${veh.plate || '-'}</td>
+        <td>${veh.vin || '-'}</td>
       </tr>
       `).join('')}
     </table>
@@ -350,32 +400,51 @@ export default function ExportScreen() {
 
     <h3 style="font-size: 13px; color: #374151;">Social Media</h3>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px;">
-      <div style="font-size: 11px;"><strong>Facebook:</strong><br>facebook.com/search/people/?q=${encodeURIComponent(caseData.name)}</div>
-      <div style="font-size: 11px;"><strong>Instagram:</strong><br>instagram.com/${caseData.name.toLowerCase().replace(/\s+/g, '')}</div>
-      <div style="font-size: 11px;"><strong>TikTok:</strong><br>tiktok.com/@${caseData.name.toLowerCase().replace(/\s+/g, '')}</div>
-      <div style="font-size: 11px;"><strong>Twitter/X:</strong><br>twitter.com/search?q=${encodeURIComponent(caseData.name)}</div>
+      <div style="font-size: 11px;"><strong>Facebook:</strong><br>facebook.com/search/people/?q=${encodeURIComponent(normalizeName(caseData.name))}</div>
+      <div style="font-size: 11px;"><strong>Instagram:</strong><br>instagram.com/${normalizeName(caseData.name).toLowerCase().replace(/\s+/g, '')}</div>
+      <div style="font-size: 11px;"><strong>TikTok:</strong><br>tiktok.com/@${normalizeName(caseData.name).toLowerCase().replace(/\s+/g, '')}</div>
+      <div style="font-size: 11px;"><strong>Twitter/X:</strong><br>twitter.com/search?q=${encodeURIComponent(normalizeName(caseData.name))}</div>
     </div>
 
     <h3 style="font-size: 13px; color: #374151;">People Search</h3>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px;">
-      <div style="font-size: 11px;"><strong>TruePeopleSearch:</strong><br>truepeoplesearch.com/results?name=${encodeURIComponent(caseData.name)}</div>
-      <div style="font-size: 11px;"><strong>FastPeopleSearch:</strong><br>fastpeoplesearch.com/name/${encodeURIComponent(caseData.name.replace(/\s+/g, '-'))}</div>
-      <div style="font-size: 11px;"><strong>Whitepages:</strong><br>whitepages.com/name/${encodeURIComponent(caseData.name.replace(/\s+/g, '-'))}</div>
-      <div style="font-size: 11px;"><strong>Spokeo:</strong><br>spokeo.com/${encodeURIComponent(caseData.name.replace(/\s+/g, '-'))}</div>
+      <div style="font-size: 11px;"><strong>TruePeopleSearch:</strong><br>truepeoplesearch.com/results?name=${encodeURIComponent(normalizeName(caseData.name))}</div>
+      <div style="font-size: 11px;"><strong>FastPeopleSearch:</strong><br>fastpeoplesearch.com/name/${encodeURIComponent(normalizeName(caseData.name).replace(/\s+/g, '-'))}</div>
+      <div style="font-size: 11px;"><strong>Whitepages:</strong><br>whitepages.com/name/${encodeURIComponent(normalizeName(caseData.name).replace(/\s+/g, '-'))}</div>
+      <div style="font-size: 11px;"><strong>Spokeo:</strong><br>spokeo.com/${encodeURIComponent(normalizeName(caseData.name).replace(/\s+/g, '-'))}</div>
     </div>
 
     <h3 style="font-size: 13px; color: #374151;">Court & Criminal</h3>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px;">
-      <div style="font-size: 11px;"><strong>CourtListener:</strong><br>courtlistener.com/?q=${encodeURIComponent(caseData.name)}</div>
-      <div style="font-size: 11px;"><strong>Google Mugshots:</strong><br>google.com/search?q=${encodeURIComponent(caseData.name + ' mugshot')}</div>
+      <div style="font-size: 11px;"><strong>CourtListener:</strong><br>courtlistener.com/?q=${encodeURIComponent(normalizeName(caseData.name))}</div>
+      <div style="font-size: 11px;"><strong>Google Mugshots:</strong><br>google.com/search?q=${encodeURIComponent(normalizeName(caseData.name) + ' mugshot')}</div>
     </div>
 
     <h3 style="font-size: 13px; color: #374151;">Fraud Research</h3>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-      <div style="font-size: 11px;"><strong>Social Catfish:</strong><br>social-catfish.com/search/results?q=${encodeURIComponent(caseData.name)}</div>
-      <div style="font-size: 11px;"><strong>ScamDigger:</strong><br>scamdigger.com/search?q=${encodeURIComponent(caseData.name)}</div>
+      <div style="font-size: 11px;"><strong>Social Catfish:</strong><br>social-catfish.com/search/results?q=${encodeURIComponent(normalizeName(caseData.name))}</div>
+      <div style="font-size: 11px;"><strong>ScamDigger:</strong><br>scamdigger.com/search?q=${encodeURIComponent(normalizeName(caseData.name))}</div>
     </div>
   </div>
+
+  ${customFlags.length > 0 ? `
+  <h2 style="color: #dc2626;">Warnings</h2>
+  <div class="section">
+    ${customFlags.map(f => `
+    <div class="warning">
+      <div class="warning-title">WARNING</div>
+      ${f}
+    </div>
+    `).join('')}
+  </div>` : ''}
+
+  ${intelNotes.length > 0 ? `
+  <h2>Investigation Notes</h2>
+  <div class="section">
+    <ul style="font-size: 13px; line-height: 1.6;">
+      ${intelNotes.map(n => `<li style="margin-bottom: 8px;">${n.text} <span style="font-size: 10px; color: #9ca3af;">(${new Date(n.addedAt).toLocaleDateString()})</span></li>`).join('')}
+    </ul>
+  </div>` : ''}
 
   <div style="page-break-before: always;"></div>
 

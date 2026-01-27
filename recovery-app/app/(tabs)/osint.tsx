@@ -2,7 +2,7 @@
  * OSINT Search Tab - Direct search links to OSINT resources
  * No backend required - generates URLs directly
  */
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import {
   View,
   Text,
@@ -12,23 +12,12 @@ import {
   TouchableOpacity,
   Linking,
   Platform,
-  Image,
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import {
-  analyzeSubject,
-  formatSubjectAnalysisForChat,
-  type SubjectAnalysis,
-} from '@/lib/subject-analysis';
-import {
-  analyzePhotoLocation,
-  formatGeoAnalysisForChat,
-  enhanceWithBusinessLookups,
-  type GeoAnalysisResult,
-} from '@/lib/geo-analysis';
 import { COLORS } from '@/constants';
+import { useSettings } from '@/hooks/useSettings';
 
 // Load Black Ops One font for web
 if (Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -138,13 +127,6 @@ const generateSearchLinks = (query: string, type: string) => {
         { name: 'CallerID', url: `https://www.truecaller.com/search/us/${cleanPhone}`, icon: 'call' },
       ],
     });
-    links.push({
-      category: 'Social Search',
-      items: [
-        { name: 'Google', url: `https://www.google.com/search?q="${cleanPhone}"`, icon: 'logo-google' },
-        { name: 'Facebook', url: `https://www.facebook.com/search/top/?q=${cleanPhone}`, icon: 'logo-facebook' },
-      ],
-    });
   } else if (type === 'username') {
     links.push({
       category: 'Username Search',
@@ -190,10 +172,23 @@ interface OSINTResult {
   executionTime: number;
   errors: string[];
   tip?: string;
+  // IPQS phone type fields
+  lineType?: string;
+  carrier?: string;
+  active?: boolean | null;
+  voipProvider?: string;
+  fraudScore?: number;
+  phoneCity?: string;
+  phoneState?: string;
+  prepaid?: boolean | null;
+  risky?: boolean;
+  spammer?: boolean;
+  name?: string;
 }
 
 export default function OSINTScreen() {
   const router = useRouter();
+  const { settings } = useSettings();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchType, setSearchType] = useState<'name' | 'email' | 'phone' | 'username' | 'address'>('name');
   const [searchResults, setSearchResults] = useState<{ category: string; items: { name: string; url: string; icon: string }[] }[]>([]);
@@ -203,27 +198,6 @@ export default function OSINTScreen() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Photo Analysis State
-  const [uploadedPhoto, setUploadedPhoto] = useState<string | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isAnalyzingGeo, setIsAnalyzingGeo] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<SubjectAnalysis | null>(null);
-  const [geoResult, setGeoResult] = useState<GeoAnalysisResult | null>(null);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [imageSearchUrls, setImageSearchUrls] = useState<{
-    google_lens?: string;
-    yandex?: string;
-    bing?: string;
-    tineye?: string;
-    pimeyes?: string;
-    facecheck?: string;
-  } | null>(null);
-  const [isEnhancing, setIsEnhancing] = useState(false);
-  const [enhancedLocations, setEnhancedLocations] = useState<{
-    businessLocations: { name: string; matches: { city: string; state: string; lat: number; lon: number }[] }[];
-    narrowedRegion?: string;
-  } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
@@ -353,6 +327,18 @@ export default function OSINTScreen() {
               executionTime: data.execution_time || 0,
               errors: data.errors || [],
               tip: data.tip,
+              // IPQS phone type fields
+              lineType: data.line_type,
+              carrier: data.carrier,
+              active: data.active,
+              voipProvider: data.voip_provider,
+              fraudScore: data.fraud_score,
+              phoneCity: data.phone_city,
+              phoneState: data.phone_state,
+              prepaid: data.prepaid,
+              risky: data.risky,
+              spammer: data.spammer,
+              name: data.name,
             });
           } else {
             setSearchError('Phone search failed');
@@ -377,130 +363,6 @@ export default function OSINTScreen() {
     }
   };
 
-  // Handle photo upload
-  const handlePhotoUpload = () => {
-    if (Platform.OS === 'web' && fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  };
-
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    const file = files[0];
-    if (!file.type.startsWith('image/')) {
-      setAnalysisError('Please upload an image file');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = e.target?.result as string;
-      if (dataUrl) {
-        setUploadedPhoto(dataUrl);
-        setAnalysisResult(null);
-        setAnalysisError(null);
-      }
-    };
-    reader.readAsDataURL(file);
-
-    // Reset input so same file can be selected again
-    event.target.value = '';
-  };
-
-  const runPhotoAnalysis = async () => {
-    if (!uploadedPhoto) return;
-
-    setIsAnalyzing(true);
-    setAnalysisError(null);
-
-    try {
-      // Run analysis and upload image for reverse search in parallel
-      const [result, uploadResult] = await Promise.all([
-        analyzeSubject(uploadedPhoto),
-        uploadImageForSearch(uploadedPhoto),
-      ]);
-
-      if (result) {
-        setAnalysisResult(result);
-      } else {
-        setAnalysisError('Could not analyze photo. Try a clearer image.');
-      }
-
-      if (uploadResult?.search_urls) {
-        setImageSearchUrls(uploadResult.search_urls);
-      }
-    } catch (error: any) {
-      setAnalysisError(error?.message || 'Analysis failed');
-    }
-
-    setIsAnalyzing(false);
-  };
-
-  const uploadImageForSearch = async (imageBase64: string) => {
-    try {
-      const response = await fetch('https://elite-recovery-osint.fly.dev/api/image/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_base64: imageBase64 }),
-      });
-      if (response.ok) {
-        return await response.json();
-      }
-    } catch (e) {
-      console.warn('Image upload for search failed:', e);
-    }
-    return null;
-  };
-
-  const clearPhoto = () => {
-    setUploadedPhoto(null);
-    setAnalysisResult(null);
-    setGeoResult(null);
-    setAnalysisError(null);
-    setImageSearchUrls(null);
-    setEnhancedLocations(null);
-  };
-
-  // Geo analysis - predict photo location
-  const runGeoAnalysis = async () => {
-    if (!uploadedPhoto) return;
-
-    setIsAnalyzingGeo(true);
-    setAnalysisError(null);
-    setGeoResult(null);
-    setEnhancedLocations(null);
-
-    try {
-      const result = await analyzePhotoLocation(uploadedPhoto);
-      // Always set result - even error states are returned as result objects now
-      setGeoResult(result);
-
-      // If it's an error result, also show the error
-      if (result?.primaryLocation?.country === 'Analysis Failed') {
-        setAnalysisError(result.summary);
-      }
-    } catch (error: any) {
-      setAnalysisError(error?.message || 'Geo analysis failed');
-    }
-
-    setIsAnalyzingGeo(false);
-  };
-
-  // Enhanced OpenStreetMap lookup for businesses
-  const runEnhancedLookup = async () => {
-    if (!geoResult || geoResult.businessNames.length === 0) return;
-
-    setIsEnhancing(true);
-    try {
-      const result = await enhanceWithBusinessLookups(geoResult);
-      setEnhancedLocations(result);
-    } catch (error: any) {
-      console.error('Enhanced lookup failed:', error);
-    }
-    setIsEnhancing(false);
-  };
 
   return (
     <View style={styles.container}>
@@ -579,43 +441,128 @@ export default function OSINTScreen() {
             <View style={styles.osintResultsHeader}>
               <Ionicons name="checkmark-circle" size={20} color={THEME.success} />
               <Text style={styles.osintResultsTitle}>
-                {osintResult.totalFound} Account{osintResult.totalFound !== 1 ? 's' : ''} Found
+                {osintResult.type === 'phone' ? 'Phone Intelligence' : `${osintResult.totalFound} Account${osintResult.totalFound !== 1 ? 's' : ''} Found`}
               </Text>
               <Text style={styles.osintResultsTime}>
                 {osintResult.executionTime.toFixed(1)}s
               </Text>
             </View>
 
-            {osintResult.accounts.length > 0 ? (
-              <View style={styles.accountsList}>
-                {osintResult.accounts.slice(0, 20).map((account, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    style={styles.accountItem}
-                    onPress={() => account.url && openUrl(account.url)}
-                    disabled={!account.url}
-                  >
-                    <Ionicons
-                      name={account.url ? 'link' : 'checkmark'}
-                      size={14}
-                      color={account.url ? THEME.info : THEME.success}
-                    />
-                    <Text style={[styles.accountName, account.url && styles.accountNameClickable]}>
-                      {account.service}
-                    </Text>
-                    {account.url && (
-                      <Ionicons name="open-outline" size={12} color={THEME.textMuted} />
-                    )}
-                  </TouchableOpacity>
-                ))}
-                {osintResult.accounts.length > 20 && (
-                  <Text style={styles.moreAccounts}>
-                    +{osintResult.accounts.length - 20} more accounts
+            {/* Phone Line Type Badge + Details */}
+            {osintResult.type === 'phone' && osintResult.lineType && (
+              <View style={styles.phoneTypeSection}>
+                {/* Line type badge */}
+                <View style={[styles.lineTypeBadge, {
+                  backgroundColor: osintResult.lineType === 'Wireless' ? THEME.success + '20' :
+                    osintResult.lineType === 'Landline' ? THEME.warning + '20' :
+                    osintResult.lineType === 'VOIP' ? '#f97316' + '20' : THEME.textMuted + '20',
+                  borderColor: osintResult.lineType === 'Wireless' ? THEME.success :
+                    osintResult.lineType === 'Landline' ? THEME.warning :
+                    osintResult.lineType === 'VOIP' ? '#f97316' : THEME.textMuted,
+                }]}>
+                  <Ionicons
+                    name={osintResult.lineType === 'Wireless' ? 'phone-portrait' :
+                      osintResult.lineType === 'Landline' ? 'call' : 'globe'}
+                    size={18}
+                    color={osintResult.lineType === 'Wireless' ? THEME.success :
+                      osintResult.lineType === 'Landline' ? THEME.warning :
+                      osintResult.lineType === 'VOIP' ? '#f97316' : THEME.textMuted}
+                  />
+                  <Text style={[styles.lineTypeText, {
+                    color: osintResult.lineType === 'Wireless' ? THEME.success :
+                      osintResult.lineType === 'Landline' ? THEME.warning :
+                      osintResult.lineType === 'VOIP' ? '#f97316' : THEME.textMuted,
+                  }]}>
+                    {osintResult.lineType === 'Wireless' ? 'CELL PHONE' :
+                     osintResult.lineType === 'Landline' ? 'LANDLINE' :
+                     osintResult.lineType === 'VOIP' ? `VOIP${osintResult.voipProvider ? ` - ${osintResult.voipProvider}` : ''}` :
+                     osintResult.lineType.toUpperCase()}
                   </Text>
+                  {osintResult.active === true && (
+                    <View style={styles.activeIndicatorSmall} />
+                  )}
+                </View>
+
+                {/* Phone details */}
+                <View style={styles.phoneDetails}>
+                  {osintResult.carrier ? (
+                    <Text style={styles.phoneDetailText}>Carrier: {osintResult.carrier}</Text>
+                  ) : null}
+                  {osintResult.active !== null && osintResult.active !== undefined ? (
+                    <Text style={[styles.phoneDetailText, { color: osintResult.active ? THEME.success : THEME.danger }]}>
+                      {osintResult.active ? 'Active' : 'Inactive'}
+                    </Text>
+                  ) : null}
+                  {osintResult.phoneCity || osintResult.phoneState ? (
+                    <Text style={styles.phoneDetailText}>
+                      Location: {[osintResult.phoneCity, osintResult.phoneState].filter(Boolean).join(', ')}
+                    </Text>
+                  ) : null}
+                  {osintResult.prepaid === true && (
+                    <Text style={[styles.phoneDetailText, { color: THEME.warning }]}>Prepaid</Text>
+                  )}
+                  {osintResult.name ? (
+                    <Text style={styles.phoneDetailText}>Registered: {osintResult.name}</Text>
+                  ) : null}
+                  {osintResult.fraudScore != null && osintResult.fraudScore > 50 && (
+                    <Text style={[styles.phoneDetailText, { color: THEME.danger }]}>
+                      Fraud Score: {osintResult.fraudScore}/100
+                    </Text>
+                  )}
+                  {osintResult.spammer && (
+                    <Text style={[styles.phoneDetailText, { color: THEME.danger }]}>Known Spammer</Text>
+                  )}
+                </View>
+
+                {/* Google Voice Text button */}
+                {settings.googleVoiceNumber && (
+                  <TouchableOpacity
+                    style={styles.gvTextButton}
+                    onPress={() => {
+                      const cleanPhone = osintResult.query.replace(/\D/g, '');
+                      const gvUrl = `https://voice.google.com/u/0/messages?itemId=t.+1${cleanPhone}`;
+                      openUrl(gvUrl);
+                    }}
+                  >
+                    <Ionicons name="chatbubble-ellipses" size={16} color="#f59e0b" />
+                    <Text style={styles.gvTextButtonText}>GV Text</Text>
+                  </TouchableOpacity>
                 )}
               </View>
-            ) : (
-              <Text style={styles.noAccountsText}>No accounts found for this {osintResult.type}</Text>
+            )}
+
+            {osintResult.type !== 'phone' && (
+              osintResult.accounts.length > 0 ? (
+                <View style={styles.accountsList}>
+                  {osintResult.accounts.slice(0, 20).map((account, idx) => (
+                    <TouchableOpacity
+                      key={idx}
+                      style={styles.accountItem}
+                      onPress={() => account.url && openUrl(account.url)}
+                      disabled={!account.url}
+                    >
+                      <Ionicons
+                        name={account.url ? 'link' : 'checkmark'}
+                        size={14}
+                        color={account.url ? THEME.info : THEME.success}
+                      />
+                      <Text style={[styles.accountName, account.url && styles.accountNameClickable]}>
+                        {account.service}
+                      </Text>
+                      {account.url && (
+                        <Ionicons name="open-outline" size={12} color={THEME.textMuted} />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                  {osintResult.accounts.length > 20 && (
+                    <Text style={styles.moreAccounts}>
+                      +{osintResult.accounts.length - 20} more accounts
+                    </Text>
+                  )}
+                </View>
+              ) : (
+                <Text style={styles.noAccountsText}>No accounts found for this {osintResult.type}</Text>
+              )
             )}
 
             {osintResult.errors.length > 0 && (
@@ -632,465 +579,6 @@ export default function OSINTScreen() {
             <Text style={styles.errorText}>{searchError}</Text>
           </View>
         )}
-
-        {/* Photo Analysis Section */}
-        <View style={styles.photoSection}>
-          <Text style={styles.photoSectionTitle}>SUBJECT PHOTO ANALYSIS</Text>
-          <Text style={styles.photoSectionDesc}>
-            Upload a mugshot or photo to extract tattoos, scars, physical description, and GPS location
-          </Text>
-
-          {/* Hidden file input for web */}
-          {Platform.OS === 'web' && (
-            <input
-              ref={fileInputRef as any}
-              type="file"
-              accept="image/*"
-              onChange={handleFileChange as any}
-              style={{ display: 'none' }}
-            />
-          )}
-
-          {!uploadedPhoto ? (
-            <TouchableOpacity style={styles.uploadBtn} onPress={handlePhotoUpload}>
-              <Ionicons name="camera" size={24} color={THEME.primary} />
-              <Text style={styles.uploadBtnText}>Upload Subject Photo</Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.photoPreviewContainer}>
-              <Image source={{ uri: uploadedPhoto }} style={styles.photoPreview} />
-              <View style={styles.photoActions}>
-                <TouchableOpacity
-                  style={[styles.analyzeBtn, isAnalyzing && styles.btnDisabled]}
-                  onPress={runPhotoAnalysis}
-                  disabled={isAnalyzing || isAnalyzingGeo}
-                >
-                  {isAnalyzing ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <>
-                      <Ionicons name="body" size={16} color="#fff" />
-                      <Text style={styles.analyzeBtnText}>ID Analysis</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.geoBtn, isAnalyzingGeo && styles.btnDisabled]}
-                  onPress={runGeoAnalysis}
-                  disabled={isAnalyzing || isAnalyzingGeo}
-                >
-                  {isAnalyzingGeo ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <>
-                      <Ionicons name="location" size={16} color="#fff" />
-                      <Text style={styles.analyzeBtnText}>Geo Location</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.clearBtn} onPress={clearPhoto}>
-                  <Ionicons name="close" size={18} color={THEME.danger} />
-                </TouchableOpacity>
-              </View>
-              {(analysisResult || geoResult) && (
-                <View style={styles.analysisTypeBadges}>
-                  {analysisResult && <Text style={styles.analysisBadge}>ID</Text>}
-                  {geoResult && <Text style={styles.geoBadge}>GEO</Text>}
-                </View>
-              )}
-            </View>
-          )}
-
-          {analysisError && (
-            <View style={styles.errorBox}>
-              <Ionicons name="warning" size={16} color={THEME.danger} />
-              <Text style={styles.errorText}>{analysisError}</Text>
-            </View>
-          )}
-
-          {/* Analysis Results */}
-          {analysisResult && (
-            <View style={styles.analysisResults}>
-              {/* GPS Location - Highest Priority */}
-              {analysisResult.exifData?.gps && (
-                <View style={styles.gpsAlert}>
-                  <Ionicons name="location" size={20} color={THEME.success} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.gpsTitle}>GPS LOCATION FOUND!</Text>
-                    <Text style={styles.gpsCoords}>
-                      {analysisResult.exifData.gps.latitude.toFixed(6)}, {analysisResult.exifData.gps.longitude.toFixed(6)}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.mapBtn}
-                    onPress={() => openUrl(analysisResult.exifData!.gps!.googleMapsUrl!)}
-                  >
-                    <Ionicons name="map" size={16} color="#fff" />
-                    <Text style={styles.mapBtnText}>Map</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {/* Timestamp */}
-              {analysisResult.exifData?.dateTime?.original && (
-                <View style={styles.timestampRow}>
-                  <Ionicons name="calendar" size={16} color={THEME.warning} />
-                  <Text style={styles.timestampText}>
-                    Photo taken: {analysisResult.exifData.dateTime.original}
-                  </Text>
-                </View>
-              )}
-
-              {/* BOLO Description */}
-              {analysisResult.boloDescription && (
-                <View style={styles.boloSection}>
-                  <Text style={styles.boloTitle}>BOLO DESCRIPTION</Text>
-                  <Text style={styles.boloText}>{analysisResult.boloDescription}</Text>
-                </View>
-              )}
-
-              {/* Key Identifiers */}
-              {analysisResult.identificationPriority.length > 0 && (
-                <View style={styles.identifiersSection}>
-                  <Text style={styles.identifiersTitle}>KEY IDENTIFIERS</Text>
-                  {analysisResult.identificationPriority.slice(0, 5).map((item, idx) => (
-                    <View key={idx} style={styles.identifierRow}>
-                      <Text style={styles.identifierNum}>{idx + 1}</Text>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.identifierFeature}>{item.feature}</Text>
-                        <Text style={styles.identifierReason}>{item.reason}</Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Tattoos */}
-              {analysisResult.tattoos.length > 0 && (
-                <View style={styles.tattoosSection}>
-                  <Text style={styles.tattoosTitle}>TATTOOS ({analysisResult.tattoos.length})</Text>
-                  {analysisResult.tattoos.map((tattoo, idx) => (
-                    <View key={idx} style={styles.tattooItem}>
-                      <Text style={styles.tattooLocation}>{tattoo.location.toUpperCase()}</Text>
-                      <Text style={styles.tattooDesc}>{tattoo.description}</Text>
-                      {tattoo.text && <Text style={styles.tattooText}>Text: "{tattoo.text}"</Text>}
-                      <Text style={styles.tattooMeta}>
-                        {tattoo.style} · {tattoo.size} · {tattoo.colors.join(', ')}
-                      </Text>
-                      {tattoo.possibleMeaning && (
-                        <Text style={styles.tattooMeaning}>Meaning: {tattoo.possibleMeaning}</Text>
-                      )}
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Reverse Image Search Links - Use actual working URLs if available */}
-              <View style={styles.reverseSearchSection}>
-                <Text style={styles.reverseSearchTitle}>REVERSE IMAGE SEARCH</Text>
-                {imageSearchUrls ? (
-                  <>
-                    <TouchableOpacity
-                      style={styles.reverseSearchBtnActive}
-                      onPress={() => openUrl(imageSearchUrls.yandex!)}
-                    >
-                      <View style={styles.reverseSearchReady}>
-                        <Ionicons name="checkmark-circle" size={16} color={THEME.success} />
-                        <Text style={styles.reverseSearchNameActive}>Yandex (Best for Faces)</Text>
-                      </View>
-                      <Ionicons name="open-outline" size={14} color={THEME.success} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.reverseSearchBtnActive}
-                      onPress={() => openUrl(imageSearchUrls.google_lens!)}
-                    >
-                      <View style={styles.reverseSearchReady}>
-                        <Ionicons name="checkmark-circle" size={16} color={THEME.success} />
-                        <Text style={styles.reverseSearchNameActive}>Google Lens</Text>
-                      </View>
-                      <Ionicons name="open-outline" size={14} color={THEME.success} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.reverseSearchBtnActive}
-                      onPress={() => openUrl(imageSearchUrls.tineye!)}
-                    >
-                      <View style={styles.reverseSearchReady}>
-                        <Ionicons name="checkmark-circle" size={16} color={THEME.success} />
-                        <Text style={styles.reverseSearchNameActive}>TinEye</Text>
-                      </View>
-                      <Ionicons name="open-outline" size={14} color={THEME.success} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.reverseSearchBtnActive}
-                      onPress={() => openUrl(imageSearchUrls.bing!)}
-                    >
-                      <View style={styles.reverseSearchReady}>
-                        <Ionicons name="checkmark-circle" size={16} color={THEME.success} />
-                        <Text style={styles.reverseSearchNameActive}>Bing Visual Search</Text>
-                      </View>
-                      <Ionicons name="open-outline" size={14} color={THEME.success} />
-                    </TouchableOpacity>
-
-                    {/* Face Recognition Search Engines */}
-                    <Text style={[styles.reverseSearchTitle, { marginTop: 16, marginBottom: 8 }]}>FACE RECOGNITION SEARCH</Text>
-                    <TouchableOpacity
-                      style={styles.reverseSearchBtnFace}
-                      onPress={() => openUrl('https://pimeyes.com/')}
-                    >
-                      <View style={styles.reverseSearchReady}>
-                        <Ionicons name="person-circle" size={16} color={THEME.warning} />
-                        <Text style={styles.reverseSearchNameFace}>PimEyes (Face Search)</Text>
-                      </View>
-                      <Ionicons name="open-outline" size={14} color={THEME.warning} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.reverseSearchBtnFace}
-                      onPress={() => openUrl('https://facecheck.id/')}
-                    >
-                      <View style={styles.reverseSearchReady}>
-                        <Ionicons name="scan" size={16} color={THEME.warning} />
-                        <Text style={styles.reverseSearchNameFace}>FaceCheck.ID</Text>
-                      </View>
-                      <Ionicons name="open-outline" size={14} color={THEME.warning} />
-                    </TouchableOpacity>
-                    <Text style={styles.searchUrlNote}>Upload face photo to find other images of same person</Text>
-                  </>
-                ) : (
-                  <>
-                    {analysisResult.reverseImageLinks.slice(0, 4).map((link, idx) => (
-                      <TouchableOpacity
-                        key={idx}
-                        style={styles.reverseSearchBtn}
-                        onPress={() => openUrl(link.url)}
-                      >
-                        <Text style={styles.reverseSearchName}>{link.service}</Text>
-                        <Ionicons name="open-outline" size={14} color={THEME.textMuted} />
-                      </TouchableOpacity>
-                    ))}
-                    <Text style={styles.searchUrlNote}>Manual upload required</Text>
-
-                    {/* Face Recognition Search Engines - always show */}
-                    <Text style={[styles.reverseSearchTitle, { marginTop: 16, marginBottom: 8 }]}>FACE RECOGNITION SEARCH</Text>
-                    <TouchableOpacity
-                      style={styles.reverseSearchBtnFace}
-                      onPress={() => openUrl('https://pimeyes.com/')}
-                    >
-                      <View style={styles.reverseSearchReady}>
-                        <Ionicons name="person-circle" size={16} color={THEME.warning} />
-                        <Text style={styles.reverseSearchNameFace}>PimEyes (Face Search)</Text>
-                      </View>
-                      <Ionicons name="open-outline" size={14} color={THEME.warning} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.reverseSearchBtnFace}
-                      onPress={() => openUrl('https://facecheck.id/')}
-                    >
-                      <View style={styles.reverseSearchReady}>
-                        <Ionicons name="scan" size={16} color={THEME.warning} />
-                        <Text style={styles.reverseSearchNameFace}>FaceCheck.ID</Text>
-                      </View>
-                      <Ionicons name="open-outline" size={14} color={THEME.warning} />
-                    </TouchableOpacity>
-                    <Text style={styles.searchUrlNote}>Upload face photo to find other images of same person</Text>
-                  </>
-                )}
-              </View>
-            </View>
-          )}
-
-          {/* Geo Analysis Results */}
-          {geoResult && (
-            <View style={styles.geoResults}>
-              <Text style={styles.geoResultsTitle}>GEOLOCATION ANALYSIS</Text>
-
-              {/* Primary Location */}
-              <View style={styles.geoPrimaryLocation}>
-                <Ionicons name="location" size={24} color={THEME.info} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.geoPrimaryText}>
-                    {[geoResult.primaryLocation.city, geoResult.primaryLocation.region, geoResult.primaryLocation.country].filter(Boolean).join(', ')}
-                  </Text>
-                  {geoResult.primaryLocation.neighborhood && (
-                    <Text style={styles.geoNeighborhood}>{geoResult.primaryLocation.neighborhood}</Text>
-                  )}
-                  <Text style={styles.geoConfidence}>
-                    Confidence: {geoResult.primaryLocation.confidence.toUpperCase()}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.geoMapBtn}
-                  onPress={() => openUrl(geoResult.mapSearchLinks.googleMaps)}
-                >
-                  <Ionicons name="map" size={16} color="#fff" />
-                </TouchableOpacity>
-              </View>
-
-              {/* Summary */}
-              {geoResult.summary && (
-                <View style={styles.geoSummary}>
-                  <Text style={styles.geoSummaryText}>{geoResult.summary}</Text>
-                </View>
-              )}
-
-              {/* Visual Clues */}
-              {geoResult.visualClues.length > 0 && (
-                <View style={styles.geoCluesSection}>
-                  <Text style={styles.geoCluesTitle}>Visual Evidence</Text>
-                  {geoResult.visualClues.filter(c => c.confidence === 'strong').slice(0, 3).map((clue, idx) => (
-                    <View key={idx} style={styles.geoClueItem}>
-                      <Ionicons
-                        name={clue.type === 'signage' ? 'text' : clue.type === 'architecture' ? 'business' : clue.type === 'vegetation' ? 'leaf' : 'eye'}
-                        size={14}
-                        color={THEME.info}
-                      />
-                      <Text style={styles.geoClueText}>{clue.description}</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Area Codes Found */}
-              {geoResult.areaCodesFound && geoResult.areaCodesFound.length > 0 && (
-                <View style={styles.geoAreaCodesSection}>
-                  <Text style={styles.geoAreaCodesTitle}>📞 AREA CODES DETECTED</Text>
-                  {geoResult.areaCodesFound.map((ac, idx) => (
-                    <View key={idx} style={styles.areaCodeItem}>
-                      <Text style={styles.areaCodeNum}>{ac.code}</Text>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.areaCodeState}>{ac.state}</Text>
-                        <Text style={styles.areaCodeCities}>{ac.cities.join(', ')}</Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Regional Chains Found */}
-              {geoResult.regionalChains && geoResult.regionalChains.length > 0 && (
-                <View style={styles.geoRegionalSection}>
-                  <Text style={styles.geoRegionalTitle}>🏪 REGIONAL CHAINS IDENTIFIED</Text>
-                  {geoResult.regionalChains.map((chain, idx) => (
-                    <View key={idx} style={styles.regionalChainItem}>
-                      <Text style={styles.regionalChainName}>{chain.name}</Text>
-                      <Text style={styles.regionalChainRegion}>{chain.region}</Text>
-                      <Text style={styles.regionalChainStates}>Found in: {chain.states.join(', ')}</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Searchable Text */}
-              {(geoResult.businessNames.length > 0 || geoResult.signText.length > 0) && (
-                <View style={styles.geoSearchableSection}>
-                  <Text style={styles.geoSearchableTitle}>Searchable Text Found</Text>
-                  {geoResult.businessNames.length > 0 && (
-                    <Text style={styles.geoSearchableText}>Businesses: {geoResult.businessNames.join(', ')}</Text>
-                  )}
-                  {geoResult.signText.length > 0 && (
-                    <Text style={styles.geoSearchableText}>Signs: {geoResult.signText.join(', ')}</Text>
-                  )}
-                </View>
-              )}
-
-              {/* Business Search Links */}
-              {geoResult.businessSearchLinks && geoResult.businessSearchLinks.length > 0 && (
-                <View style={styles.geoBusinessLinksSection}>
-                  <Text style={styles.geoBusinessLinksTitle}>🗺️ SEARCH BUSINESSES ON MAP</Text>
-                  {geoResult.businessSearchLinks.slice(0, 4).map((link, idx) => (
-                    <TouchableOpacity
-                      key={idx}
-                      style={styles.businessLinkBtn}
-                      onPress={() => openUrl(link.searchUrl)}
-                    >
-                      <Ionicons name="location" size={14} color={THEME.info} />
-                      <Text style={styles.businessLinkText}>{link.business}</Text>
-                      <Ionicons name="open-outline" size={14} color={THEME.textMuted} />
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-
-              {/* Enhanced OSM Lookup Button */}
-              {geoResult.businessNames.length > 0 && !enhancedLocations && (
-                <TouchableOpacity
-                  style={[styles.enhanceBtn, isEnhancing && styles.btnDisabled]}
-                  onPress={runEnhancedLookup}
-                  disabled={isEnhancing}
-                >
-                  {isEnhancing ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <>
-                      <Ionicons name="globe" size={16} color="#fff" />
-                      <Text style={styles.enhanceBtnText}>Deep Search (OpenStreetMap)</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              )}
-
-              {/* Enhanced Locations Results */}
-              {enhancedLocations && (
-                <View style={styles.enhancedSection}>
-                  <Text style={styles.enhancedTitle}>🌐 OPENSTREETMAP RESULTS</Text>
-
-                  {enhancedLocations.narrowedRegion && (
-                    <View style={styles.narrowedRegionBox}>
-                      <Ionicons name="checkmark-circle" size={16} color={THEME.success} />
-                      <Text style={styles.narrowedRegionText}>
-                        Multiple businesses found in: <Text style={styles.narrowedRegionHighlight}>{enhancedLocations.narrowedRegion}</Text>
-                      </Text>
-                    </View>
-                  )}
-
-                  {enhancedLocations.businessLocations.map((biz, idx) => (
-                    <View key={idx} style={styles.osmBusinessItem}>
-                      <Text style={styles.osmBusinessName}>{biz.name}</Text>
-                      {biz.matches.slice(0, 3).map((match, midx) => (
-                        <TouchableOpacity
-                          key={midx}
-                          style={styles.osmMatchItem}
-                          onPress={() => openUrl(`https://www.google.com/maps/@${match.lat},${match.lon},17z`)}
-                        >
-                          <Ionicons name="navigate" size={12} color={THEME.info} />
-                          <Text style={styles.osmMatchText}>
-                            {match.city}{match.city && match.state ? ', ' : ''}{match.state}
-                          </Text>
-                          <Ionicons name="open-outline" size={12} color={THEME.textMuted} />
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  ))}
-
-                  {enhancedLocations.businessLocations.length === 0 && (
-                    <Text style={styles.noOsmResults}>No exact matches found in OpenStreetMap</Text>
-                  )}
-                </View>
-              )}
-
-              {/* Search Suggestions */}
-              {geoResult.searchSuggestions.length > 0 && (
-                <View style={styles.geoSuggestionsSection}>
-                  <Text style={styles.geoSuggestionsTitle}>Search Suggestions</Text>
-                  {geoResult.searchSuggestions.slice(0, 3).map((suggestion, idx) => (
-                    <Text key={idx} style={styles.geoSuggestionText}>• {suggestion}</Text>
-                  ))}
-                </View>
-              )}
-
-              {/* Alternative Locations */}
-              {geoResult.alternativeLocations.length > 0 && (
-                <View style={styles.geoAltSection}>
-                  <Text style={styles.geoAltTitle}>Alternatives</Text>
-                  {geoResult.alternativeLocations.slice(0, 2).map((alt, idx) => (
-                    <Text key={idx} style={styles.geoAltText}>
-                      {[alt.city, alt.region].filter(Boolean).join(', ')} ({alt.confidence})
-                    </Text>
-                  ))}
-                </View>
-              )}
-            </View>
-          )}
-        </View>
 
         {/* Results */}
         {searchResults.length > 0 && (
@@ -1152,7 +640,7 @@ export default function OSINTScreen() {
               <Text style={styles.infoText}>Breach check, email verification, social lookup</Text>
 
               <Text style={[styles.infoHeader, { marginTop: 12 }]}>📞 PHONE</Text>
-              <Text style={styles.infoText}>Reverse lookup, carrier info, social search</Text>
+              <Text style={styles.infoText}>Reverse lookup, carrier info, line type, fraud score</Text>
 
               <Text style={[styles.infoHeader, { marginTop: 12 }]}>@ USERNAME</Text>
               <Text style={styles.infoText}>Cross-platform username search</Text>
@@ -1340,78 +828,6 @@ const styles = StyleSheet.create({
     color: THEME.textSecondary,
     marginTop: 2,
   },
-  // Photo Analysis Styles
-  photoSection: {
-    marginHorizontal: 16,
-    marginTop: 24,
-    padding: 16,
-    backgroundColor: THEME.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: THEME.border,
-  },
-  photoSectionTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: THEME.primary,
-    letterSpacing: 1,
-    marginBottom: 4,
-  },
-  photoSectionDesc: {
-    fontSize: 12,
-    color: THEME.textMuted,
-    marginBottom: 16,
-  },
-  uploadBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    backgroundColor: THEME.primaryMuted,
-    borderRadius: 10,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: THEME.primary,
-    borderStyle: 'dashed',
-  },
-  uploadBtnText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: THEME.primary,
-  },
-  photoPreviewContainer: {
-    alignItems: 'center',
-  },
-  photoPreview: {
-    width: 150,
-    height: 150,
-    borderRadius: 12,
-    marginBottom: 12,
-  },
-  photoActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  analyzeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: THEME.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  analyzeBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  clearBtn: {
-    padding: 10,
-    backgroundColor: THEME.danger + '20',
-    borderRadius: 8,
-  },
   btnDisabled: {
     opacity: 0.6,
   },
@@ -1428,556 +844,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: THEME.danger,
     flex: 1,
-  },
-  analysisResults: {
-    marginTop: 16,
-  },
-  gpsAlert: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: THEME.success + '20',
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: THEME.success,
-  },
-  gpsTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: THEME.success,
-  },
-  gpsCoords: {
-    fontSize: 12,
-    color: THEME.text,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-  },
-  mapBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: THEME.success,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  mapBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  timestampRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  timestampText: {
-    fontSize: 13,
-    color: THEME.warning,
-  },
-  boloSection: {
-    backgroundColor: THEME.surfaceLight,
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  boloTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.primary,
-    marginBottom: 6,
-    letterSpacing: 1,
-  },
-  boloText: {
-    fontSize: 13,
-    color: THEME.text,
-    lineHeight: 20,
-  },
-  identifiersSection: {
-    marginBottom: 12,
-  },
-  identifiersTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.warning,
-    marginBottom: 8,
-    letterSpacing: 1,
-  },
-  identifierRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginBottom: 8,
-  },
-  identifierNum: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: THEME.primary,
-    width: 18,
-    height: 18,
-    textAlign: 'center',
-    lineHeight: 18,
-    backgroundColor: THEME.primaryMuted,
-    borderRadius: 9,
-  },
-  identifierFeature: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: THEME.text,
-  },
-  identifierReason: {
-    fontSize: 12,
-    color: THEME.textMuted,
-  },
-  tattoosSection: {
-    marginBottom: 12,
-  },
-  tattoosTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.purple,
-    marginBottom: 8,
-    letterSpacing: 1,
-  },
-  tattooItem: {
-    backgroundColor: THEME.surfaceLight,
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: THEME.purple,
-  },
-  tattooLocation: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.purple,
-    marginBottom: 4,
-  },
-  tattooDesc: {
-    fontSize: 13,
-    color: THEME.text,
-    marginBottom: 4,
-  },
-  tattooText: {
-    fontSize: 12,
-    color: THEME.warning,
-    fontStyle: 'italic',
-    marginBottom: 4,
-  },
-  tattooMeta: {
-    fontSize: 11,
-    color: THEME.textMuted,
-  },
-  tattooMeaning: {
-    fontSize: 12,
-    color: THEME.info,
-    marginTop: 4,
-  },
-  reverseSearchSection: {
-    marginTop: 4,
-  },
-  reverseSearchTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.textMuted,
-    marginBottom: 8,
-    letterSpacing: 1,
-  },
-  reverseSearchBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: THEME.surfaceLight,
-    padding: 10,
-    borderRadius: 6,
-    marginBottom: 6,
-  },
-  reverseSearchName: {
-    fontSize: 13,
-    color: THEME.text,
-    fontWeight: '500',
-  },
-  reverseSearchBtnActive: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: THEME.success + '15',
-    padding: 10,
-    borderRadius: 6,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: THEME.success + '40',
-  },
-  reverseSearchReady: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  reverseSearchNameActive: {
-    fontSize: 13,
-    color: THEME.success,
-    fontWeight: '600',
-  },
-  reverseSearchBtnFace: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: THEME.warning + '15',
-    padding: 10,
-    borderRadius: 6,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: THEME.warning + '40',
-  },
-  reverseSearchNameFace: {
-    fontSize: 13,
-    color: THEME.warning,
-    fontWeight: '600',
-  },
-  searchUrlNote: {
-    fontSize: 11,
-    color: THEME.textMuted,
-    textAlign: 'center',
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-  // Geo Analysis Button
-  geoBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: THEME.info,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  analysisTypeBadges: {
-    flexDirection: 'row',
-    gap: 6,
-    marginTop: 8,
-  },
-  analysisBadge: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: THEME.primary,
-    backgroundColor: THEME.primary + '20',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  geoBadge: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: THEME.info,
-    backgroundColor: THEME.info + '20',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  // Geo Results
-  geoResults: {
-    marginTop: 16,
-    padding: 12,
-    backgroundColor: THEME.info + '10',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: THEME.info + '30',
-  },
-  geoResultsTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.info,
-    letterSpacing: 1,
-    marginBottom: 12,
-  },
-  geoPrimaryLocation: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-  },
-  geoPrimaryText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: THEME.text,
-  },
-  geoNeighborhood: {
-    fontSize: 13,
-    color: THEME.textSecondary,
-  },
-  geoConfidence: {
-    fontSize: 11,
-    color: THEME.info,
-    marginTop: 2,
-  },
-  geoMapBtn: {
-    backgroundColor: THEME.info,
-    padding: 8,
-    borderRadius: 6,
-  },
-  geoSummary: {
-    backgroundColor: THEME.surface,
-    padding: 10,
-    borderRadius: 6,
-    marginBottom: 12,
-  },
-  geoSummaryText: {
-    fontSize: 13,
-    color: THEME.text,
-    lineHeight: 20,
-  },
-  geoCluesSection: {
-    marginBottom: 12,
-  },
-  geoCluesTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.textMuted,
-    marginBottom: 6,
-  },
-  geoClueItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-  },
-  geoClueText: {
-    fontSize: 12,
-    color: THEME.text,
-    flex: 1,
-  },
-  geoSearchableSection: {
-    backgroundColor: THEME.warning + '15',
-    padding: 10,
-    borderRadius: 6,
-    marginBottom: 12,
-  },
-  geoSearchableTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.warning,
-    marginBottom: 4,
-  },
-  geoSearchableText: {
-    fontSize: 12,
-    color: THEME.text,
-  },
-  geoSuggestionsSection: {
-    marginBottom: 12,
-  },
-  geoSuggestionsTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.textMuted,
-    marginBottom: 6,
-  },
-  geoSuggestionText: {
-    fontSize: 12,
-    color: THEME.textSecondary,
-    marginBottom: 2,
-  },
-  geoAltSection: {
-    borderTopWidth: 1,
-    borderTopColor: THEME.border,
-    paddingTop: 10,
-  },
-  geoAltTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.textMuted,
-    marginBottom: 4,
-  },
-  geoAltText: {
-    fontSize: 12,
-    color: THEME.textSecondary,
-  },
-  // Area Codes Section
-  geoAreaCodesSection: {
-    backgroundColor: THEME.success + '15',
-    padding: 10,
-    borderRadius: 6,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: THEME.success + '30',
-  },
-  geoAreaCodesTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.success,
-    marginBottom: 8,
-    letterSpacing: 0.5,
-  },
-  areaCodeItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 6,
-  },
-  areaCodeNum: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: THEME.success,
-    backgroundColor: THEME.success + '25',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-  },
-  areaCodeState: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: THEME.text,
-  },
-  areaCodeCities: {
-    fontSize: 12,
-    color: THEME.textSecondary,
-  },
-  // Regional Chains Section
-  geoRegionalSection: {
-    backgroundColor: THEME.purple + '15',
-    padding: 10,
-    borderRadius: 6,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: THEME.purple + '30',
-  },
-  geoRegionalTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.purple,
-    marginBottom: 8,
-    letterSpacing: 0.5,
-  },
-  regionalChainItem: {
-    marginBottom: 8,
-    paddingLeft: 8,
-    borderLeftWidth: 2,
-    borderLeftColor: THEME.purple,
-  },
-  regionalChainName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: THEME.text,
-  },
-  regionalChainRegion: {
-    fontSize: 12,
-    color: THEME.purple,
-    fontWeight: '500',
-  },
-  regionalChainStates: {
-    fontSize: 11,
-    color: THEME.textMuted,
-  },
-  // Business Search Links
-  geoBusinessLinksSection: {
-    marginBottom: 12,
-  },
-  geoBusinessLinksTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.info,
-    marginBottom: 8,
-    letterSpacing: 0.5,
-  },
-  businessLinkBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: THEME.surface,
-    padding: 10,
-    borderRadius: 6,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: THEME.info + '30',
-  },
-  businessLinkText: {
-    fontSize: 13,
-    color: THEME.text,
-    flex: 1,
-    fontWeight: '500',
-  },
-  // Enhanced OSM Lookup
-  enhanceBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: THEME.purple,
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  enhanceBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  enhancedSection: {
-    backgroundColor: THEME.surface,
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: THEME.purple + '40',
-  },
-  enhancedTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.purple,
-    marginBottom: 10,
-    letterSpacing: 0.5,
-  },
-  narrowedRegionBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: THEME.success + '20',
-    padding: 10,
-    borderRadius: 6,
-    marginBottom: 12,
-  },
-  narrowedRegionText: {
-    fontSize: 13,
-    color: THEME.text,
-    flex: 1,
-  },
-  narrowedRegionHighlight: {
-    fontWeight: '700',
-    color: THEME.success,
-  },
-  osmBusinessItem: {
-    marginBottom: 12,
-  },
-  osmBusinessName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: THEME.text,
-    marginBottom: 6,
-  },
-  osmMatchItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: THEME.surfaceLight,
-    padding: 8,
-    borderRadius: 6,
-    marginBottom: 4,
-    marginLeft: 8,
-  },
-  osmMatchText: {
-    fontSize: 12,
-    color: THEME.textSecondary,
-    flex: 1,
-  },
-  noOsmResults: {
-    fontSize: 12,
-    color: THEME.textMuted,
-    fontStyle: 'italic',
-    textAlign: 'center',
-    paddingVertical: 8,
   },
   // Backend OSINT Results Styles
   osintResultsContainer: {
@@ -2043,5 +909,61 @@ const styles = StyleSheet.create({
     color: THEME.warning,
     marginTop: 8,
     textAlign: 'center',
+  },
+  // Phone Type Section Styles
+  phoneTypeSection: {
+    marginBottom: 12,
+    padding: 12,
+    backgroundColor: THEME.bg,
+    borderRadius: 10,
+    gap: 8,
+  },
+  lineTypeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  lineTypeText: {
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  activeIndicatorSmall: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: THEME.success,
+    marginLeft: 4,
+  },
+  phoneDetails: {
+    gap: 3,
+    paddingLeft: 4,
+  },
+  phoneDetailText: {
+    fontSize: 12,
+    color: THEME.textSecondary,
+  },
+  gvTextButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#f59e0b' + '20',
+    borderWidth: 1,
+    borderColor: '#f59e0b' + '40',
+    marginTop: 4,
+  },
+  gvTextButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#f59e0b',
   },
 });

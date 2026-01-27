@@ -11,6 +11,8 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
   Firestore,
   collection,
   doc,
@@ -39,8 +41,6 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
 } from 'firebase/auth';
-import { getSettings } from './storage';
-
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
 let auth: Auth | null = null;
@@ -78,9 +78,18 @@ export async function initializeFirebase(): Promise<Firestore | null> {
       app = getApps()[0];
     }
 
-    db = getFirestore(app);
+    // Enable IndexedDB persistence so getDocs/getDoc work before WebSocket connects
+    try {
+      db = initializeFirestore(app, {
+        localCache: persistentLocalCache({}),
+      });
+      console.log('Firebase initialized with persistence');
+    } catch (e) {
+      // Already initialized (hot reload) - use existing instance
+      db = getFirestore(app);
+      console.log('Firebase initialized (existing instance)');
+    }
     auth = getAuth(app);
-    console.log('Firebase initialized successfully');
     return db;
   } catch (error) {
     console.error('Firebase initialization failed:', error);
@@ -339,7 +348,7 @@ export async function resetPassword(email: string): Promise<{ success: boolean; 
 }
 
 /**
- * Get current user
+ * Get current user - uses Firebase Auth only (fast, no Firestore read)
  */
 export async function getCurrentUser(): Promise<AuthUser | null> {
   await initializeFirebase();
@@ -348,16 +357,13 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 
   const user = authInstance.currentUser;
 
-  // Get user profile from Firestore
-  const userDoc = await getDoc(doc(db!, 'users', user.uid));
-  const userData = userDoc.data();
-
+  // Use Firebase Auth data directly - no slow Firestore read
+  // Organization/role are loaded in background by AuthContext
   return {
     uid: user.uid,
     email: user.email,
     displayName: user.displayName,
-    organizationId: userData?.organizationId,
-    role: userData?.role || 'agent',
+    role: 'agent',
   };
 }
 

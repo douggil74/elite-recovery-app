@@ -1,184 +1,151 @@
-# Bail Recovery App - Architecture Plan
+# TRACE Recovery App - Architecture (v4.0.0)
 
-## Overview
-A secure mobile app for licensed bail recovery professionals to analyze person reports for:
-1. Identity verification (client release from jail)
-2. Location-lead organization (FTA recovery)
+## Cloud-First Architecture
 
-## Safety & Compliance Features
-- **Case Purpose Attestation**: Required before any analysis
-- **Anti-Stalking Warning**: Must accept before use
-- **Audit Logging**: All actions logged (upload, parse, view, export, delete)
-- **Data Minimization**: Local-first processing, encrypted storage
-- **Delete Case**: Complete data wipe capability
-- **No Real-Time Tracking**: Maps deep links only, no embedded tracking
+All case data lives in Firebase Firestore. No local SQLite. AsyncStorage is used only as a read cache for settings. A user must be logged in to access any data.
 
-## Folder Structure
+## Login Sequence (runs every login)
+
 ```
-recovery-app/
-├── app/                          # Expo Router screens
-│   ├── (tabs)/                   # Main tab navigation
-│   │   ├── _layout.tsx
-│   │   ├── index.tsx            # Cases list
-│   │   ├── audit.tsx            # Audit log viewer
-│   │   └── settings.tsx         # Settings screen
-│   ├── case/
-│   │   ├── new.tsx              # Create new case
-│   │   ├── [id]/
-│   │   │   ├── index.tsx        # Case detail
-│   │   │   ├── upload.tsx       # Upload PDF
-│   │   │   ├── brief.tsx        # Recovery Brief
-│   │   │   ├── journey.tsx      # Journey Plan
-│   │   │   └── export.tsx       # Export PDF
-│   ├── _layout.tsx              # Root layout
-│   ├── index.tsx                # Entry -> auth check
-│   ├── lock.tsx                 # Passcode/biometric lock
-│   └── purpose.tsx              # Case purpose attestation
-├── src/
-│   ├── components/
-│   │   ├── MaskedField.tsx      # Tap-to-reveal with confirmation
-│   │   ├── CaseCard.tsx
-│   │   ├── AddressCard.tsx
-│   │   ├── PhoneCard.tsx
-│   │   ├── RelativeCard.tsx
-│   │   ├── VehicleCard.tsx
-│   │   ├── ChecklistItem.tsx
-│   │   ├── WarningBanner.tsx
-│   │   └── ui/                  # Base UI components
-│   ├── lib/
-│   │   ├── database.ts          # SQLite operations
-│   │   ├── audit.ts             # Audit logging
-│   │   ├── encryption.ts        # AES encryption helpers
-│   │   ├── storage.ts           # File storage
-│   │   ├── auth.ts              # Passcode/biometrics
-│   │   ├── parser/
-│   │   │   ├── index.ts         # Main parser entry
-│   │   │   ├── patterns.ts      # Regex patterns
-│   │   │   ├── ranker.ts        # Address/phone ranking
-│   │   │   └── schema.ts        # Output schema
-│   │   └── analyzer.ts          # Analysis engine
-│   ├── hooks/
-│   │   ├── useAuth.ts
-│   │   ├── useCase.ts
-│   │   ├── useCases.ts
-│   │   └── useSettings.ts
-│   ├── types/
-│   │   └── index.ts             # TypeScript types
-│   └── constants/
-│       └── index.ts
-├── __tests__/
-│   ├── parser.test.ts
-│   └── ranker.test.ts
-├── fixtures/
-│   └── sample-report.txt        # Fake PDF text for testing
-├── backend/                     # Optional Node backend
-│   ├── src/
-│   │   ├── index.ts
-│   │   └── routes/
-│   │       ├── extract.ts
-│   │       └── analyze.ts
-│   ├── package.json
-│   └── tsconfig.json
-├── app.json
-├── package.json
-├── tsconfig.json
-├── babel.config.js
-└── README.md
+1. Firebase Auth (signInWithEmailAndPassword)     ~1-2s network
+2. setCurrentUserId(uid)                          instant
+3. Read settings from AsyncStorage cache          instant (local)
+4. Set loading=false -> app renders               immediate
+5. [Background] Sync settings from Firestore      non-blocking
+6. [Background] Migrate old local data            non-blocking
+7. [Background] Load organization info            non-blocking
+8. [Background] Real-time subscription starts     non-blocking
 ```
+
+Settings (API keys) are preserved in AsyncStorage across sign-outs so they survive device restarts. Firestore sync happens in background on every login to keep the cache fresh.
+
+## Data Model (Firestore)
+
+```
+Firestore Root
+|
++-- cases/{caseId}                    # Case document
+|   |-- userId: string                # Owner (Firebase Auth UID)
+|   |-- name: string                  # Subject name
+|   |-- purpose: "fta_recovery"
+|   |-- createdAt, updatedAt: string
+|   |-- ftaScore, ftaRiskLevel        # Optional FTA data
+|   |-- mugshotUrl, bookingNumber     # Optional jail data
+|   |-- charges[], bondAmount         # Optional charges
+|   |-- rosterData                    # Optional raw jail roster
+|   |-- syncedAt: serverTimestamp
+|   |
+|   +-- reports/{reportId}            # Subcollection: parsed reports
+|   |   |-- parsedData: ParsedReport  # AI analysis results
+|   |   |-- pdfPath: string           # Optional file ref
+|   |   |-- createdAt: string
+|   |
+|   +-- chat/history                  # Single doc: chat messages
+|   |   |-- messages: Message[]
+|   |
+|   +-- photo/target                  # Single doc: subject photo
+|       |-- dataUrl: string           # Base64 photo
+|
++-- users/{uid}
+|   +-- data/settings                 # User settings (API keys, prefs)
+|   |   |-- openaiApiKey, anthropicApiKey
+|   |   |-- googleMapsApiKey, googleVoiceNumber
+|   |   |-- storageMode, maskFieldsByDefault
+|   |
+|   +-- audit/{entryId}              # Audit log entries
+|       |-- action, caseId, details, timestamp
+|
++-- organizations/{orgId}            # Organization (optional)
+    |-- name, plan, memberCount
+```
+
+## Key Files
+
+### Core Data Layer
+| File | Purpose |
+|------|---------|
+| `src/lib/auth-state.ts` | Module-level userId holder (no circular deps) |
+| `src/lib/firebase.ts` | Firebase init, Auth functions, Firestore re-exports |
+| `src/lib/database.ts` | All CRUD: cases, reports, audit log (Firestore direct) |
+| `src/lib/storage.ts` | Settings (Firestore + AsyncStorage cache), PDF file ops |
+| `src/lib/sync.ts` | Chat/photo sync, real-time subscriptions (onSnapshot) |
+
+### Hooks
+| File | Purpose |
+|------|---------|
+| `src/hooks/useCases.ts` | Cases list with real-time subscription |
+| `src/hooks/useCase.ts` | Single case + reports loading |
+| `src/hooks/useSettings.ts` | Settings read/write |
+
+### Auth
+| File | Purpose |
+|------|---------|
+| `src/contexts/AuthContext.tsx` | Auth state, login/logout, settings cache |
 
 ## Data Flow
+
+### Case Creation
 ```
-[PDF Upload] → [Text Extraction] → [Deterministic Parser]
-                                          ↓
-                              [Pattern Match?]
-                              ↓ Yes        ↓ No
-                    [Structured Data]  [LLM Fallback]
-                              ↓              ↓
-                         [Ranking Engine]
-                              ↓
-                    [Recovery Brief / Journey Plan]
+User enters name -> dbCreateCase()
+  -> Writes to Firestore: cases/{id} with userId
+  -> Real-time subscription fires -> UI updates
 ```
 
-## Database Schema (SQLite)
-```sql
--- Cases table
-CREATE TABLE cases (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  internal_case_id TEXT,
-  purpose TEXT NOT NULL, -- 'verification' | 'fta_recovery'
-  notes TEXT,
-  attestation_accepted INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  auto_delete_at TEXT
-);
-
--- Parsed reports
-CREATE TABLE reports (
-  id TEXT PRIMARY KEY,
-  case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
-  pdf_path TEXT, -- encrypted file path
-  raw_text_hash TEXT, -- for dedup
-  parsed_data TEXT NOT NULL, -- encrypted JSON
-  created_at TEXT NOT NULL
-);
-
--- Audit log
-CREATE TABLE audit_log (
-  id TEXT PRIMARY KEY,
-  case_id TEXT,
-  action TEXT NOT NULL,
-  details TEXT,
-  timestamp TEXT NOT NULL
-);
-
--- Settings
-CREATE TABLE settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
+### Document Upload & Analysis
+```
+User uploads PDF/DOCX/TXT
+  -> Text extracted (OCR if needed via backend)
+  -> AI analyzes (Claude or GPT-4o)
+  -> createReport() writes to Firestore: cases/{id}/reports/{rid}
+  -> Report displayed in case detail
 ```
 
-## Security Measures
-1. **Storage Encryption**: All sensitive data encrypted with AES-256-GCM
-2. **App Lock**: Passcode + biometric authentication
-3. **Masked Fields**: SSN, full addresses masked by default
-4. **Audit Trail**: Every action logged with timestamp
-5. **Auto-Delete**: Configurable retention period
-6. **No Cloud by Default**: Local-only storage option
-
-## Analysis Engine
-### Deterministic Parser Patterns
-- Address sections: "ADDRESS SUMMARY", "CURRENT ADDRESS", "PREVIOUS ADDRESSES"
-- Phone sections: "PHONE SUMMARY", "PHONE NUMBERS"
-- Relative sections: "RELATIVES", "ASSOCIATES", "POSSIBLE RELATIVES"
-- Vehicle sections: "VEHICLES", "REGISTERED VEHICLES", "CURRENT VEHICLES"
-- Employment sections: "EMPLOYMENT", "POSSIBLE EMPLOYMENT"
-- Flags: "DECEASED", "HIGH RISK", "FRAUD ALERT"
-
-### Ranking Algorithm
-- **Recency**: Dates within last year score highest
-- **Corroboration**: Address tied to multiple signals (phone, vehicle, employment) scores higher
-- **Source Quality**: Direct records > inferred data
-- **Confidence Score**: 0.0 - 1.0 based on above factors
-
-## API Endpoints (Backend - Optional)
+### Cases List Loading
 ```
-POST /api/extract-text
-  Body: { pdf: base64 }
-  Response: { text: string }
-
-POST /api/analyze
-  Body: { text: string, useAI: boolean }
-  Response: { parsed: ParsedReport }
+useCases hook mounts
+  -> getAllCases(): Firestore query where userId == currentUser
+  -> subscribeToAllCases(): onSnapshot for real-time updates
+  -> Cases list renders immediately from query results
+  -> Real-time subscription keeps list updated
 ```
 
-## Tech Decisions
-- **Expo SDK 52+**: Latest stable with Expo Router
-- **expo-sqlite**: Local encrypted database
-- **expo-document-picker**: PDF file selection
-- **expo-local-authentication**: Biometrics
-- **expo-file-system**: Encrypted file storage
-- **expo-secure-store**: Encryption keys
-- **pdf-parse (backend)**: PDF text extraction
+### Settings
+```
+Read: AsyncStorage cache first (instant) -> Firestore background sync
+Write: Firestore first -> AsyncStorage cache update
+```
+
+## Performance Optimizations (v4.0)
+
+1. **No blocking Firestore reads on login** - Settings from local cache, everything else background
+2. **No N+1 queries on cases list** - Cases list uses case doc data only, no per-case report/photo fetches
+3. **Parallel AsyncStorage reads** - Case detail loads all local data via Promise.all
+4. **Debounced chat saves** - Chat syncs 1 second after last message, not on every message
+5. **Real-time subscriptions** - onSnapshot handles live updates without polling
+6. **Graceful offline handling** - All reads return empty/null on offline errors instead of crashing
+
+## Environment
+
+| Service | URL |
+|---------|-----|
+| Frontend | https://eliterecoverysystem.com (Vercel) |
+| Backend | https://elite-recovery-osint.fly.dev (Fly.io) |
+| Database | Firebase Firestore (fugitive-database) |
+| Auth | Firebase Auth |
+
+## Build & Deploy
+
+```bash
+npx expo export --platform web    # Build
+npx vercel --prod                 # Deploy
+```
+
+## Security
+
+- Firebase Auth required for all data access
+- Firestore security rules enforce userId-based access
+- API keys stored in Firestore (not in code), cached locally
+- Passcode-related settings never synced to cloud
+- Audit log tracks all case operations
+- Settings preserved across sign-out (API keys only)
+- All other local data cleared on sign-out

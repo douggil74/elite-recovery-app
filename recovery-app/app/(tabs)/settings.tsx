@@ -18,8 +18,7 @@ import { getStorageUsage, clearAllData } from '@/lib/storage';
 import { confirm, showAlert } from '@/lib/confirm';
 import { Button, Input } from '@/components';
 import { COLORS, VERSION } from '@/constants';
-import { getAllCases, getReportsForCase } from '@/lib/database';
-import { isSyncEnabled, fetchSyncedCases, pushAllToCloud, syncSettings } from '@/lib/sync';
+import { getAllCases } from '@/lib/database';
 import { isFirebaseReady } from '@/lib/firebase';
 import { checkAIBackendHealth } from '@/lib/ai-service';
 
@@ -45,8 +44,28 @@ export default function SettingsScreen() {
   // API Key state
   const [anthropicKey, setAnthropicKey] = useState('');
   const [openaiKey, setOpenaiKey] = useState('');
+  const [googleMapsKey, setGoogleMapsKey] = useState('');
   const [showApiKeys, setShowApiKeys] = useState(false);
   const [savingKeys, setSavingKeys] = useState(false);
+
+  // Communication state
+  const [googleVoiceNumber, setGoogleVoiceNumber] = useState('');
+  const [showGoogleVoice, setShowGoogleVoice] = useState(false);
+  const [savingGV, setSavingGV] = useState(false);
+
+  const handleSaveGoogleVoice = async () => {
+    setSavingGV(true);
+    try {
+      await updateSettings({
+        googleVoiceNumber: googleVoiceNumber.trim() || undefined,
+      });
+      setShowGoogleVoice(false);
+      showAlert('Success', 'Google Voice number saved');
+    } catch (e) {
+      showAlert('Error', 'Failed to save');
+    }
+    setSavingGV(false);
+  };
 
   // AI Backend status
   const [aiStatus, setAiStatus] = useState<{
@@ -57,24 +76,16 @@ export default function SettingsScreen() {
 
   // Database status
   const [dbStatus, setDbStatus] = useState<{
-    localWorking: boolean | null;
     cloudWorking: boolean | null;
-    localCases: number;
     cloudCases: number;
     testing: boolean;
     lastTested: string | null;
   }>({
-    localWorking: null,
     cloudWorking: null,
-    localCases: 0,
     cloudCases: 0,
     testing: false,
     lastTested: null,
   });
-
-  // Manual sync state
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ synced: number; failed: number } | null>(null);
 
   useEffect(() => {
     loadStorageUsage();
@@ -87,7 +98,13 @@ export default function SettingsScreen() {
     if (settings.openaiApiKey) {
       setOpenaiKey(settings.openaiApiKey);
     }
-  }, [settings.anthropicApiKey, settings.openaiApiKey]);
+    if (settings.googleMapsApiKey) {
+      setGoogleMapsKey(settings.googleMapsApiKey);
+    }
+    if (settings.googleVoiceNumber) {
+      setGoogleVoiceNumber(settings.googleVoiceNumber);
+    }
+  }, [settings.anthropicApiKey, settings.openaiApiKey, settings.googleMapsApiKey, settings.googleVoiceNumber]);
 
   const checkAIStatus = async () => {
     setAiStatus(prev => ({ ...prev, checking: true }));
@@ -106,80 +123,28 @@ export default function SettingsScreen() {
   const testDatabaseConnections = async () => {
     setDbStatus(prev => ({ ...prev, testing: true }));
 
-    let localWorking = false;
     let cloudWorking = false;
-    let localCases = 0;
     let cloudCases = 0;
 
-    // Test local storage
-    try {
-      const cases = await getAllCases();
-      localCases = cases.length;
-      localWorking = true;
-    } catch (e) {
-      console.error('Local DB test failed:', e);
-      localWorking = false;
-    }
-
-    // Test Firebase connection
+    // Test Firestore connection (cloud-first - this is the primary data store)
     try {
       const firebaseReady = await isFirebaseReady();
       if (firebaseReady) {
-        const syncedCases = await fetchSyncedCases();
-        cloudCases = syncedCases.length;
+        const cases = await getAllCases();
+        cloudCases = cases.length;
         cloudWorking = true;
       }
     } catch (e) {
-      console.error('Cloud DB test failed:', e);
+      console.error('Database test failed:', e);
       cloudWorking = false;
     }
 
     setDbStatus({
-      localWorking,
       cloudWorking,
-      localCases,
       cloudCases,
       testing: false,
       lastTested: new Date().toLocaleTimeString(),
     });
-  };
-
-  const handleManualSync = async () => {
-    setIsSyncing(true);
-    setSyncResult(null);
-
-    try {
-      // Get all local cases
-      const localCases = await getAllCases();
-
-      if (localCases.length === 0) {
-        showAlert('No Data', 'No local cases to sync');
-        setIsSyncing(false);
-        return;
-      }
-
-      // Also sync settings if user is logged in
-      if (user?.uid && settings) {
-        await syncSettings(user.uid, settings);
-      }
-
-      // Push all cases to cloud
-      const result = await pushAllToCloud(localCases, getReportsForCase);
-      setSyncResult(result);
-
-      if (result.synced > 0) {
-        showAlert('Sync Complete', `Synced ${result.synced} case(s) to cloud${result.failed > 0 ? `, ${result.failed} failed` : ''}`);
-      } else if (result.failed > 0) {
-        showAlert('Sync Failed', `Failed to sync ${result.failed} case(s). Check your connection.`);
-      }
-
-      // Refresh database status
-      await testDatabaseConnections();
-    } catch (error: any) {
-      showAlert('Sync Error', error?.message || 'Failed to sync to cloud');
-    }
-
-    setIsSyncing(false);
   };
 
   const handleSignOut = async () => {
@@ -272,6 +237,7 @@ export default function SettingsScreen() {
       await updateSettings({
         anthropicApiKey: anthropicKey.trim() || undefined,
         openaiApiKey: openaiKey.trim() || undefined,
+        googleMapsApiKey: googleMapsKey.trim() || undefined,
       });
       setShowApiKeys(false);
       showAlert('Success', 'API keys saved successfully');
@@ -444,7 +410,10 @@ export default function SettingsScreen() {
           </View>
         </TouchableOpacity>
 
-        <View style={[styles.settingRow, styles.settingRowBorder]}>
+        <TouchableOpacity
+          style={[styles.settingRow, styles.settingRowBorder]}
+          onPress={() => setShowApiKeys(!showApiKeys)}
+        >
           <View style={styles.settingInfo}>
             <Text style={styles.settingLabel}>OpenAI API Key</Text>
             <Text style={styles.settingDescription}>
@@ -465,7 +434,33 @@ export default function SettingsScreen() {
               {settings.openaiApiKey ? 'Set' : 'Optional'}
             </Text>
           </View>
-        </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.settingRow, styles.settingRowBorder]}
+          onPress={() => setShowApiKeys(!showApiKeys)}
+        >
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>Google Maps API Key</Text>
+            <Text style={styles.settingDescription}>
+              {maskApiKey(settings.googleMapsApiKey)}
+            </Text>
+          </View>
+          <View style={[styles.statusBadge, {
+            backgroundColor: settings.googleMapsApiKey ? COLORS.success + '20' : COLORS.textSecondary + '20'
+          }]}>
+            <Ionicons
+              name={settings.googleMapsApiKey ? 'checkmark-circle' : 'ellipse-outline'}
+              size={16}
+              color={settings.googleMapsApiKey ? COLORS.success : COLORS.textSecondary}
+            />
+            <Text style={[styles.statusText, {
+              color: settings.googleMapsApiKey ? COLORS.success : COLORS.textSecondary
+            }]}>
+              {settings.googleMapsApiKey ? 'Set' : 'Optional'}
+            </Text>
+          </View>
+        </TouchableOpacity>
 
         {showApiKeys && (
           <View style={styles.apiKeySetup}>
@@ -496,6 +491,18 @@ export default function SettingsScreen() {
             />
             <Text style={styles.apiKeyHint}>Get your key at platform.openai.com</Text>
 
+            <TextInput
+              style={styles.apiKeyInput}
+              value={googleMapsKey}
+              onChangeText={setGoogleMapsKey}
+              placeholder="AIza... (optional, for map embeds)"
+              placeholderTextColor={COLORS.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+            />
+            <Text style={styles.apiKeyHint}>Google Maps Embed API key - console.cloud.google.com</Text>
+
             <View style={styles.passcodeButtons}>
               <Button
                 title="Cancel"
@@ -505,6 +512,7 @@ export default function SettingsScreen() {
                   setShowApiKeys(false);
                   setAnthropicKey(settings.anthropicApiKey || '');
                   setOpenaiKey(settings.openaiApiKey || '');
+                  setGoogleMapsKey(settings.googleMapsApiKey || '');
                 }}
               />
               <Button
@@ -512,6 +520,69 @@ export default function SettingsScreen() {
                 size="small"
                 onPress={handleSaveApiKeys}
                 disabled={savingKeys}
+              />
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* Communication Section */}
+      <Text style={styles.sectionTitle}>Communication</Text>
+      <View style={styles.section}>
+        <TouchableOpacity
+          style={styles.settingRow}
+          onPress={() => setShowGoogleVoice(!showGoogleVoice)}
+        >
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>Google Voice Number</Text>
+            <Text style={styles.settingDescription}>
+              {settings.googleVoiceNumber || 'Not configured'}
+            </Text>
+          </View>
+          <View style={[styles.statusBadge, {
+            backgroundColor: settings.googleVoiceNumber ? COLORS.success + '20' : COLORS.textSecondary + '20'
+          }]}>
+            <Ionicons
+              name={settings.googleVoiceNumber ? 'checkmark-circle' : 'ellipse-outline'}
+              size={16}
+              color={settings.googleVoiceNumber ? COLORS.success : COLORS.textSecondary}
+            />
+            <Text style={[styles.statusText, {
+              color: settings.googleVoiceNumber ? COLORS.success : COLORS.textSecondary
+            }]}>
+              {settings.googleVoiceNumber ? 'Set' : 'Not Set'}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        {showGoogleVoice && (
+          <View style={styles.apiKeySetup}>
+            <Text style={[styles.settingDescription, { marginBottom: 12 }]}>
+              Enter your Google Voice number to enable "GV Text" buttons on phone results.
+            </Text>
+            <TextInput
+              style={styles.apiKeyInput}
+              value={googleVoiceNumber}
+              onChangeText={setGoogleVoiceNumber}
+              placeholder="(504) 555-1234"
+              placeholderTextColor={COLORS.textMuted}
+              keyboardType="phone-pad"
+            />
+            <View style={styles.passcodeButtons}>
+              <Button
+                title="Cancel"
+                variant="secondary"
+                size="small"
+                onPress={() => {
+                  setShowGoogleVoice(false);
+                  setGoogleVoiceNumber(settings.googleVoiceNumber || '');
+                }}
+              />
+              <Button
+                title={savingGV ? 'Saving...' : 'Save'}
+                size="small"
+                disabled={savingGV}
+                onPress={handleSaveGoogleVoice}
               />
             </View>
           </View>
@@ -597,63 +668,33 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Cloud Sync Section */}
-      <Text style={styles.sectionTitle}>Cloud Sync</Text>
+      {/* Cloud Section */}
+      <Text style={styles.sectionTitle}>Cloud Storage</Text>
       <View style={styles.section}>
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>Firebase</Text>
+            <Text style={styles.settingLabel}>Firebase Firestore</Text>
             <Text style={styles.settingDescription}>
-              Auto-configured - cloud sync enabled
+              All data stored in cloud - synced across devices
             </Text>
           </View>
           <View style={[styles.badge, { backgroundColor: COLORS.success + '20' }]}>
             <Ionicons name="cloud-done" size={14} color={COLORS.success} />
-            <Text style={[styles.badgeText, { color: COLORS.success }]}>Synced</Text>
+            <Text style={[styles.badgeText, { color: COLORS.success }]}>Active</Text>
           </View>
         </View>
       </View>
 
       {/* Database Status Section */}
-      <Text style={styles.sectionTitle}>Database Status</Text>
+      <Text style={styles.sectionTitle}>Database</Text>
       <View style={styles.section}>
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>Local Storage</Text>
-            <Text style={styles.settingDescription}>
-              {dbStatus.testing ? 'Testing...' :
-                dbStatus.localWorking === null ? 'Not tested' :
-                dbStatus.localWorking ? `Working - ${dbStatus.localCases} cases` : 'Error'}
-            </Text>
-          </View>
-          {dbStatus.testing ? (
-            <ActivityIndicator size="small" color={COLORS.primary} />
-          ) : (
-            <View style={[styles.statusBadge, {
-              backgroundColor: dbStatus.localWorking === null ? COLORS.textSecondary + '20' :
-                dbStatus.localWorking ? COLORS.success + '20' : COLORS.danger + '20'
-            }]}>
-              <Ionicons
-                name={dbStatus.localWorking === null ? 'help-circle' : dbStatus.localWorking ? 'checkmark-circle' : 'close-circle'}
-                size={16}
-                color={dbStatus.localWorking === null ? COLORS.textSecondary : dbStatus.localWorking ? COLORS.success : COLORS.danger}
-              />
-              <Text style={[styles.statusText, {
-                color: dbStatus.localWorking === null ? COLORS.textSecondary : dbStatus.localWorking ? COLORS.success : COLORS.danger
-              }]}>
-                {dbStatus.localWorking === null ? 'Unknown' : dbStatus.localWorking ? 'OK' : 'Error'}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        <View style={[styles.settingRow, styles.settingRowBorder]}>
-          <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>Cloud Database</Text>
+            <Text style={styles.settingLabel}>Firestore</Text>
             <Text style={styles.settingDescription}>
               {dbStatus.testing ? 'Testing...' :
                 dbStatus.cloudWorking === null ? 'Not tested' :
-                dbStatus.cloudWorking ? `Connected - ${dbStatus.cloudCases} cases synced` : 'Not connected'}
+                dbStatus.cloudWorking ? `Connected - ${dbStatus.cloudCases} cases` : 'Not connected'}
             </Text>
           </View>
           {dbStatus.testing ? (
@@ -661,17 +702,17 @@ export default function SettingsScreen() {
           ) : (
             <View style={[styles.statusBadge, {
               backgroundColor: dbStatus.cloudWorking === null ? COLORS.textSecondary + '20' :
-                dbStatus.cloudWorking ? COLORS.success + '20' : COLORS.warning + '20'
+                dbStatus.cloudWorking ? COLORS.success + '20' : COLORS.danger + '20'
             }]}>
               <Ionicons
                 name={dbStatus.cloudWorking === null ? 'help-circle' : dbStatus.cloudWorking ? 'cloud-done' : 'cloud-offline'}
                 size={16}
-                color={dbStatus.cloudWorking === null ? COLORS.textSecondary : dbStatus.cloudWorking ? COLORS.success : COLORS.warning}
+                color={dbStatus.cloudWorking === null ? COLORS.textSecondary : dbStatus.cloudWorking ? COLORS.success : COLORS.danger}
               />
               <Text style={[styles.statusText, {
-                color: dbStatus.cloudWorking === null ? COLORS.textSecondary : dbStatus.cloudWorking ? COLORS.success : COLORS.warning
+                color: dbStatus.cloudWorking === null ? COLORS.textSecondary : dbStatus.cloudWorking ? COLORS.success : COLORS.danger
               }]}>
-                {dbStatus.cloudWorking === null ? 'Unknown' : dbStatus.cloudWorking ? 'Synced' : 'Offline'}
+                {dbStatus.cloudWorking === null ? 'Unknown' : dbStatus.cloudWorking ? 'Connected' : 'Offline'}
               </Text>
             </View>
           )}
@@ -684,7 +725,7 @@ export default function SettingsScreen() {
         >
           <View style={styles.settingInfo}>
             <Text style={[styles.settingLabel, { color: COLORS.primary }]}>
-              Test Connections
+              Test Connection
             </Text>
             <Text style={styles.settingDescription}>
               {dbStatus.lastTested ? `Last tested: ${dbStatus.lastTested}` : 'Never tested'}
@@ -696,54 +737,12 @@ export default function SettingsScreen() {
             <Ionicons name="refresh" size={20} color={COLORS.primary} />
           )}
         </TouchableOpacity>
-
-        {/* Manual Sync Button */}
-        <TouchableOpacity
-          style={[styles.settingRow, styles.settingRowBorder, { backgroundColor: COLORS.success + '10' }]}
-          onPress={handleManualSync}
-          disabled={isSyncing}
-        >
-          <View style={styles.settingInfo}>
-            <Text style={[styles.settingLabel, { color: COLORS.success }]}>
-              Sync All to Cloud
-            </Text>
-            <Text style={styles.settingDescription}>
-              {isSyncing ? 'Syncing...' :
-                syncResult ? `Last sync: ${syncResult.synced} synced, ${syncResult.failed} failed` :
-                `Upload ${dbStatus.localCases || 0} local case(s) to cloud`}
-            </Text>
-          </View>
-          {isSyncing ? (
-            <ActivityIndicator size="small" color={COLORS.success} />
-          ) : (
-            <Ionicons name="cloud-upload" size={20} color={COLORS.success} />
-          )}
-        </TouchableOpacity>
       </View>
 
       {/* Data Management Section */}
       <Text style={styles.sectionTitle}>Data Management</Text>
       <View style={styles.section}>
         <View style={styles.settingRow}>
-          <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>Storage Mode</Text>
-            <Text style={styles.settingDescription}>
-              {settings.storageMode === 'local'
-                ? 'Local only (more secure)'
-                : 'Cloud sync enabled'}
-            </Text>
-          </View>
-          <View style={styles.badge}>
-            <Ionicons
-              name={settings.storageMode === 'cloud' ? 'cloud-done' : 'shield-checkmark'}
-              size={14}
-              color={COLORS.success}
-            />
-            <Text style={styles.badgeText}>{settings.storageMode === 'cloud' ? 'Cloud' : 'Local'}</Text>
-          </View>
-        </View>
-
-        <View style={[styles.settingRow, styles.settingRowBorder]}>
           <View style={styles.settingInfo}>
             <Text style={styles.settingLabel}>Auto-Delete Cases</Text>
             <Text style={styles.settingDescription}>

@@ -1,7 +1,7 @@
 // App constants
 
 export const APP_NAME = 'Fugitive Recovery';
-export const VERSION = '3.2.0';
+export const VERSION = '4.0.0';
 
 // Database
 export const DB_NAME = 'bailrecovery.db';
@@ -49,6 +49,8 @@ export const DEFAULT_SETTINGS = {
   osintBackendUrl: null as string | null, // Custom OSINT backend URL (defaults to production)
   anthropicApiKey: undefined as string | undefined, // Claude API key (preferred)
   openaiApiKey: undefined as string | undefined,    // OpenAI API key (fallback)
+  googleVoiceNumber: undefined as string | undefined, // User's Google Voice number
+  googleMapsApiKey: undefined as string | undefined,  // Google Maps Embed API key
 };
 
 // OSINT Backend Configuration

@@ -18,9 +18,10 @@ interface MapEmbedProps {
   addresses: { fullAddress: string; probability?: number; type?: string }[];
   height?: number;
   maxPins?: number;
+  apiKey?: string;
 }
 
-export function MapEmbed({ addresses, height = 350, maxPins = 4 }: MapEmbedProps) {
+export function MapEmbed({ addresses, height = 350, maxPins = 4, apiKey }: MapEmbedProps) {
   const topAddresses = addresses.slice(0, maxPins);
 
   if (topAddresses.length === 0) {
@@ -44,10 +45,12 @@ export function MapEmbed({ addresses, height = 350, maxPins = 4 }: MapEmbedProps
     return `https://maps.googleapis.com/maps/api/staticmap?size=600x400&maptype=roadmap&${markers}&key=`;
   };
 
-  // Fallback: Use iframe with first location centered
+  // Build iframe embed URL - uses Embed API when key is available, fallback otherwise
   const buildEmbedUrl = () => {
-    // Center on first address
     const center = encodeURIComponent(topAddresses[0].fullAddress);
+    if (apiKey) {
+      return `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${center}&zoom=12`;
+    }
     return `https://maps.google.com/maps?q=${center}&z=12&output=embed`;
   };
 

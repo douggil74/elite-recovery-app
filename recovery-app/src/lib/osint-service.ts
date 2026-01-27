@@ -257,16 +257,33 @@ async function checkPeopleSearch(
 }
 
 /**
+ * Normalize name from "LAST, First Middle" to "First Middle Last"
+ */
+function normalizeName(name: string): string {
+  if (!name) return '';
+  if (name.includes(',')) {
+    const parts = name.split(',').map(p => p.trim());
+    if (parts.length >= 2) {
+      const lastName = parts[0];
+      const firstMiddle = parts.slice(1).join(' ');
+      return `${firstMiddle} ${lastName}`.trim();
+    }
+  }
+  return name.trim();
+}
+
+/**
  * Main function to perform comprehensive OSINT search
  */
 export async function performOSINTSearch(
-  fullName: string,
+  rawName: string,
   options?: {
     state?: string;
     knownUsernames?: string[];
     checkAllVariations?: boolean;
   }
 ): Promise<OSINTSearchResult> {
+  const fullName = normalizeName(rawName) || rawName;
   const searchedAt = new Date();
   const profiles: ProfileCheckResult[] = [];
 
@@ -337,11 +354,8 @@ export async function quickCheckUsername(
 export function getReverseImageSearchUrls(): { name: string; url: string; note: string }[] {
   return [
     { name: 'Google Images', url: 'https://images.google.com/', note: 'Click camera icon to upload' },
-    { name: 'Yandex Images', url: 'https://yandex.com/images/', note: 'Best for faces - click camera' },
+    { name: 'Yandex Images', url: 'https://yandex.com/images/', note: 'Best for visual matching - click camera' },
     { name: 'TinEye', url: 'https://tineye.com/', note: 'Upload or paste URL' },
-    { name: 'PimEyes', url: 'https://pimeyes.com/', note: 'Face recognition search' },
-    { name: 'FaceCheck.ID', url: 'https://facecheck.id/', note: 'Face search database' },
-    { name: 'Search4faces', url: 'https://search4faces.com/', note: 'VK/OK face search' },
   ];
 }
 
