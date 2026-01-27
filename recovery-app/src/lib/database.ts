@@ -14,7 +14,9 @@ import {
   doc,
   setDoc,
   getDoc,
+  getDocFromCache,
   getDocs,
+  getDocsFromCache,
   deleteDoc,
   query,
   where,
@@ -136,11 +138,17 @@ export async function getCase(id: string): Promise<Case | null> {
     const db = await requireDb();
     const caseRef = doc(db, 'cases', id);
 
-    // Simple read with timeout — Firestore SDK handles cache internally
-    const snap = await Promise.race([
-      getDoc(caseRef),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
-    ]);
+    // Try cache first (instant for recently created/viewed cases)
+    let snap: any = null;
+    try {
+      snap = await getDocFromCache(caseRef);
+    } catch {
+      // Cache miss — try server with timeout
+      snap = await Promise.race([
+        getDoc(caseRef),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+      ]);
+    }
 
     if (!snap || !snap.exists()) return null;
 
@@ -177,12 +185,18 @@ export async function getAllCases(): Promise<Case[]> {
   );
 
   try {
-    // Simple query with timeout — Firestore SDK handles cache internally.
+    // Try cache first (instant), fall back to server with timeout.
     // onSnapshot in useCases provides real-time updates after this initial load.
-    const snapshot = await Promise.race([
-      getDocs(casesQuery),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
-    ]);
+    let snapshot: any = null;
+    try {
+      snapshot = await getDocsFromCache(casesQuery);
+      if (snapshot.empty) throw new Error('cache empty');
+    } catch {
+      snapshot = await Promise.race([
+        getDocs(casesQuery),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+      ]);
+    }
 
     if (!snapshot) {
       console.warn('[DB] getAllCases timed out — onSnapshot will catch up');
@@ -301,11 +315,16 @@ export async function getReportsForCase(caseId: string): Promise<Report[]> {
     const db = await requireDb();
     const reportsRef = collection(db, 'cases', caseId, 'reports');
 
-    // Simple query with timeout — Firestore SDK handles cache internally
-    const snapshot = await Promise.race([
-      getDocs(reportsRef),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
-    ]);
+    // Try cache first (instant), fall back to server with timeout
+    let snapshot: any = null;
+    try {
+      snapshot = await getDocsFromCache(reportsRef);
+    } catch {
+      snapshot = await Promise.race([
+        getDocs(reportsRef),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+      ]);
+    }
 
     if (!snapshot) {
       console.warn('[DB] getReportsForCase timed out');
@@ -462,8 +481,20 @@ export async function migrateLocalDataToFirestore(): Promise<number> {
 
       for (const c of localCases) {
         try {
-          // Check if case already exists in Firestore
-          const existingDoc = await getDoc(doc(db, 'cases', c.id));
+          // Check if case already exists in Firestore (try cache first, skip if offline)
+          let existingDoc;
+          try {
+            existingDoc = await getDocFromCache(doc(db, 'cases', c.id));
+          } catch {
+            existingDoc = await Promise.race([
+              getDoc(doc(db, 'cases', c.id)),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+            ]);
+            if (!existingDoc) {
+              console.log('[Migration] Skipping case (offline):', c.id);
+              continue;
+            }
+          }
           if (existingDoc.exists()) {
             // Case exists - make sure it has our userId
             const data = existingDoc.data();
