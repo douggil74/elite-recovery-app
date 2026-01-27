@@ -128,13 +128,13 @@ export default function UploadScreen() {
       <View style={styles.descCard}>
         <Text style={styles.descTitle}>Document Analysis</Text>
         <Text style={styles.descText}>
-          Upload bail bond paperwork, skip-trace reports, or any case documents.
-          AI will automatically detect the document type and extract all intel.
+          Upload individual files or entire folders. Folder names and structure help
+          AI understand document context. Drag and drop folders directly onto the upload area.
         </Text>
         <View style={styles.tipBox}>
           <Ionicons name="bulb" size={16} color={DARK.warning} />
           <Text style={styles.tipText}>
-            Works with: bondsman paperwork, check-in logs, court records, references, skip-traces
+            Works with: bondsman paperwork, check-in logs, court records, references, skip-traces. Upload labeled folders for better analysis.
           </Text>
         </View>
       </View>
@@ -142,7 +142,7 @@ export default function UploadScreen() {
       {/* File Upload - always allows multiple */}
       <MultiFileUpload
         onFilesReady={handleFilesReady}
-        maxFiles={10}
+        maxFiles={50}
         showRelationshipField={true}
       />
 
