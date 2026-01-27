@@ -246,12 +246,13 @@ export async function readPdfAsBase64(filePath: string): Promise<string> {
   });
 }
 
-// Settings storage - cloud-first with AsyncStorage cache
+// Settings storage - cloud + local merged
 export async function getSettings(): Promise<AppSettings> {
   try {
-    const userId = getCurrentUserId();
+    // Always load local settings first (never lose locally-saved keys)
+    const localSettings = await getSettingsFromCache();
 
-    // Try Firestore first if user is logged in
+    const userId = getCurrentUserId();
     if (userId) {
       try {
         const db = await getDb();
@@ -261,8 +262,9 @@ export async function getSettings(): Promise<AppSettings> {
           if (snap.exists()) {
             const data = snap.data();
             const { syncedAt, ...cloudSettings } = data;
-            const merged = { ...DEFAULT_SETTINGS, ...cloudSettings } as AppSettings;
-            // Update local cache
+            // Merge: defaults < local < cloud (cloud wins where it has data)
+            const merged = { ...DEFAULT_SETTINGS, ...localSettings, ...cloudSettings } as AppSettings;
+            // Update local cache with merged result
             await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(merged));
             return merged;
           }
@@ -272,12 +274,7 @@ export async function getSettings(): Promise<AppSettings> {
       }
     }
 
-    // Fall back to AsyncStorage cache
-    const stored = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
-    if (stored) {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
-    }
-    return DEFAULT_SETTINGS;
+    return localSettings;
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -287,7 +284,10 @@ export async function saveSettings(settings: Partial<AppSettings>): Promise<void
   const current = await getSettingsFromCache();
   const updated = { ...current, ...settings };
 
-  // Write to Firestore first if user is logged in
+  // Always write to AsyncStorage first (guaranteed to work)
+  await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(updated));
+
+  // Then sync full settings to Firestore if user is logged in
   const userId = getCurrentUserId();
   if (userId) {
     try {
@@ -295,25 +295,23 @@ export async function saveSettings(settings: Partial<AppSettings>): Promise<void
       if (db) {
         const settingsRef = doc(db, 'users', userId, 'data', 'settings');
         // Don't sync passcode-related settings for security
-        const { passcode, ...safeSettings } = settings as any;
+        const { passcode, passcodeEnabled, biometricsEnabled, ...safeSettings } = updated as any;
         const cleanSettings: Record<string, any> = {};
         for (const [key, value] of Object.entries(safeSettings)) {
           if (value !== undefined) {
             cleanSettings[key] = value;
           }
         }
+        // Write full settings (not partial) so cloud always has complete data
         await setDoc(settingsRef, {
           ...cleanSettings,
           syncedAt: serverTimestamp(),
-        }, { merge: true });
+        });
       }
     } catch (e) {
-      console.warn('[Settings] Firestore write failed:', e);
+      console.warn('[Settings] Firestore write failed (saved locally):', e);
     }
   }
-
-  // Update AsyncStorage cache
-  await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(updated));
 }
 
 // Read settings from local cache only (no Firestore call)
