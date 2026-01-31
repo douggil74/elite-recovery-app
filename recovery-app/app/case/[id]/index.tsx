@@ -19,7 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCase } from '@/hooks/useCase';
 import { useSettings } from '@/hooks/useSettings';
-import { deleteCase, updateCase } from '@/lib/database';
+import { deleteCase, updateCase, saveDocumentText, getDocumentsForCase, deleteDocumentText } from '@/lib/database';
 import { deleteCaseDirectory } from '@/lib/storage';
 import { confirm } from '@/lib/confirm';
 import { syncChat, syncPhoto, fetchSyncedChat, fetchSyncedPhoto, isSyncEnabled } from '@/lib/sync';
@@ -276,6 +276,7 @@ export default function CaseDetailScreen() {
   const [chatLoaded, setChatLoaded] = useState(false);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [updateLogText, setUpdateLogText] = useState('');
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [subjectPhoto, setSubjectPhoto] = useState<string | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -289,6 +290,7 @@ export default function CaseDetailScreen() {
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [facialFeatures, setFacialFeatures] = useState<FacialFeatures | null>(null);
   const [isExtractingFace, setIsExtractingFace] = useState(false);
+  const faceExtractionAttempted = useRef(false);
   const [faceMatchService, setFaceMatchService] = useState<FaceMatchingService | null>(null);
   const [photoIntel, setPhotoIntel] = useState<PhotoIntelligence | null>(null);
   const [allPhotoIntel, setAllPhotoIntel] = useState<PhotoIntelligence[]>([]);  // Store ALL photo analysis results
@@ -309,9 +311,11 @@ export default function CaseDetailScreen() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
   const [showPhotoPicker, setShowPhotoPicker] = useState(false);
+  const [isEditingTarget, setIsEditingTarget] = useState(false);
+  const [editedTarget, setEditedTarget] = useState<Record<string, string>>({});
   const profilePhotoInputRef = useRef<HTMLInputElement>(null);
 
-  const latestReport = reports[0];
+  const latestReport = reports?.[0];
   const parsedData = latestReport?.parsedData;
   const addresses = parsedData?.addresses || [];
   const phones = parsedData?.phones || [];
@@ -319,6 +323,8 @@ export default function CaseDetailScreen() {
 
   // Discovered associates from analyzing associate documents (stored separately)
   const [discoveredAssociates, setDiscoveredAssociates] = useState<any[]>([]);
+  // Track removed associate names so they stay removed across all sources
+  const [removedAssociateNames, setRemovedAssociateNames] = useState<Set<string>>(new Set());
 
   // Case intelligence - persistent store for AI/user modifications
   const [caseIntel, setCaseIntel] = useState<CaseIntel | null>(null);
@@ -330,9 +336,11 @@ export default function CaseDetailScreen() {
   const [expandedInsightId, setExpandedInsightId] = useState<string | null>(null);
   const insightsCapturedRef = useRef<Set<string>>(new Set());
 
-  // Merge base relatives with discovered associates for display
+  // Merge base relatives with discovered associates for display (exclude removed ones)
   const relatives = [...baseRelatives, ...discoveredAssociates].filter(
-    (rel, idx, arr) => arr.findIndex(r => r.name?.toLowerCase() === rel.name?.toLowerCase()) === idx
+    (rel, idx, arr) =>
+      !removedAssociateNames.has((rel.name || '').toLowerCase()) &&
+      arr.findIndex(r => r.name?.toLowerCase() === rel.name?.toLowerCase()) === idx
   );
 
   // --- Agent Insight capture logic ---
@@ -407,7 +415,7 @@ export default function CaseDetailScreen() {
     if (id) {
       const loadData = async () => {
         // Parallel local reads (instant from AsyncStorage)
-        const [localPhoto, localChat, localSocial, localPhotoIntel, localAssociates, intel, localInsights] =
+        const [localPhoto, localChat, localSocial, localPhotoIntel, localAssociates, intel, localInsights, localDocs, localRemoved] =
           await Promise.all([
             AsyncStorage.getItem(`case_photo_${id}`),
             AsyncStorage.getItem(`case_chat_${id}`),
@@ -416,6 +424,8 @@ export default function CaseDetailScreen() {
             AsyncStorage.getItem(`case_associates_${id}`),
             loadCaseIntel(id),
             AsyncStorage.getItem(`case_insights_${id}`),
+            AsyncStorage.getItem(`case_docs_${id}`),
+            AsyncStorage.getItem(`case_removed_associates_${id}`),
           ]);
 
         if (localPhoto) setSubjectPhoto(localPhoto);
@@ -428,12 +438,31 @@ export default function CaseDetailScreen() {
         if (localSocial) { try { setSocialProfiles(JSON.parse(localSocial)); } catch (e) {} }
         if (localPhotoIntel) { try { setAllPhotoIntel(JSON.parse(localPhotoIntel)); } catch (e) {} }
         if (localAssociates) { try { setDiscoveredAssociates(JSON.parse(localAssociates)); } catch (e) {} }
+        if (localRemoved) { try { setRemovedAssociateNames(new Set(JSON.parse(localRemoved))); } catch (e) {} }
         if (localInsights) {
           try {
             const parsed = JSON.parse(localInsights) as AgentInsight[];
             setAgentInsights(parsed);
             // Mark their message IDs as already captured
             parsed.forEach(i => insightsCapturedRef.current.add(i.messageId));
+          } catch (e) {}
+        }
+        // Restore previously uploaded documents so AI chat has context across sessions
+        if (localDocs) {
+          try {
+            const parsed = JSON.parse(localDocs) as { name: string; text: string; date: string }[];
+            if (parsed.length > 0) {
+              setUploadedFiles(parsed.map((d, i) => ({
+                id: `restored_${i}_${Date.now()}`,
+                name: d.name,
+                type: (d.name.toLowerCase().endsWith('.pdf') ? 'pdf'
+                  : d.name.toLowerCase().endsWith('.docx') ? 'doc'
+                  : 'text') as 'pdf' | 'text' | 'doc',
+                uploadedAt: new Date(d.date),
+                extractedText: d.text,
+              })));
+              console.log(`[Case] Restored ${parsed.length} documents from previous session`);
+            }
           } catch (e) {}
         }
         setCaseIntel(intel);
@@ -458,6 +487,30 @@ export default function CaseDetailScreen() {
             AsyncStorage.setItem(`case_photo_${id}`, cloudPhoto).catch(() => {});
           }
         }).catch(() => {});
+
+        // If no local docs, try to restore from Firestore
+        if (!localDocs) {
+          getDocumentsForCase(id).then(cloudDocs => {
+            if (cloudDocs.length > 0) {
+              console.log(`[Case] Restoring ${cloudDocs.length} documents from Firestore`);
+              setUploadedFiles(prev => {
+                if (prev.length > 0) return prev; // Don't overwrite if user already uploaded
+                return cloudDocs.map((d, i) => ({
+                  id: `cloud_${i}_${Date.now()}`,
+                  name: d.name,
+                  type: (d.name.toLowerCase().endsWith('.pdf') ? 'pdf'
+                    : d.name.toLowerCase().endsWith('.docx') ? 'doc'
+                    : 'text') as 'pdf' | 'text' | 'doc',
+                  uploadedAt: new Date(d.date),
+                  extractedText: d.text,
+                }));
+              });
+              // Cache to AsyncStorage for next time
+              const docsForStorage = cloudDocs.map(d => ({ name: d.name, text: d.text, date: d.date }));
+              AsyncStorage.setItem(`case_docs_${id}`, JSON.stringify(docsForStorage)).catch(() => {});
+            }
+          }).catch(() => {});
+        }
       };
       loadData();
     }
@@ -584,82 +637,21 @@ export default function CaseDetailScreen() {
     checkPythonBackend();
   }, []);
 
-  // Extract facial features when photo is set
+  // Load saved facial features (no auto-extraction on open)
   useEffect(() => {
-    const extractFacialFeatures = async () => {
-      if (subjectPhoto && faceMatchService && !facialFeatures && !isExtractingFace) {
-        setIsExtractingFace(true);
-
-        setChatMessages(prev => [...prev, {
-          id: uniqueId(),
-          role: 'agent',
-          content: 'FACE ANALYSIS: Extracting facial biometrics for matching...',
-          timestamp: new Date(),
-        }]);
-
-        try {
-          const result = await faceMatchService.setTargetFace(subjectPhoto);
-
-          if (result.success && result.features) {
-            setFacialFeatures(result.features);
-
-            // Save features
-            if (id) {
-              AsyncStorage.setItem(`case_face_${id}`, JSON.stringify(result.features));
-            }
-
-            setChatMessages(prev => [...prev, {
-              id: uniqueId(),
-              role: 'agent',
-              content: `FACE BIOMETRICS EXTRACTED
-
-Bone Structure:
-- Face: ${result.features.faceShape}, ${result.features.jawline} jaw
-- Cheekbones: ${result.features.cheekbones}
-
-Eyes:
-- Shape: ${result.features.eyeShape}, ${result.features.eyeSpacing} spacing
-- Color: ${result.features.eyeColor}
-
-Nose:
-- ${result.features.noseShape}, ${result.features.noseWidth} width
-
-Distinctive:
-${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveFeatures.map(f => `- ${f}`).join('\n') : '- None noted'}
-
-*Use this profile to match against any photo.*`,
-              timestamp: new Date(),
-            }]);
-          } else {
-            // Silent failure - face extraction is optional
-            console.log('Face extraction skipped:', result.error);
-          }
-        } catch (err: any) {
-          // Silent failure - don't clutter chat with face errors
-          console.log('Face extraction skipped:', err?.message);
-        }
-
-        setIsExtractingFace(false);
-        scrollToBottom();
-      }
-    };
-
-    // Load saved features first
     const loadSavedFeatures = async () => {
       if (id) {
         const saved = await AsyncStorage.getItem(`case_face_${id}`);
         if (saved) {
           try {
             setFacialFeatures(JSON.parse(saved));
+            faceExtractionAttempted.current = true;
           } catch (e) {}
         }
       }
     };
-
-    loadSavedFeatures().then(() => {
-      if (!facialFeatures) extractFacialFeatures();
-    });
-  }, [subjectPhoto, faceMatchService, id]);
+    loadSavedFeatures();
+  }, [id]);
 
   // AI Squad Orchestrator disabled - using backend proxy for chat instead
   // This eliminates duplicate "Investigation initialized" messages and removes API key requirement
@@ -918,6 +910,26 @@ ${result.features.distinctiveFeatures?.length > 0 ? result.features.distinctiveF
 
   const openUrl = (url: string) => {
     Linking.openURL(url);
+  };
+
+  // Delete a file from the case (state, AsyncStorage, and Firestore)
+  const handleDeleteFile = async (fileId: string, fileName: string) => {
+    // Remove from React state
+    setUploadedFiles(prev => prev.filter(f => f.id !== fileId));
+
+    // Remove from AsyncStorage
+    try {
+      const storageKey = `case_docs_${id}`;
+      const existing = await AsyncStorage.getItem(storageKey);
+      if (existing) {
+        const docs: { name: string; text: string; date: string }[] = JSON.parse(existing);
+        const filtered = docs.filter(d => d.name !== fileName);
+        await AsyncStorage.setItem(storageKey, JSON.stringify(filtered));
+      }
+    } catch (e) { console.warn('[Docs] Failed to remove from AsyncStorage:', e); }
+
+    // Remove from Firestore
+    deleteDocumentText(id!, fileId).catch(() => {});
   };
 
   // Analyze photo for investigative intelligence
@@ -1249,6 +1261,8 @@ ${result.explanation}`,
           docs.push({ name: file.name, text: extractResult.text!, date: new Date().toISOString() });
           await AsyncStorage.setItem(storageKey, JSON.stringify(docs));
         } catch (e) { console.warn('[Docs] Failed to persist:', e); }
+        // Also persist to Firestore for cross-device / cross-session access
+        saveDocumentText(id, file.name, extractResult.text!).catch(() => {});
 
         setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `📝 Extracted ${extractResult.text.length.toLocaleString()} characters. Analyzing with AI...`, timestamp: new Date() }]);
         scrollToBottom();
@@ -1566,9 +1580,10 @@ ${result.explanation}`,
     setShowPhotoPicker(false);
   };
 
-  const sendMessage = async () => {
-    if (!inputText.trim() || isSending) return;
-    const userText = inputText.trim();
+  const sendMessage = async (overrideText?: string) => {
+    const rawText = overrideText || inputText;
+    if (!rawText.trim() || isSending) return;
+    const userText = rawText.trim();
     const userTextLower = userText.toLowerCase();
     setChatMessages(prev => [...prev, { id: uniqueId(), role: 'user', content: userText, timestamp: new Date() }]);
     setInputText('');
@@ -1577,6 +1592,23 @@ ${result.explanation}`,
 
     // /reanalyze - re-run analysis on all uploaded documents
     if (userTextLower === '/reanalyze' || userTextLower === '/rerun' || userTextLower === 'reanalyze') {
+      // Clear existing intel data to start fresh
+      if (id) {
+        const freshIntel: CaseIntel = {
+          caseId: id,
+          addresses: [],
+          contacts: [],
+          vehicles: [],
+          notes: [],
+          excludePatterns: [],
+          customFlags: [],
+          updatedAt: new Date().toISOString(),
+        };
+        await saveCaseIntel(freshIntel);
+        setCaseIntel(freshIntel);
+        console.log('[Reanalyze] Cleared old intel data');
+      }
+
       // Check in-memory state first, then fall back to AsyncStorage
       let docsToAnalyze: { name: string; text: string }[] = uploadedFiles
         .filter(f => f.extractedText)
@@ -1592,207 +1624,92 @@ ${result.explanation}`,
         } catch (e) { console.warn('[Reanalyze] Failed to load stored docs:', e); }
       }
 
+      // Also try Firestore stored documents
+      if (docsToAnalyze.length === 0 && id) {
+        try {
+          const storedDocs = await getDocumentsForCase(id);
+          if (storedDocs.length > 0) {
+            docsToAnalyze = storedDocs.map(d => ({ name: d.name, text: d.text }));
+          }
+        } catch (e) { console.warn('[Reanalyze] Failed to load Firestore docs:', e); }
+      }
+
       if (docsToAnalyze.length === 0) {
         setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: 'No documents with extracted text found. Upload files first.', timestamp: new Date() }]);
         setIsSending(false);
         return;
       }
 
-      setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `Re-analyzing ${docsToAnalyze.length} document(s): ${docsToAnalyze.map(d => d.name).join(', ')}...`, timestamp: new Date() }]);
+      setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `Clearing old analysis and re-analyzing ${docsToAnalyze.length} document(s) fresh: ${docsToAnalyze.map(d => d.name).join(', ')}...`, timestamp: new Date() }]);
       scrollToBottom();
 
-      // Combine all extracted texts
-      const combinedText = docsToAnalyze
-        .map(f => `\n\n=== DOCUMENT: ${f.name} ===\n\n${f.text}`)
-        .join('\n');
+      // Build document content for AI
+      const documentContents = docsToAnalyze
+        .map(f => `[${f.name}]:\n${f.text.slice(0, 40000)}${f.text.length > 40000 ? '\n...(truncated)' : ''}`)
+        .join('\n\n');
 
       try {
-        const result = await analyzeText(combinedText);
-        if (result.success && result.data) {
-          const d = result.data;
-          const subject = d.subject || {};
-          const addresses = d.addresses || [];
-          const phones = d.phones || [];
-          const relatives = d.relatives || [];
-          const vehicles = d.vehicles || [];
-          const employment = d.employment || [];
-          const flags = d.flags || [];
-          const recommendations = d.recommendations || [];
-          const dAny = d as any;
-          const cosigners = dAny.cosigners || [];
-          const references = dAny.references || [];
-          const checkIns = dAny.checkIns || [];
-          const trace = dAny.traceAnalysis;
+        // Use the chat AI (backend proxy) which actually works
+        const systemPrompt = buildTracePrompt({
+          subjectName: getSubjectName(),
+          hasPhoto: !!subjectPhoto,
+          uploadedFiles: docsToAnalyze.map(f => f.name),
+          knownAddresses: [],
+          documentContents,
+        });
 
-          let intelReport = `[REPORT]TRACE ANALYSIS - ${subject.fullName || 'UNKNOWN'} (CROSS-REFERENCED)**\n`;
-          intelReport += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-          intelReport += `Sources: ${docsToAnalyze.map(f => f.name).join(' + ')}\n\n`;
+        const reanalyzePrompt = `Analyze ALL uploaded documents fresh. This is a complete re-analysis - extract ALL intelligence from the documents.
 
-          // Subject
-          intelReport += `[PERSON]SUBJECT PROFILE**\n`;
-          intelReport += `Name: ${subject.fullName || 'Unknown'}\n`;
-          if (subject.dob) intelReport += `DOB: ${subject.dob}\n`;
-          if (subject.partialSsn) intelReport += `SSN: XXX-XX-${subject.partialSsn}\n`;
-          if (phones.length > 0) intelReport += `Phone: ${phones[0].number}\n`;
-          if (subject.aliases?.length > 0) intelReport += `AKA: ${subject.aliases.join(', ')}\n`;
-          intelReport += `\n`;
+For each document, identify and add using ACTION blocks:
+1. All real person names as contacts (with relationship to subject). ONLY add real people with first and last names - never add column headers or data labels.
+2. All addresses (with type: anchor, family, work, associate, etc.). Do NOT add duplicate addresses.
+3. All vehicles with plates/VINs
+4. Any warning flags (violence history, weapons, evasion tactics)
+5. Key investigation notes
 
-          // Charges
-          const bondRecs = recommendations.filter((r: string) => r.includes('Bond') || r.includes('Charge'));
-          if (bondRecs.length > 0) {
-            intelReport += `[CHARGES]CHARGES & BOND**\n`;
-            bondRecs.forEach((info: string) => { intelReport += `• ${info}\n`; });
-            intelReport += `\n`;
-          }
+After all ACTION blocks, provide a summary of the key findings and recommended apprehension strategy.`;
 
-          // Employment
-          if (employment.length > 0) {
-            intelReport += `[EMPLOYMENT]EMPLOYMENT**\n`;
-            employment.forEach((emp: any) => {
-              intelReport += `• ${emp.employer}`;
-              if (emp.isCurrent) intelReport += ` (CURRENT)`;
-              if (emp.title) intelReport += ` - ${emp.title}`;
-              intelReport += `\n`;
-              if (emp.address) intelReport += `  ${emp.address}\n`;
-            });
-            intelReport += `\n`;
-          }
+        const response = await fetch('/api/ai/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: reanalyzePrompt },
+            ],
+            model: 'gpt-4o',
+            max_tokens: 4000,
+          }),
+        });
 
-          // Cosigners
-          if (cosigners.length > 0) {
-            intelReport += `[COSIGNER]COSIGNERS / INDEMNITORS**\n`;
-            cosigners.forEach((cs: any, i: number) => {
-              intelReport += `${i + 1}. ${cs.name} (${cs.relationship})\n`;
-              if (cs.phone) intelReport += `   Phone: ${cs.phone}\n`;
-              if (cs.address) intelReport += `   Address: ${cs.address}\n`;
-            });
-            intelReport += `\n`;
+        if (response.ok) {
+          const data = await response.json();
+          const aiResponse = data.choices?.[0]?.message?.content || 'No response';
+
+          // Parse action blocks from AI response
+          const { cleanText, actions } = parseActions(aiResponse);
+
+          // Apply actions to case intel
+          if (actions.length > 0 && id) {
+            console.log('[Reanalyze] Applying', actions.length, 'actions');
+            const { intel: updatedIntel, descriptions } = await applyActions(id, actions);
+            setCaseIntel(updatedIntel);
+
+            // Show what was added
+            const addedItems = descriptions.filter(d => d.startsWith('Added') || d.startsWith('Updated'));
+            if (addedItems.length > 0) {
+              setChatMessages(prev => [...prev, { id: uniqueId(), role: 'system', content: `Updated case intel: ${addedItems.length} items added`, timestamp: new Date() }]);
+            }
           }
 
-          // References
-          if (references.length > 0) {
-            intelReport += `[CONTACTS]REFERENCES**\n`;
-            references.forEach((ref: any, i: number) => {
-              intelReport += `${i + 1}. ${ref.name} (${ref.relationship})`;
-              if (ref.phone) intelReport += ` - ${ref.phone}`;
-              intelReport += `\n`;
-              if (ref.address) intelReport += `   ${ref.address}\n`;
-            });
-            intelReport += `\n`;
-          }
-
-          // Associates
-          const otherContacts = relatives.filter((r: any) =>
-            !r.relationship?.includes('COSIGNER') && !r.relationship?.includes('REFERENCE')
-          );
-          if (otherContacts.length > 0) {
-            intelReport += `[CONTACTS]KNOWN ASSOCIATES (${otherContacts.length})**\n`;
-            otherContacts.slice(0, 15).forEach((rel: any) => {
-              intelReport += `• ${rel.name} (${rel.relationship})`;
-              if (rel.phones?.[0]) intelReport += ` - ${rel.phones[0]}`;
-              intelReport += `\n`;
-              if (rel.currentAddress) intelReport += `  ${rel.currentAddress}\n`;
-            });
-            if (otherContacts.length > 15) intelReport += `  ...and ${otherContacts.length - 15} more\n`;
-            intelReport += `\n`;
-          }
-
-          // Vehicles
-          if (vehicles.length > 0) {
-            intelReport += `[VEHICLES]VEHICLES**\n`;
-            vehicles.forEach((v: any) => {
-              const desc = [v.year, v.make, v.model, v.color].filter(Boolean).join(' ') || 'Unknown';
-              intelReport += `• ${desc}`;
-              if (v.plate) intelReport += ` | PLATE: ${v.plate}`;
-              if (v.vin) intelReport += ` | VIN: ${v.vin}`;
-              intelReport += `\n`;
-            });
-            intelReport += `\n`;
-          }
-
-          // Check-ins
-          if (checkIns.length > 0) {
-            intelReport += `[TIMELINE]CHECK-IN TIMELINE (${checkIns.length})**\n`;
-            checkIns.slice(0, 20).forEach((ci: any) => {
-              intelReport += `• ${ci.date} - ${ci.location || ci.city || 'Unknown'}`;
-              if (ci.state && !ci.location?.includes(ci.state)) intelReport += `, ${ci.state}`;
-              intelReport += `\n`;
-            });
-            if (checkIns.length > 20) intelReport += `  ...and ${checkIns.length - 20} more\n`;
-            intelReport += `\n`;
-          }
-
-          // TRACE sections
-          if (trace?.anchorPoints?.length > 0) {
-            intelReport += `[ANCHOR]ANCHOR POINTS**\n`;
-            trace.anchorPoints.forEach((ap: any, i: number) => {
-              intelReport += `${i + 1}. ${ap.location}\n`;
-              if (ap.type) intelReport += `   Type: ${ap.type.replace(/_/g, ' ').toUpperCase()}\n`;
-              if (ap.owner) intelReport += `   Contact: ${ap.owner}\n`;
-              if (ap.checkInCount) intelReport += `   Check-ins: ${ap.checkInCount}x\n`;
-              if (ap.confidence) intelReport += `   Confidence: ${ap.confidence}%\n`;
-              if (ap.reason) intelReport += `   → ${ap.reason}\n`;
-              intelReport += `\n`;
-            });
-          }
-          if (trace?.patternAnalysis) {
-            const pa = trace.patternAnalysis;
-            intelReport += `[PATTERN]PATTERN ANALYSIS**\n`;
-            if (pa.isTruckDriver) intelReport += `TRUCK DRIVER - road stops are NOT residences\n`;
-            if (pa.checkInFrequency) intelReport += `Frequency: ${pa.checkInFrequency}\n`;
-            if (pa.typicalReturnDay) intelReport += `Returns: ${pa.typicalReturnDay}\n`;
-            if (pa.homeBaseLocation) intelReport += `HOME BASE: ${pa.homeBaseLocation}\n`;
-            intelReport += `\n`;
-          }
-          if (trace?.predictionModel) {
-            const pm = trace.predictionModel;
-            intelReport += `[PREDICT]PREDICTION MODEL**\n`;
-            if (pm.nextLikelyLocation) intelReport += `Location: ${pm.nextLikelyLocation}\n`;
-            if (pm.bestTimeWindow) intelReport += `Time: ${pm.bestTimeWindow}\n`;
-            if (pm.confidence) intelReport += `Confidence: ${pm.confidence}%\n`;
-            if (pm.reasoning) intelReport += `${pm.reasoning}\n`;
-            intelReport += `\n`;
-          }
-          if (trace?.surveillanceRecommendations?.length > 0) {
-            intelReport += `[SURVEILLANCE]APPREHENSION STRATEGY**\n`;
-            trace.surveillanceRecommendations.forEach((rec: string, i: number) => {
-              intelReport += `${i + 1}. ${rec}\n`;
-            });
-            intelReport += `\n`;
-          }
-          if (trace?.criticalObservations?.length > 0) {
-            intelReport += `[CRITICAL]CRITICAL OBSERVATIONS**\n`;
-            trace.criticalObservations.forEach((obs: string) => { intelReport += `• ${obs}\n`; });
-          }
-
-          // Addresses
-          if (addresses.length > 0) {
-            intelReport += `\n[LOCATION]ALL ADDRESSES (${addresses.length})**\n`;
-            addresses.slice(0, 10).forEach((addr: any, i: number) => {
-              const conf = addr.confidence ? ` (${Math.round(addr.confidence * 100)}%)` : '';
-              intelReport += `${i + 1}. ${addr.fullAddress || addr.address}${conf}\n`;
-            });
-          }
-
-          // Phones
-          if (phones.length > 0) {
-            intelReport += `\n[PHONES]PHONE INTELLIGENCE (${phones.length})**\n`;
-            phones.forEach((p: any) => { intelReport += `• ${p.number} (${p.type || 'unknown'})\n`; });
-          }
-
-          // Warnings
-          if (flags.length > 0) {
-            intelReport += `\n[WARNING]RED FLAGS**\n`;
-            flags.forEach((f: any) => { intelReport += `• ${f.message}\n`; });
-          }
-
-          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: intelReport, timestamp: new Date() }]);
+          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: cleanText || aiResponse, timestamp: new Date() }]);
           await refresh();
         } else {
-          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `[WARN]Re-analysis failed: ${result.error || 'Unknown error'}`, timestamp: new Date() }]);
+          const errText = await response.text();
+          setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `Re-analysis failed: ${response.status} ${errText}`, timestamp: new Date() }]);
         }
       } catch (err: any) {
-        setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `[ERROR]${err?.message || 'Re-analysis failed'}`, timestamp: new Date() }]);
+        setChatMessages(prev => [...prev, { id: uniqueId(), role: 'agent', content: `Re-analysis error: ${err?.message || 'Unknown error'}`, timestamp: new Date() }]);
       }
 
       setIsSending(false);
@@ -2360,7 +2277,7 @@ ${result.explanation}`,
         caseIntelSummary: caseIntel ? intelSummary(caseIntel) : undefined,
       });
 
-      const response = await fetch('https://elite-recovery-osint.fly.dev/api/ai/chat', {
+      const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2458,12 +2375,32 @@ ${result.explanation}`,
   };
 
   const removeAssociate = async (name: string) => {
-    setDiscoveredAssociates(prev => prev.filter(a => a.name !== name));
+    const lower = name.toLowerCase();
+
+    // 1. Remove from discoveredAssociates state + AsyncStorage
+    setDiscoveredAssociates(prev => prev.filter(a => a.name?.toLowerCase() !== lower));
     const stored = await AsyncStorage.getItem(`case_associates_${id}`);
     if (stored) {
       const list = JSON.parse(stored);
-      await AsyncStorage.setItem(`case_associates_${id}`, JSON.stringify(list.filter((a: any) => a.name !== name)));
+      await AsyncStorage.setItem(`case_associates_${id}`, JSON.stringify(list.filter((a: any) => a.name?.toLowerCase() !== lower)));
     }
+
+    // 2. Remove from caseIntel contacts if present
+    if (caseIntel?.contacts.some(c => c.name.toLowerCase() === lower)) {
+      const { applyAction, saveCaseIntel } = await import('@/lib/case-intel');
+      const updated = applyAction(caseIntel, { type: 'REMOVE_CONTACT', name });
+      setCaseIntel(updated.intel);
+      await saveCaseIntel(updated.intel);
+    }
+
+    // 3. Track removal so baseRelatives (from parsed report) stay hidden
+    setRemovedAssociateNames(prev => {
+      const next = new Set(prev);
+      next.add(lower);
+      return next;
+    });
+    AsyncStorage.setItem(`case_removed_associates_${id}`, JSON.stringify([...removedAssociateNames, lower])).catch(() => {});
+
     setSelectedLinkNode(null);
   };
 
@@ -2973,6 +2910,55 @@ ${result.explanation}`,
     setIsEditingName(false);
   };
 
+  const handleEditTarget = () => {
+    try {
+      const pt = caseData?.primaryTarget;
+      const subj = parsedData?.subject;
+      const inmate = caseData?.rosterData?.inmate;
+      setEditedTarget({
+        dob: String(pt?.dob || subj?.dob || inmate?.dob || ''),
+        height: String(pt?.height || subj?.height || inmate?.height || ''),
+        weight: String(pt?.weight || subj?.weight || inmate?.weight || ''),
+        race: String(pt?.race || subj?.race || inmate?.race || ''),
+        sex: String(pt?.sex || subj?.sex || inmate?.sex || ''),
+        hairColor: String(pt?.hairColor || subj?.hairColor || inmate?.hair || ''),
+        eyeColor: String(pt?.eyeColor || subj?.eyeColor || inmate?.eyes || ''),
+        driversLicense: String(pt?.driversLicense || subj?.driversLicense || ''),
+        phone: String(pt?.phone || subj?.phone || ''),
+        email: String(pt?.email || subj?.email || ''),
+      });
+      setIsEditingTarget(true);
+    } catch (err) {
+      console.error('Failed to open target editor:', err);
+    }
+  };
+
+  const handleSaveTarget = async () => {
+    if (!caseData?.id) { setIsEditingTarget(false); return; }
+    try {
+      const current = caseData.primaryTarget || { fullName: caseData.name };
+      await updateCase(caseData.id, {
+        primaryTarget: {
+          ...current,
+          dob: editedTarget.dob || undefined,
+          height: editedTarget.height || undefined,
+          weight: editedTarget.weight || undefined,
+          race: editedTarget.race || undefined,
+          sex: editedTarget.sex || undefined,
+          hairColor: editedTarget.hairColor || undefined,
+          eyeColor: editedTarget.eyeColor || undefined,
+          driversLicense: editedTarget.driversLicense || undefined,
+          phone: editedTarget.phone || undefined,
+          email: editedTarget.email || undefined,
+        },
+      });
+      await refresh();
+    } catch (err) {
+      console.error('Failed to update target:', err);
+    }
+    setIsEditingTarget(false);
+  };
+
   const handleDelete = async () => {
     const confirmed = await confirm({ title: 'Delete Case', message: `Delete "${caseData?.name}"?`, confirmText: 'Delete', destructive: true });
     if (confirmed) {
@@ -2983,7 +2969,7 @@ ${result.explanation}`,
       Promise.all([
         deleteCase(id!),
         deleteCaseDirectory(id!),
-        AsyncStorage.multiRemove([`case_chat_${id}`, `case_photo_${id}`, `case_squad_${id}`, `case_social_${id}`, `case_all_photo_intel_${id}`, `case_face_${id}`, `case_insights_${id}`]),
+        AsyncStorage.multiRemove([`case_chat_${id}`, `case_photo_${id}`, `case_squad_${id}`, `case_social_${id}`, `case_all_photo_intel_${id}`, `case_face_${id}`, `case_insights_${id}`, `case_docs_${id}`]),
       ]).catch(err => console.error('Delete error:', err));
     }
   };
@@ -3016,7 +3002,7 @@ ${result.explanation}`,
     phones: c.phone ? [c.phone] : [], currentAddress: c.address, _intel: true,
   }));
   const displayRelatives = [
-    ...intelContacts,
+    ...intelContacts.filter(c => !removedAssociateNames.has(c.name.toLowerCase())),
     ...relatives.filter((r: any) =>
       !intelContacts.some(ic => ic.name.toLowerCase() === (r.name || '').toLowerCase())
     ),
@@ -3096,6 +3082,14 @@ ${result.explanation}`,
         <TouchableOpacity onPress={() => router.push(`/case/${id}/wanted`)} style={[styles.reportBtn, { backgroundColor: '#dc2626' }]}>
           <Ionicons name="warning" size={18} color="#fff" />
           <Text style={styles.reportBtnText}>Wanted</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => sendMessage('/reanalyze')}
+          disabled={isSending}
+          style={[styles.reportBtn, { backgroundColor: '#3b82f6' }, isSending && { opacity: 0.5 }]}
+        >
+          <Ionicons name="refresh" size={18} color="#fff" />
+          <Text style={styles.reportBtnText}>Reanalyze</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={handleDelete} style={styles.headerBtn}>
           <Ionicons name="trash-outline" size={20} color={DARK.danger} />
@@ -3269,47 +3263,91 @@ ${result.explanation}`,
 
             {/* PRIMARY TARGET Info */}
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>PRIMARY TARGET</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={styles.sectionTitle}>PRIMARY TARGET</Text>
+                {isEditingTarget ? (
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity onPress={handleSaveTarget}><Ionicons name="checkmark-circle" size={22} color="#22c55e" /></TouchableOpacity>
+                    <TouchableOpacity onPress={() => setIsEditingTarget(false)}><Ionicons name="close-circle" size={22} color="#71717a" /></TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity onPress={handleEditTarget}><Ionicons name="pencil" size={16} color="#71717a" /></TouchableOpacity>
+                )}
+              </View>
               <View style={styles.intelCard}>
                 <Text style={styles.intelName}>{getSubjectName()}</Text>
-                {(parsedData?.subject?.dob || caseData?.primaryTarget?.dob || caseData?.rosterData?.inmate?.dob) && (
-                  <Text style={styles.intelDetail}>DOB: {parsedData?.subject?.dob || caseData?.primaryTarget?.dob || caseData?.rosterData?.inmate?.dob}</Text>
-                )}
-                {(parsedData?.subject?.height || parsedData?.subject?.weight || caseData?.rosterData?.inmate?.height || caseData?.rosterData?.inmate?.weight) && (
-                  <Text style={styles.intelDetail}>
+                {isEditingTarget ? (
+                  <>
                     {[
-                      (parsedData?.subject?.height || caseData?.rosterData?.inmate?.height) ? `Height: ${parsedData?.subject?.height || caseData?.rosterData?.inmate?.height}` : null,
-                      (parsedData?.subject?.weight || caseData?.rosterData?.inmate?.weight) ? `Weight: ${parsedData?.subject?.weight || caseData?.rosterData?.inmate?.weight}` : null,
-                    ].filter(Boolean).join('  |  ')}
-                  </Text>
+                      { key: 'dob', label: 'DOB' },
+                      { key: 'height', label: 'Height' },
+                      { key: 'weight', label: 'Weight' },
+                      { key: 'race', label: 'Race' },
+                      { key: 'sex', label: 'Sex' },
+                      { key: 'hairColor', label: 'Hair' },
+                      { key: 'eyeColor', label: 'Eyes' },
+                      { key: 'driversLicense', label: 'DL' },
+                      { key: 'phone', label: 'Phone' },
+                      { key: 'email', label: 'Email' },
+                    ].map(({ key, label }) => (
+                      <View key={key} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                        <Text style={{ color: '#71717a', fontSize: 12, width: 50, fontWeight: '600' }}>{label}:</Text>
+                        <TextInput
+                          style={{ flex: 1, color: '#e5e5e5', fontSize: 13, borderBottomWidth: 1, borderBottomColor: '#27272a', paddingVertical: 2, paddingHorizontal: 4 }}
+                          value={String(editedTarget[key] ?? '')}
+                          onChangeText={(v) => setEditedTarget(prev => ({ ...prev, [key]: v }))}
+                          placeholder={label}
+                          placeholderTextColor="#3f3f46"
+                        />
+                      </View>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    {(() => {
+                      const pt = caseData?.primaryTarget;
+                      const subj = parsedData?.subject;
+                      const inmate = caseData?.rosterData?.inmate;
+                      const dob = pt?.dob || subj?.dob || inmate?.dob;
+                      const height = pt?.height || subj?.height || inmate?.height;
+                      const weight = pt?.weight || subj?.weight || inmate?.weight;
+                      const race = pt?.race || subj?.race || inmate?.race;
+                      const sex = pt?.sex || subj?.sex || inmate?.sex;
+                      const hair = pt?.hairColor || subj?.hairColor || inmate?.hair;
+                      const eyes = pt?.eyeColor || subj?.eyeColor || inmate?.eyes;
+                      const dl = pt?.driversLicense || subj?.driversLicense;
+                      const phone = pt?.phone || subj?.phone;
+                      const email = pt?.email || subj?.email;
+                      const ssn = subj?.partialSsn;
+                      const aliases = pt?.aliases?.length ? pt.aliases : subj?.aliases;
+                      return (
+                        <>
+                          {dob && <Text style={styles.intelDetail}>DOB: {dob}</Text>}
+                          {(height || weight) && (
+                            <Text style={styles.intelDetail}>
+                              {[height ? `Height: ${height}` : null, weight ? `Weight: ${weight}` : null].filter(Boolean).join('  |  ')}
+                            </Text>
+                          )}
+                          {(race || sex) && (
+                            <Text style={styles.intelDetail}>
+                              {[race ? `Race: ${race}` : null, sex ? `Sex: ${sex}` : null].filter(Boolean).join('  |  ')}
+                            </Text>
+                          )}
+                          {(hair || eyes) && (
+                            <Text style={styles.intelDetail}>
+                              {[hair ? `Hair: ${hair}` : null, eyes ? `Eyes: ${eyes}` : null].filter(Boolean).join('  |  ')}
+                            </Text>
+                          )}
+                          {dl && <Text style={styles.intelDetail}>DL: {dl}</Text>}
+                          {ssn && <Text style={styles.intelDetail}>SSN: ***-**-{ssn.slice(-4)}</Text>}
+                          {phone && <Text style={styles.intelDetail}>Phone: {phone}</Text>}
+                          {email && <Text style={styles.intelDetail}>Email: {email}</Text>}
+                          {aliases && aliases.length > 0 && <Text style={styles.intelDetail}>AKA: {aliases.join(', ')}</Text>}
+                        </>
+                      );
+                    })()}
+                  </>
                 )}
-                {(parsedData?.subject?.race || parsedData?.subject?.sex || caseData?.rosterData?.inmate?.race || caseData?.rosterData?.inmate?.sex) && (
-                  <Text style={styles.intelDetail}>
-                    {[
-                      (parsedData?.subject?.race || caseData?.rosterData?.inmate?.race) ? `Race: ${parsedData?.subject?.race || caseData?.rosterData?.inmate?.race}` : null,
-                      (parsedData?.subject?.sex || caseData?.rosterData?.inmate?.sex) ? `Sex: ${parsedData?.subject?.sex || caseData?.rosterData?.inmate?.sex}` : null,
-                    ].filter(Boolean).join('  |  ')}
-                  </Text>
-                )}
-                {(parsedData?.subject?.hairColor || parsedData?.subject?.eyeColor || caseData?.rosterData?.inmate?.hair || caseData?.rosterData?.inmate?.eyes) && (
-                  <Text style={styles.intelDetail}>
-                    {[
-                      (parsedData?.subject?.hairColor || caseData?.rosterData?.inmate?.hair) ? `Hair: ${parsedData?.subject?.hairColor || caseData?.rosterData?.inmate?.hair}` : null,
-                      (parsedData?.subject?.eyeColor || caseData?.rosterData?.inmate?.eyes) ? `Eyes: ${parsedData?.subject?.eyeColor || caseData?.rosterData?.inmate?.eyes}` : null,
-                    ].filter(Boolean).join('  |  ')}
-                  </Text>
-                )}
-                {(parsedData?.subject?.driversLicense) && (
-                  <Text style={styles.intelDetail}>DL: {parsedData.subject.driversLicense}</Text>
-                )}
-                {parsedData?.subject?.partialSsn && <Text style={styles.intelDetail}>SSN: ***-**-{parsedData.subject.partialSsn.slice(-4)}</Text>}
-                {(parsedData?.subject?.phone) && (
-                  <Text style={styles.intelDetail}>Phone: {parsedData.subject.phone}</Text>
-                )}
-                {(parsedData?.subject?.email) && (
-                  <Text style={styles.intelDetail}>Email: {parsedData.subject.email}</Text>
-                )}
-                {parsedData?.subject?.aliases && parsedData.subject.aliases.length > 0 && <Text style={styles.intelDetail}>AKA: {parsedData.subject.aliases.join(', ')}</Text>}
               </View>
             </View>
 
@@ -3608,17 +3646,79 @@ ${result.explanation}`,
               </View>
             )}
 
-            {/* Investigation Notes from AI chat */}
-            {(caseIntel?.notes || []).length > 0 && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>NOTES ({caseIntel!.notes.length})</Text>
-                {caseIntel!.notes.map((n, idx) => (
-                  <View key={idx} style={styles.noteRow}>
-                    <Text style={{ fontSize: 12, color: DARK.text, lineHeight: 16 }}>{n.text}</Text>
-                  </View>
-                ))}
+            {/* Case Update Log */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>UPDATE LOG ({(caseIntel?.notes || []).length})</Text>
+              <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
+                <TextInput
+                  style={{
+                    flex: 1,
+                    backgroundColor: DARK.bg,
+                    borderWidth: 1,
+                    borderColor: DARK.border,
+                    borderRadius: 6,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    fontSize: 12,
+                    color: DARK.text,
+                  }}
+                  value={updateLogText}
+                  onChangeText={setUpdateLogText}
+                  placeholder="Add update..."
+                  placeholderTextColor={DARK.textMuted}
+                  onSubmitEditing={async () => {
+                    if (!updateLogText.trim() || !caseIntel || !id) return;
+                    const { intel: updated } = applyAction(caseIntel, { type: 'ADD_NOTE', text: updateLogText.trim() });
+                    // Override source to 'user' for the note just added
+                    const lastNote = updated.notes[updated.notes.length - 1];
+                    if (lastNote) lastNote.source = 'user';
+                    await saveCaseIntel(updated);
+                    setCaseIntel(updated);
+                    setUpdateLogText('');
+                  }}
+                  returnKeyType="send"
+                />
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: DARK.primary + '20',
+                    borderWidth: 1,
+                    borderColor: DARK.primary,
+                    borderRadius: 6,
+                    paddingHorizontal: 10,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  disabled={!updateLogText.trim()}
+                  onPress={async () => {
+                    if (!updateLogText.trim() || !caseIntel || !id) return;
+                    const { intel: updated } = applyAction(caseIntel, { type: 'ADD_NOTE', text: updateLogText.trim() });
+                    const lastNote = updated.notes[updated.notes.length - 1];
+                    if (lastNote) lastNote.source = 'user';
+                    await saveCaseIntel(updated);
+                    setCaseIntel(updated);
+                    setUpdateLogText('');
+                  }}
+                >
+                  <Ionicons name="add" size={18} color={DARK.primary} />
+                </TouchableOpacity>
               </View>
-            )}
+              {(caseIntel?.notes || []).slice().reverse().map((n, idx) => (
+                <View key={n.id || idx} style={[styles.noteRow, { flexDirection: 'column', gap: 2 }]}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 10, color: n.source === 'user' ? DARK.primary : DARK.textMuted, fontWeight: '600' }}>
+                      {n.source === 'user' ? 'YOU' : 'AI'}
+                    </Text>
+                    <Text style={{ fontSize: 10, color: DARK.textMuted }}>
+                      {n.addedAt ? new Date(n.addedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 12, color: DARK.text, lineHeight: 16 }}>{n.text}</Text>
+                </View>
+              ))}
+              {(caseIntel?.notes || []).length === 0 && (
+                <Text style={{ fontSize: 11, color: DARK.textMuted, fontStyle: 'italic' }}>No updates yet</Text>
+              )}
+            </View>
 
             {/* Custom Flags */}
             {(caseIntel?.customFlags || []).length > 0 && (
@@ -3640,6 +3740,12 @@ ${result.explanation}`,
                   <View key={f.id} style={styles.fileRow}>
                     <Ionicons name={f.type === 'image' ? 'image' : 'document'} size={14} color={DARK.primary} />
                     <Text style={styles.fileName} numberOfLines={1}>{f.name}</Text>
+                    <TouchableOpacity
+                      onPress={() => handleDeleteFile(f.id, f.name)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="close-circle" size={16} color={DARK.textMuted} />
+                    </TouchableOpacity>
                   </View>
                 ))}
               </View>

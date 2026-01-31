@@ -68,6 +68,9 @@ export interface CaseIntel {
     description?: string;    // Physical description, distinguishing marks
     lastSeen?: string;       // Last seen location/date/circumstances
     additionalInfo?: string; // Any extra text for the poster
+    contactName?: string;    // Contact name on poster
+    contactPhone?: string;   // Contact phone on poster
+    charges?: string;        // Charges text (semicolon-separated)
   };
   // Timestamp
   updatedAt: string;
@@ -127,6 +130,94 @@ export type IntelAction =
   | { type: 'SET_POSTER_LAST_SEEN'; text: string }
   | { type: 'SET_POSTER_ADDITIONAL_INFO'; text: string };
 
+// --- Validation Helpers ---
+
+// Reject contact names that are obviously not people (Delvepoint column headers, data labels, etc.)
+const INVALID_CONTACT_NAMES = new Set([
+  'reference code', 'transactions authorized', 'transactions', 'arbitral proceedings',
+  'arbitral', 'dates seen', 'carrier location', 'carrier', 'carrier type',
+  'source', 'status', 'type', 'date', 'address', 'phone', 'email',
+  'name', 'description', 'notes', 'note', 'unknown', 'n/a', 'none',
+  'tbd', 'pending', 'record', 'report', 'search', 'result', 'results',
+  'contact plus', 'contact plus search', 'standard comprehensive',
+  'comprehensive report', 'data', 'field', 'value', 'key', 'id',
+  'account', 'number', 'code', 'location', 'date of birth', 'dob',
+  'ssn', 'social security', 'driver license', 'expiration', 'issue date',
+  'employer', 'occupation', 'income', 'education', 'property', 'bankruptcy',
+  'lien', 'judgment', 'filing', 'case number', 'court', 'county',
+  'state', 'country', 'zip', 'city', 'apt', 'unit', 'suite',
+  'recent address record', 'address record', 'current address',
+  // Bail bond industry terms
+  'as surety', 'as indemnitor', 'as cosigner', 'as agent', 'as principal',
+  'surety', 'indemnitor', 'principal', 'obligee',
+  'bail bonds', 'bail bond', 'bonding company', 'bonding',
+  // Government / institutional
+  'texas county', 'parish court', 'district court', 'municipal court',
+  'police department', 'sheriff', 'sheriffs office',
+  // Generic roles (without names)
+  'mother', 'father', 'spouse', 'wife', 'husband', 'brother', 'sister',
+  'friend', 'neighbor', 'landlord', 'reference', 'cosigner', 'bondsman',
+]);
+
+// Words that indicate the "name" is actually a business or institution, not a person
+const BUSINESS_KEYWORDS = [
+  'bail bonds', 'bail bond', 'bonding', 'insurance', 'surety',
+  'company', 'corp', 'corporation', 'inc', 'llc', 'ltd',
+  'county', 'parish', 'court', 'department', 'office', 'agency',
+  'bank', 'financial', 'services', 'solutions',
+  'church', 'school', 'university', 'hospital',
+];
+
+function isValidContactName(name: string): boolean {
+  if (!name || name.trim().length < 3) return false;
+  if (name.trim().length > 60) return false;
+
+  const lower = name.trim().toLowerCase();
+
+  // Reject known non-person terms
+  if (INVALID_CONTACT_NAMES.has(lower)) return false;
+
+  // Reject if contains business/institution keywords
+  if (BUSINESS_KEYWORDS.some(kw => lower.includes(kw))) return false;
+
+  // Reject "As [Role]" patterns (e.g. "As Surety", "As Indemnitor")
+  if (/^as\s+\w+$/i.test(name.trim())) return false;
+
+  // Reject names starting with common non-person prefixes
+  if (/^(call|contact|the|a|an)\s/i.test(name.trim())) return false;
+
+  // Reject form template text patterns
+  if (/circle one|check if|fill in|enter here|indicate|if yes|if no|n\/a/i.test(name)) return false;
+
+  // Reject names with slashes (template choices like "YES / NO")
+  if (name.includes('/')) return false;
+
+  // Reject names that are all uppercase single words (likely headers)
+  if (name === name.toUpperCase() && !name.includes(' ')) return false;
+
+  // Reject if no vowels (not a real name)
+  if (!/[aeiou]/i.test(name)) return false;
+
+  // Reject if contains common data patterns
+  if (/^\d+$/.test(name.trim())) return false; // all numbers
+  if (/^[A-Z][a-z]+ [A-Z][a-z]+$/.test(name.trim()) === false && name.split(' ').length === 1) {
+    // Single word - only allow if it looks like a name (capitalized)
+    if (lower === name.trim()) return false; // all lowercase single word
+  }
+
+  return true;
+}
+
+// Normalize address for deduplication (strip extra spaces, standardize)
+function normalizeAddress(addr: string): string {
+  return addr.toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/,\s*/g, ', ')
+    .replace(/\./g, '')
+    .replace(/\b(apt|unit|ste|suite|#)\s*/gi, 'apt ')
+    .trim();
+}
+
 // --- Action Application ---
 
 export function applyAction(intel: CaseIntel, action: IntelAction): { intel: CaseIntel; description: string } {
@@ -134,11 +225,14 @@ export function applyAction(intel: CaseIntel, action: IntelAction): { intel: Cas
 
   switch (action.type) {
     case 'ADD_ADDRESS': {
-      // Don't duplicate
-      const exists = updated.addresses.some(
-        a => a.address.toLowerCase().includes(action.address.toLowerCase().slice(0, 20)) ||
-             action.address.toLowerCase().includes(a.address.toLowerCase().slice(0, 20))
-      );
+      // Normalize and deduplicate
+      const normalized = normalizeAddress(action.address);
+      const exists = updated.addresses.some(a => {
+        const existingNorm = normalizeAddress(a.address);
+        return existingNorm === normalized ||
+               existingNorm.includes(normalized.slice(0, 25)) ||
+               normalized.includes(existingNorm.slice(0, 25));
+      });
       if (!exists) {
         updated.addresses = [...updated.addresses, {
           id: uid(),
@@ -172,6 +266,12 @@ export function applyAction(intel: CaseIntel, action: IntelAction): { intel: Cas
     }
 
     case 'ADD_CONTACT': {
+      // Validate contact name - reject data headers and junk
+      if (!isValidContactName(action.name)) {
+        console.warn('[CaseIntel] Rejected invalid contact name:', action.name);
+        return { intel: updated, description: `Skipped invalid contact: ${action.name}` };
+      }
+
       const exists = updated.contacts.some(
         c => c.name.toLowerCase() === action.name.toLowerCase()
       );

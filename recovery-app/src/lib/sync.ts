@@ -175,6 +175,7 @@ export function subscribeToAllCases(
     );
 
     unsubscribe = onSnapshot(casesQuery, (snapshot) => {
+      console.log('[Sync] onSnapshot fired, docs:', snapshot.docs.length, 'fromCache:', snapshot.metadata.fromCache);
       const cases: Case[] = snapshot.docs
         .filter(docSnap => !pendingDeletes.has(docSnap.id))
         .map(docSnap => {
@@ -191,7 +192,7 @@ export function subscribeToAllCases(
       console.log(`[Sync] Real-time update: ${cases.length} cases (${pendingDeletes.size} pending deletes filtered)`);
       callback(cases);
     }, (error) => {
-      console.error('[Sync] Real-time subscription error:', error);
+      console.error('[Sync] Real-time subscription error:', error.code, error.message);
     });
   })();
 

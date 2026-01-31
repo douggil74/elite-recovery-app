@@ -14,7 +14,21 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { calculateRiskScore, RiskScoreResult, RiskScoreInput, searchCriminalHistory, ArrestsSearchResult } from '@/lib/osint-service';
+import {
+  calculateRiskScore,
+  RiskScoreResult,
+  RiskScoreInput,
+  searchCriminalHistory,
+  ArrestsSearchResult,
+  investigatePerson,
+  InvestigateResult,
+  getBackgroundCheckLinks,
+  BackgroundCheckLinks,
+  searchGoogleDorks,
+  GoogleDorkResult,
+  searchCourtRecords,
+  CourtRecordResult,
+} from '@/lib/osint-service';
 import { useCases } from '@/hooks/useCases';
 import { COLORS } from '@/constants';
 
@@ -50,6 +64,8 @@ export default function RiskScreen() {
     prefillBond?: string;
     prefillCharges?: string;
     prefillMugshot?: string;
+    prefillFTAs?: string;
+    prefillConvictions?: string;
   }>();
   const { createCase } = useCases();
   const [isLoading, setIsLoading] = useState(false);
@@ -59,6 +75,19 @@ export default function RiskScreen() {
   const [criminalHistory, setCriminalHistory] = useState<ArrestsSearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [prefillApplied, setPrefillApplied] = useState(false);
+
+  // OSINT sweep state
+  const [osintStates, setOsintStates] = useState<Record<string, { status: 'idle' | 'running' | 'done' | 'error'; error?: string }>>({
+    arrests: { status: 'idle' },
+    courts: { status: 'idle' },
+    profiles: { status: 'idle' },
+    background: { status: 'idle' },
+    dorks: { status: 'idle' },
+  });
+  const [osintRunning, setOsintRunning] = useState(false);
+  const [investigateResult, setInvestigateResult] = useState<InvestigateResult | null>(null);
+  const [courtResult, setCourtResult] = useState<CourtRecordResult | null>(null);
+  const [osintExpanded, setOsintExpanded] = useState(false);
 
   // Track mounted state to prevent state updates after unmount
   const isMounted = useRef(true);
@@ -111,6 +140,14 @@ export default function RiskScreen() {
       setMugshotUrl(params.prefillMugshot);
       hasParams = true;
     }
+    if (params.prefillFTAs) {
+      setPriorFTAs(params.prefillFTAs);
+      hasParams = true;
+    }
+    if (params.prefillConvictions) {
+      setPriorConvictions(params.prefillConvictions);
+      hasParams = true;
+    }
 
     if (hasParams) {
       setPrefillApplied(true);
@@ -138,6 +175,11 @@ export default function RiskScreen() {
     );
   };
 
+  const updateOsintState = (tool: string, status: 'idle' | 'running' | 'done' | 'error', error?: string) => {
+    if (!isMounted.current) return;
+    setOsintStates(prev => ({ ...prev, [tool]: { status, error } }));
+  };
+
   const calculateScore = async () => {
     if (!name.trim()) {
       setError('Name is required');
@@ -145,16 +187,131 @@ export default function RiskScreen() {
     }
 
     setIsLoading(true);
+    setOsintRunning(true);
     setError(null);
     setResult(null);
+    setInvestigateResult(null);
+    setCourtResult(null);
+    setOsintExpanded(false);
+
+    // Reset OSINT states
+    const initialStates: Record<string, { status: 'idle' | 'running' | 'done' | 'error' }> = {
+      arrests: { status: 'running' },
+      courts: { status: 'running' },
+      profiles: { status: 'running' },
+      background: { status: 'running' },
+      dorks: { status: 'running' },
+    };
+    setOsintStates(initialStates);
+
+    const trimmedName = name.trim();
+
+    // Use local variables to track enriched data from OSINT results
+    // (setState is async so we can't rely on state for Phase 2)
+    let enrichedFTAs = parseInt(priorFTAs) || 0;
+    let enrichedConvictions = parseInt(priorConvictions) || 0;
+    let enrichedCharges = charges;
+    let enrichedAge = age;
 
     try {
+      // ---- Phase 1: OSINT Sweep (all tools in parallel) ----
+      const osintPromises = await Promise.allSettled([
+        // 1. Arrests search
+        (async () => {
+          try {
+            const arrestResult = await searchCriminalHistory(trimmedName);
+            if (!isMounted.current) return;
+            updateOsintState('arrests', 'done');
+            setCriminalHistory(arrestResult);
+
+            // Auto-fill from arrests data
+            if (arrestResult.fta_count > 0 && arrestResult.fta_count > enrichedFTAs) {
+              enrichedFTAs = arrestResult.fta_count;
+              setPriorFTAs(String(arrestResult.fta_count));
+            }
+            if (arrestResult.total_results > 0 && arrestResult.total_results > enrichedConvictions) {
+              enrichedConvictions = arrestResult.total_results;
+              setPriorConvictions(String(arrestResult.total_results));
+            }
+            // Auto-fill charges from arrest records if not already set
+            if (!charges.trim() && arrestResult.arrests_found.length > 0) {
+              const allCharges = arrestResult.arrests_found.flatMap(a => a.charges);
+              const uniqueCharges = [...new Set(allCharges)].slice(0, 10);
+              if (uniqueCharges.length > 0) {
+                enrichedCharges = uniqueCharges.join(', ');
+                setCharges(enrichedCharges);
+              }
+            }
+            // Auto-fill age from arrest records if not set
+            if (!age && arrestResult.arrests_found.length > 0) {
+              const ageRecord = arrestResult.arrests_found.find(a => a.age);
+              if (ageRecord?.age) {
+                enrichedAge = ageRecord.age;
+                setAge(ageRecord.age);
+              }
+            }
+          } catch {
+            updateOsintState('arrests', 'error');
+          }
+        })(),
+
+        // 2. Court records
+        (async () => {
+          try {
+            const courts = await searchCourtRecords(trimmedName);
+            if (!isMounted.current) return;
+            updateOsintState('courts', 'done');
+            setCourtResult(courts);
+          } catch {
+            updateOsintState('courts', 'error');
+          }
+        })(),
+
+        // 3. Investigate person (social profiles)
+        (async () => {
+          try {
+            const profiles = await investigatePerson(trimmedName);
+            if (!isMounted.current) return;
+            updateOsintState('profiles', 'done');
+            setInvestigateResult(profiles);
+          } catch {
+            updateOsintState('profiles', 'error');
+          }
+        })(),
+
+        // 4. Background check links
+        (async () => {
+          try {
+            await getBackgroundCheckLinks(trimmedName);
+            if (!isMounted.current) return;
+            updateOsintState('background', 'done');
+          } catch {
+            updateOsintState('background', 'error');
+          }
+        })(),
+
+        // 5. Google Dorks
+        (async () => {
+          try {
+            await searchGoogleDorks(trimmedName, 'name');
+            if (!isMounted.current) return;
+            updateOsintState('dorks', 'done');
+          } catch {
+            updateOsintState('dorks', 'error');
+          }
+        })(),
+      ]);
+
+      if (!isMounted.current) return;
+      setOsintRunning(false);
+
+      // ---- Phase 2: Calculate score with enriched data ----
       const input: RiskScoreInput = {
-        name: name.trim(),
-        age: age ? parseInt(age) : undefined,
+        name: trimmedName,
+        age: enrichedAge ? parseInt(enrichedAge) : undefined,
         bond_amount: bondAmount ? parseFloat(bondAmount) : undefined,
-        prior_ftas: parseInt(priorFTAs) || 0,
-        prior_convictions: parseInt(priorConvictions) || 0,
+        prior_ftas: enrichedFTAs,
+        prior_convictions: enrichedConvictions,
         months_in_jail: monthsInJail ? parseInt(monthsInJail) : undefined,
         employment_status: employmentStatus,
         residence_type: residenceType,
@@ -164,7 +321,7 @@ export default function RiskScreen() {
         phone_verified: phoneVerified,
         references_verified: parseInt(referencesVerified) || 0,
         income_monthly: monthlyIncome ? parseFloat(monthlyIncome) : undefined,
-        charges: charges ? charges.split(',').map(c => c.trim()) : undefined,
+        charges: enrichedCharges ? enrichedCharges.split(',').map(c => c.trim()) : undefined,
       };
 
       const scoreResult = await calculateRiskScore(input);
@@ -172,6 +329,7 @@ export default function RiskScreen() {
       setResult(scoreResult);
     } catch (err: any) {
       if (!isMounted.current) return;
+      setOsintRunning(false);
       setError(err.message || 'Failed to calculate risk score');
     } finally {
       if (isMounted.current) {
@@ -199,6 +357,17 @@ export default function RiskScreen() {
     setResult(null);
     setCriminalHistory(null);
     setError(null);
+    setInvestigateResult(null);
+    setCourtResult(null);
+    setOsintExpanded(false);
+    setOsintRunning(false);
+    setOsintStates({
+      arrests: { status: 'idle' },
+      courts: { status: 'idle' },
+      profiles: { status: 'idle' },
+      background: { status: 'idle' },
+      dorks: { status: 'idle' },
+    });
   };
 
   const searchHistory = async () => {
@@ -275,6 +444,114 @@ export default function RiskScreen() {
       </Text>
     </TouchableOpacity>
   );
+
+  const OSINT_TOOLS = [
+    { key: 'arrests', label: 'Arrests' },
+    { key: 'courts', label: 'Courts' },
+    { key: 'profiles', label: 'Profiles' },
+    { key: 'background', label: 'Background' },
+    { key: 'dorks', label: 'Dorks' },
+  ];
+
+  const renderOsintStatusBar = () => {
+    const anyActive = Object.values(osintStates).some(s => s.status !== 'idle');
+    if (!anyActive) return null;
+
+    return (
+      <View style={styles.osintStatusContainer}>
+        <Text style={styles.osintStatusTitle}>OSINT CHECK</Text>
+        <View style={styles.osintChipsRow}>
+          {OSINT_TOOLS.map(tool => {
+            const state = osintStates[tool.key];
+            const chipColor =
+              state.status === 'running' ? THEME.warning :
+              state.status === 'done' ? THEME.success :
+              state.status === 'error' ? THEME.danger :
+              THEME.textMuted;
+            const icon =
+              state.status === 'running' ? 'ellipse' :
+              state.status === 'done' ? 'checkmark-circle' :
+              state.status === 'error' ? 'close-circle' :
+              'ellipse-outline';
+
+            return (
+              <View key={tool.key} style={[styles.osintChip, { borderColor: chipColor + '60', backgroundColor: chipColor + '15' }]}>
+                {state.status === 'running' ? (
+                  <ActivityIndicator size={10} color={chipColor} />
+                ) : (
+                  <Ionicons name={icon} size={12} color={chipColor} />
+                )}
+                <Text style={[styles.osintChipText, { color: chipColor }]}>{tool.label}</Text>
+              </View>
+            );
+          })}
+        </View>
+      </View>
+    );
+  };
+
+  const renderOsintSummary = () => {
+    const hasAnyData = criminalHistory || courtResult || investigateResult;
+    if (!hasAnyData) return null;
+
+    const arrestCount = criminalHistory?.total_results || 0;
+    const ftaFlags = criminalHistory?.fta_count || 0;
+    const warrantFlags = criminalHistory?.warrant_count || 0;
+    const courtCases = courtResult?.total_results || 0;
+    const profilesFound = investigateResult?.confirmed_profiles?.length || 0;
+
+    return (
+      <View style={styles.osintSummaryContainer}>
+        <TouchableOpacity
+          style={styles.osintSummaryHeader}
+          onPress={() => setOsintExpanded(!osintExpanded)}
+        >
+          <Ionicons name="globe-outline" size={18} color={THEME.primary} />
+          <Text style={styles.osintSummaryTitle}>OSINT Intelligence</Text>
+          <Ionicons name={osintExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={THEME.textMuted} />
+        </TouchableOpacity>
+
+        {osintExpanded && (
+          <View style={styles.osintSummaryBody}>
+            {/* Arrests summary */}
+            <View style={styles.osintSummaryRow}>
+              <Ionicons name="finger-print" size={14} color={arrestCount > 0 ? THEME.danger : THEME.success} />
+              <Text style={styles.osintSummaryText}>
+                {arrestCount} arrest{arrestCount !== 1 ? 's' : ''} found
+                {ftaFlags > 0 ? ` | ${ftaFlags} FTA flag${ftaFlags !== 1 ? 's' : ''}` : ''}
+                {warrantFlags > 0 ? ` | ${warrantFlags} warrant${warrantFlags !== 1 ? 's' : ''}` : ''}
+              </Text>
+            </View>
+
+            {/* Court records summary */}
+            <View style={styles.osintSummaryRow}>
+              <Ionicons name="briefcase" size={14} color={courtCases > 0 ? THEME.warning : THEME.success} />
+              <Text style={styles.osintSummaryText}>
+                {courtCases} court case{courtCases !== 1 ? 's' : ''} found
+              </Text>
+            </View>
+
+            {/* Social profiles summary */}
+            <View style={styles.osintSummaryRow}>
+              <Ionicons name="people" size={14} color={profilesFound > 0 ? THEME.primary : THEME.textMuted} />
+              <Text style={styles.osintSummaryText}>
+                {profilesFound} social profile{profilesFound !== 1 ? 's' : ''} found
+              </Text>
+            </View>
+
+            {/* Link to OSINT tab */}
+            <TouchableOpacity
+              style={styles.osintFullSearchLink}
+              onPress={() => router.push({ pathname: '/(tabs)/osint', params: { prefillName: name.trim() } })}
+            >
+              <Ionicons name="open-outline" size={14} color={THEME.primary} />
+              <Text style={styles.osintFullSearchLinkText}>Full OSINT search</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    );
+  };
 
   const renderResult = () => {
     if (!result) return null;
@@ -356,6 +633,9 @@ export default function RiskScreen() {
             <Text style={[styles.breakdownTotalValue, { color: riskColor }]}>{result.score_breakdown.final_score}</Text>
           </View>
         </View>
+
+        {/* OSINT Intelligence Summary */}
+        {renderOsintSummary()}
 
         {/* Action Buttons */}
         <View style={styles.actionButtonsRow}>
@@ -768,6 +1048,9 @@ export default function RiskScreen() {
                 <Text style={styles.checkboxLabel}>Phone Verified</Text>
               </TouchableOpacity>
             </View>
+
+            {/* OSINT Status Bar */}
+            {renderOsintStatusBar()}
 
             {/* Error */}
             {error && (
@@ -1378,5 +1661,92 @@ const styles = StyleSheet.create({
     color: THEME.textMuted,
     textAlign: 'right',
     marginTop: 8,
+  },
+  // OSINT Status Bar
+  osintStatusContainer: {
+    backgroundColor: THEME.surface,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: THEME.primary + '40',
+  },
+  osintStatusTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.primary,
+    letterSpacing: 1,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  osintChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  osintChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  osintChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  // OSINT Summary
+  osintSummaryContainer: {
+    backgroundColor: THEME.surface,
+    borderRadius: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: THEME.primary + '30',
+    overflow: 'hidden',
+  },
+  osintSummaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 14,
+  },
+  osintSummaryTitle: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.primary,
+    letterSpacing: 0.5,
+  },
+  osintSummaryBody: {
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    gap: 8,
+  },
+  osintSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  osintSummaryText: {
+    fontSize: 13,
+    color: THEME.textSecondary,
+    flex: 1,
+  },
+  osintFullSearchLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 6,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: THEME.border,
+  },
+  osintFullSearchLinkText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: THEME.primary,
   },
 });

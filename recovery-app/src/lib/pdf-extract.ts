@@ -94,30 +94,44 @@ export interface ExtractResult {
 // Backend API URL
 const BACKEND_URL = 'https://elite-recovery-osint.fly.dev';
 
-// OCR using backend API (no frontend API keys needed)
+// OCR using backend API with retry for rate limits
 async function ocrWithBackend(imageBase64: string, pageNum: number): Promise<string> {
-  const response = await fetch(`${BACKEND_URL}/api/ocr`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      image_base64: imageBase64,
-      page_number: pageNum,
-    }),
-  });
+  const MAX_RETRIES = 3;
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`OCR error: ${error}`);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const response = await fetch(`${BACKEND_URL}/api/ocr`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        image_base64: imageBase64,
+        page_number: pageNum,
+      }),
+    });
+
+    if (response.status === 429 && attempt < MAX_RETRIES) {
+      // Rate limited — wait and retry with exponential backoff
+      const waitMs = Math.min(1000 * Math.pow(2, attempt + 1), 15000);
+      console.log(`OCR rate limited (page ${pageNum}). Retrying in ${waitMs / 1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+      continue;
+    }
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OCR error: ${error}`);
+    }
+
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.detail || 'OCR failed');
+    }
+
+    return data.text || '';
   }
 
-  const data = await response.json();
-  if (!data.success) {
-    throw new Error(data.detail || 'OCR failed');
-  }
-
-  return data.text || '';
+  throw new Error(`OCR failed after ${MAX_RETRIES} retries (rate limited)`);
 }
 
 // Render PDF page to image for OCR
@@ -191,11 +205,11 @@ export async function extractTextFromPdf(data: ArrayBuffer | Uint8Array): Promis
         const ocrTexts: string[] = [];
         const maxPages = Math.min(pdf.numPages, 30); // OCR entire document
 
-        // Process pages in parallel (3 at a time) for speed
-        for (let i = 1; i <= maxPages; i += 3) {
+        // Process pages in parallel (2 at a time to avoid rate limits)
+        for (let i = 1; i <= maxPages; i += 2) {
           const promises = [];
 
-          for (let j = i; j <= Math.min(i + 2, maxPages); j++) {
+          for (let j = i; j <= Math.min(i + 1, maxPages); j++) {
             console.log(`OCR processing page ${j}/${maxPages}...`);
             promises.push(
               (async () => {
@@ -217,6 +231,11 @@ export async function extractTextFromPdf(data: ArrayBuffer | Uint8Array): Promis
               ocrTexts.push(`--- Page ${r.page} ---\n${r.text}`);
             }
           });
+
+          // Brief pause between batches to stay under rate limits
+          if (i + 2 <= maxPages) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
         }
 
         const ocrFullText = ocrTexts.join('\n\n');

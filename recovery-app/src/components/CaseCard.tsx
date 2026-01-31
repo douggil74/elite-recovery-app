@@ -60,6 +60,49 @@ export function CaseCard({
     });
   };
 
+  // Build physical description line from primaryTarget or rosterData
+  const getPhysicalLine = (): string => {
+    const pt = caseData.primaryTarget;
+    const inmate = caseData.rosterData?.inmate;
+    const parts: string[] = [];
+    const race = pt?.race || inmate?.race;
+    const sex = pt?.sex || inmate?.sex;
+    if (race && sex) {
+      // Compact: "W/M" or "B/F"
+      parts.push(`${race.charAt(0)}/${sex.charAt(0)}`);
+    } else if (race) {
+      parts.push(race);
+    } else if (sex) {
+      parts.push(sex);
+    }
+    const height = pt?.height || inmate?.height;
+    if (height) parts.push(height);
+    const weight = pt?.weight || inmate?.weight;
+    if (weight) parts.push(weight.includes('lb') ? weight : `${weight} lbs`);
+    return parts.join('  ');
+  };
+
+  // Charges summary
+  const getChargesSummary = (): string => {
+    const charges = caseData.charges;
+    if (!charges || charges.length === 0) return '';
+    if (charges.length === 1) return charges[0];
+    if (charges.length <= 2) return charges.join(', ');
+    return `${charges[0]} +${charges.length - 1} more`;
+  };
+
+  // Bond display
+  const getBondDisplay = (): string => {
+    const amount = caseData.bondAmount;
+    if (!amount || amount === 0) return '';
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(amount);
+  };
+
+  const physicalLine = getPhysicalLine();
+  const chargesSummary = getChargesSummary();
+  const bondDisplay = getBondDisplay();
+  const hasDetails = physicalLine || chargesSummary || bondDisplay;
+
   return (
     <TouchableOpacity
       style={[styles.container, { borderLeftColor: statusConfig.color }]}
@@ -72,7 +115,7 @@ export function CaseCard({
           <Image source={{ uri: caseData.mugshotUrl }} style={styles.mugshot} />
         ) : (
           <View style={styles.mugshotPlaceholder}>
-            <Ionicons name="person" size={24} color="#52525b" />
+            <Ionicons name="person" size={28} color="#52525b" />
           </View>
         )}
       </View>
@@ -89,7 +132,12 @@ export function CaseCard({
           </View>
         </View>
 
-        {/* Middle row: Stats */}
+        {/* Physical description line */}
+        {physicalLine ? (
+          <Text style={styles.physicalLine} numberOfLines={1}>{physicalLine}</Text>
+        ) : null}
+
+        {/* Stats row: FTA, addresses, phones */}
         <View style={styles.statsRow}>
           {caseData.ftaScore !== undefined && (
             <View style={[styles.ftaBadge, { backgroundColor: getFtaColor(caseData.ftaScore) + '25' }]}>
@@ -113,8 +161,17 @@ export function CaseCard({
               )}
             </>
           )}
+          {bondDisplay ? (
+            <Text style={styles.bondText}>{bondDisplay}</Text>
+          ) : null}
         </View>
-        {!hasData && !caseData.ftaScore && (
+
+        {/* Charges line */}
+        {chargesSummary ? (
+          <Text style={styles.chargesLine} numberOfLines={1}>{chargesSummary}</Text>
+        ) : null}
+
+        {!hasData && !caseData.ftaScore && !hasDetails && (
           <Text style={styles.noDataText}>No data yet</Text>
         )}
 
@@ -163,14 +220,14 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   mugshot: {
-    width: 50,
-    height: 60,
+    width: 56,
+    height: 68,
     borderRadius: 6,
     backgroundColor: '#18181b',
   },
   mugshotPlaceholder: {
-    width: 50,
-    height: 60,
+    width: 56,
+    height: 68,
     borderRadius: 6,
     backgroundColor: '#18181b',
     alignItems: 'center',
@@ -207,7 +264,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginBottom: 8,
+    marginBottom: 4,
     flexWrap: 'wrap',
   },
   stat: {
@@ -230,6 +287,22 @@ const styles = StyleSheet.create({
   ftaScore: {
     fontSize: 12,
     fontWeight: '700',
+  },
+  physicalLine: {
+    fontSize: 12,
+    color: '#a1a1aa',
+    marginBottom: 4,
+    letterSpacing: 0.5,
+  },
+  chargesLine: {
+    fontSize: 12,
+    color: '#d4d4d8',
+    marginBottom: 4,
+  },
+  bondText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fbbf24',
   },
   noDataText: {
     fontSize: 13,

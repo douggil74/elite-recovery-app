@@ -1178,6 +1178,34 @@ export async function searchCriminalHistory(
 
 
 // ============================================================================
+// GOOGLE DORK GENERATOR
+// ============================================================================
+
+export interface GoogleDorkResult {
+  query: string;
+  type: string;
+  state: string;
+  searched_at: string;
+  dorks: Array<{ dork: string; google_url: string; category: string }>;
+  total: number;
+}
+
+export async function searchGoogleDorks(
+  query: string,
+  type: 'name' | 'email' | 'phone' | 'username' | 'address',
+  state: string = 'LA'
+): Promise<GoogleDorkResult> {
+  const response = await fetch(`${OSINT_API_BASE}/api/google-dorks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, type, state }),
+  });
+  if (!response.ok) throw new Error(`Google dorks error: ${response.statusText}`);
+  return response.json();
+}
+
+
+// ============================================================================
 // DOCUMENT & METADATA
 // ============================================================================
 

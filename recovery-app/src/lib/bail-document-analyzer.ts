@@ -85,6 +85,29 @@ DOCUMENT TYPES YOU'LL SEE:
 
   For Delvepoint reports: Extract EVERY relative, EVERY address, EVERY phone. These are gold mines.
 
+CRITICAL: REJECT FORM TEMPLATE TEXT AND BOILERPLATE
+
+Bail bond documents contain form instructions and template text that is NOT actual data. You MUST recognize and SKIP these patterns:
+
+- Form instructions: "circle one", "check if applicable", "fill in", "enter here", "indicate below"
+- Template choices: "PROBATION / PAROLE / NONE", "YES / NO", "Male / Female"
+- Blank fields with instructions: "Currently on (circle one):", "If yes, in what county:"
+- Labels without values: empty fields, placeholder text, form headers
+- Column headers from skip trace reports: "Reference Code", "Transactions Authorized", "Arbitral Proceedings", "Dates Seen", "Carrier Location", "Recent Address Record"
+
+If you see text like "Currently on (circle one): PROBATION / PAROLE / NONE If yes, in what county: NO", this is a BLANK FORM FIELD - do NOT extract "PROBATION / PAROLE / NONE" as an alias or any other data field.
+
+CRITICAL: ONLY REAL PEOPLE ARE CONTACTS
+
+The following are NOT people and must NEVER appear as contacts, cosigners, references, or associates:
+- Business names: "Bail Bonds", "Call Bail Bonds", "Insurance Company", any company name
+- Bail industry terms: "As Surety", "As Indemnitor", "As Cosigner", "As Agent", "As Principal"
+- Government entities: "Texas County", "Parish Court", "District Court", any county/court/parish name
+- Document labels: "Bondsman", "Agent", "Reference", "Employer" (unless followed by an actual person's name)
+- Generic roles without names: "Mother", "Father", "Spouse" alone without a person's name
+
+A contact MUST have a real human name (first and last name). "Bail Bonds Eric" is NOT a valid contact name - if the bondsman's name is Eric, extract "Eric [LastName]" only.
+
 CRITICAL ANALYSIS RULES:
 
 1. **ANCHOR POINTS vs TRANSIENT LOCATIONS**
@@ -291,6 +314,9 @@ interface ExtractedIntel {
     driversLicense?: string;
     height?: string;
     weight?: string;
+    race?: string;
+    sex?: string;
+    gender?: string;
     eyeColor?: string;
     hairColor?: string;
     tattoos?: string[];
@@ -422,6 +448,7 @@ export async function analyzeBailDocument(
     const client = new Anthropic({
       apiKey,
       dangerouslyAllowBrowser: true,
+      timeout: 120_000, // 2 minute timeout per request - prevents stuck analysis
     });
 
     let rawIntel: ExtractedIntel;
@@ -586,16 +613,16 @@ function mergeIntel(results: ExtractedIntel[]): ExtractedIntel {
 
   const merged: ExtractedIntel = {
     ...results[0], // Base from first chunk (has subject info)
-    documentTypes: [...new Set(results.flatMap(r => r.documentTypes || []))],
-    checkIns: deduplicateCheckIns(results.flatMap(r => r.checkIns || [])),
-    addresses: deduplicateByField(results.flatMap(r => r.addresses || []), 'address'),
-    cosigners: deduplicateByField(results.flatMap(r => r.cosigners || []), 'name'),
-    references: deduplicateByField(results.flatMap(r => r.references || []), 'name'),
-    contacts: deduplicateByField(results.flatMap(r => r.contacts || []), 'name'),
-    vehicles: deduplicateByField(results.flatMap(r => r.vehicles || []), 'plate'),
-    employment: deduplicateByField(results.flatMap(r => r.employment || []), 'employer'),
-    caseNotes: [...new Set(results.flatMap(r => r.caseNotes || []))],
-    warnings: [...new Set(results.flatMap(r => r.warnings || []))],
+    documentTypes: [...new Set(results.flatMap(r => ensureArray(r.documentTypes)))],
+    checkIns: deduplicateCheckIns(results.flatMap(r => ensureArray(r.checkIns))),
+    addresses: deduplicateByField(results.flatMap(r => ensureArray(r.addresses)), 'address'),
+    cosigners: deduplicateByField(results.flatMap(r => ensureArray(r.cosigners)), 'name'),
+    references: deduplicateByField(results.flatMap(r => ensureArray(r.references)), 'name'),
+    contacts: deduplicateByField(results.flatMap(r => ensureArray(r.contacts)), 'name'),
+    vehicles: deduplicateByField(results.flatMap(r => ensureArray(r.vehicles)), 'plate'),
+    employment: deduplicateByField(results.flatMap(r => ensureArray(r.employment)), 'employer'),
+    caseNotes: [...new Set(results.flatMap(r => ensureArray(r.caseNotes)))],
+    warnings: [...new Set(results.flatMap(r => ensureArray(r.warnings)))],
   };
 
   // Merge bond info (take the most complete one)
@@ -609,10 +636,19 @@ function mergeIntel(results: ExtractedIntel[]): ExtractedIntel {
   return merged;
 }
 
+/** Safely coerce AI output to an array (AI sometimes returns objects/strings instead of arrays) */
+function ensureArray<T>(val: T[] | T | null | undefined): T[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'object') return [val as T];
+  return [];
+}
+
 function deduplicateCheckIns(items: ExtractedIntel['checkIns']): ExtractedIntel['checkIns'] {
   if (!items) return [];
+  const safeItems = ensureArray(items);
   const seen = new Set<string>();
-  return items.filter(item => {
+  return safeItems.filter(item => {
     const key = `${item.date}-${item.location}`.toLowerCase();
     if (seen.has(key)) return false;
     seen.add(key);
@@ -679,10 +715,24 @@ Return ONLY a JSON object with the "traceAnalysis" key. No other text.`;
  * Convert extracted intel to ParsedReport format
  */
 function convertToReport(intel: ExtractedIntel): ParsedReport {
-  // Build subject
+  // Build subject - filter out form template garbage from aliases
+  const cleanAliases = ensureArray(intel.subject?.aliases).filter(alias => {
+    if (!alias || typeof alias !== 'string') return false;
+    const lower = alias.toLowerCase().trim();
+    // Reject form template text
+    if (/circle one|check if|fill in|if yes|if no|indicate|probation.*parole|male.*female|yes.*no/i.test(alias)) return false;
+    // Reject if it contains form instruction characters like "/"
+    if (alias.includes('/') && alias.split('/').length > 2) return false;
+    // Reject overly long "aliases" (likely form text)
+    if (alias.length > 50) return false;
+    // Reject if it looks like a field label
+    if (/^(currently|county|state|court|date|phone|address|email|ssn|dob|sex|race|height|weight)/i.test(lower)) return false;
+    return true;
+  });
+
   const subject: Subject = {
     fullName: intel.subject?.fullName || 'Unknown',
-    aliases: intel.subject?.aliases,
+    aliases: cleanAliases.length > 0 ? cleanAliases : undefined,
     dob: intel.subject?.dob,
     partialSsn: intel.subject?.ssn,
     personId: intel.subject?.cid,
@@ -703,7 +753,7 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
   const addressMap = new Map<string, ParsedAddress>();
 
   // Add explicit addresses
-  intel.addresses?.forEach((addr) => {
+  ensureArray(intel.addresses).forEach((addr) => {
     const key = normalizeAddress(addr.address);
     const fullAddress = [addr.address, addr.city, addr.state, addr.zip]
       .filter(Boolean)
@@ -725,7 +775,7 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
   });
 
   // Add check-in locations
-  intel.checkIns?.forEach((checkIn) => {
+  ensureArray(intel.checkIns).forEach((checkIn) => {
     const key = normalizeAddress(checkIn.location);
     const fullAddress = [checkIn.location, checkIn.city, checkIn.state]
       .filter(Boolean)
@@ -750,7 +800,7 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
   });
 
   // Add contact addresses
-  intel.contacts?.forEach((contact) => {
+  ensureArray(intel.contacts).forEach((contact) => {
     if (contact.address) {
       const key = normalizeAddress(contact.address);
       if (!addressMap.has(key)) {
@@ -779,7 +829,7 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
     seenPhones.add(normalizePhone(intel.subject.phone));
   }
 
-  intel.contacts?.forEach((contact) => {
+  ensureArray(intel.contacts).forEach((contact) => {
     if (contact.phone && !seenPhones.has(normalizePhone(contact.phone))) {
       phones.push({
         number: contact.phone,
@@ -794,8 +844,37 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
   const relatives: ParsedRelative[] = [];
   const seenNames = new Set<string>();
 
+  // Filter out non-person names (businesses, bail terms, form text)
+  const isRealPersonName = (name: string): boolean => {
+    if (!name || name.trim().length < 3 || name.trim().length > 60) return false;
+    const lower = name.trim().toLowerCase();
+    // Reject business/institution keywords
+    const badKeywords = [
+      'bail bonds', 'bail bond', 'bonding', 'insurance', 'surety',
+      'company', 'corp', 'inc', 'llc', 'ltd',
+      'county', 'parish', 'court', 'department', 'office', 'agency',
+      'bank', 'financial', 'services',
+    ];
+    if (badKeywords.some(kw => lower.includes(kw))) return false;
+    // Reject "As [Role]" patterns
+    if (/^as\s+\w+$/i.test(name.trim())) return false;
+    // Reject "Call [something]" patterns (business names)
+    if (/^call\s/i.test(name.trim())) return false;
+    // Reject form template patterns
+    if (/circle one|check if|fill in|if yes|probation|parole/i.test(name)) return false;
+    // Reject generic roles without actual names
+    const genericRoles = ['mother', 'father', 'spouse', 'wife', 'husband', 'brother', 'sister',
+      'friend', 'reference', 'cosigner', 'bondsman', 'employer', 'landlord', 'neighbor',
+      'surety', 'indemnitor', 'principal', 'obligee', 'agent'];
+    if (genericRoles.includes(lower)) return false;
+    // Reject if no vowels
+    if (!/[aeiou]/i.test(name)) return false;
+    return true;
+  };
+
   // Cosigners first (highest value contacts)
-  intel.cosigners?.forEach((cs) => {
+  ensureArray(intel.cosigners).forEach((cs) => {
+    if (!isRealPersonName(cs.name)) return;
     const key = cs.name.toLowerCase().trim();
     if (!seenNames.has(key)) {
       seenNames.add(key);
@@ -810,7 +889,8 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
   });
 
   // References
-  intel.references?.forEach((ref) => {
+  ensureArray(intel.references).forEach((ref) => {
+    if (!isRealPersonName(ref.name)) return;
     const key = ref.name.toLowerCase().trim();
     if (!seenNames.has(key)) {
       seenNames.add(key);
@@ -825,7 +905,8 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
   });
 
   // Other contacts
-  intel.contacts?.forEach((contact) => {
+  ensureArray(intel.contacts).forEach((contact) => {
+    if (!isRealPersonName(contact.name)) return;
     const key = contact.name.toLowerCase().trim();
     if (!seenNames.has(key)) {
       seenNames.add(key);
@@ -841,28 +922,28 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
 
   // Build vehicles
   const vehicles: ParsedVehicle[] =
-    intel.vehicles?.map((v) => ({
+    ensureArray(intel.vehicles).map((v) => ({
       year: v.year,
       make: v.make,
       model: v.model,
       color: v.color,
       plate: v.plate,
       vin: v.vin,
-    })) || [];
+    }));
 
   // Build employment
   const employment: ParsedEmployment[] =
-    intel.employment?.map((emp) => ({
+    ensureArray(intel.employment).map((emp) => ({
       employer: emp.employer,
       title: emp.position,
       address: emp.address,
       phone: emp.phone,
       isCurrent: emp.current,
-    })) || [];
+    }));
 
   // Build flags
   const flags: ReportFlag[] = [];
-  intel.warnings?.forEach((warning) => {
+  ensureArray(intel.warnings).forEach((warning) => {
     flags.push({
       type: 'high_risk',
       message: warning,
@@ -877,13 +958,13 @@ function convertToReport(intel: ExtractedIntel): ParsedReport {
     recommendations.push(`Total Bond: $${intel.bondInfo.totalAmount.toLocaleString()}`);
   }
 
-  intel.bondInfo?.charges?.forEach((charge) => {
+  ensureArray(intel.bondInfo?.charges).forEach((charge) => {
     recommendations.push(
       `Charge: ${charge.charge}${charge.caseNumber ? ` (Case: ${charge.caseNumber})` : ''}`
     );
   });
 
-  intel.caseNotes?.forEach((note) => {
+  ensureArray(intel.caseNotes).forEach((note) => {
     recommendations.push(note);
   });
 

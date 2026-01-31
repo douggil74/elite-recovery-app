@@ -1,7 +1,7 @@
 // App constants
 
 export const APP_NAME = 'Fugitive Recovery';
-export const VERSION = '4.0.0';
+export const VERSION = '4.1.0';
 
 // Database
 export const DB_NAME = 'bailrecovery.db';
@@ -62,10 +62,10 @@ export const OSINT_CONFIG = {
 
 // AI Configuration - what's actually running
 export const AI_CONFIG = {
-  chatModel: 'Claude Sonnet',
+  chatModel: 'GPT-4o',
   visionModel: 'GPT-4o',
-  provider: 'Claude + GPT-4o',
-  reasoningProvider: 'Anthropic',
+  provider: 'GPT-4o (Vercel)',
+  reasoningProvider: 'OpenAI',
   visionProvider: 'OpenAI',
   features: {
     chat: true,

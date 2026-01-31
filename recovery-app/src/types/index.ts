@@ -32,6 +32,15 @@ export interface Case {
     fullName: string;
     dob?: string;
     aliases?: string[];
+    height?: string;
+    weight?: string;
+    race?: string;
+    sex?: string;
+    hairColor?: string;
+    eyeColor?: string;
+    driversLicense?: string;
+    phone?: string;
+    email?: string;
   };
   // Jail roster data
   mugshotUrl?: string;

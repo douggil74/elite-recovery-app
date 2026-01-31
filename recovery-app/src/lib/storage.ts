@@ -290,23 +290,36 @@ export async function saveSettings(settings: Partial<AppSettings>): Promise<void
   // Then sync full settings to Firestore if user is logged in
   const userId = getCurrentUserId();
   if (userId) {
+    // Don't sync passcode-related settings for security
+    const { passcode, passcodeEnabled, biometricsEnabled, ...safeSettings } = updated as any;
+    const cleanSettings: Record<string, any> = {};
+    for (const [key, value] of Object.entries(safeSettings)) {
+      if (value !== undefined) {
+        cleanSettings[key] = value;
+      }
+    }
+
     try {
       const db = await getDb();
       if (db) {
         const settingsRef = doc(db, 'users', userId, 'data', 'settings');
-        // Don't sync passcode-related settings for security
-        const { passcode, passcodeEnabled, biometricsEnabled, ...safeSettings } = updated as any;
-        const cleanSettings: Record<string, any> = {};
-        for (const [key, value] of Object.entries(safeSettings)) {
-          if (value !== undefined) {
-            cleanSettings[key] = value;
+        // Try WebSocket first with timeout, fall back to REST
+        try {
+          await Promise.race([
+            setDoc(settingsRef, { ...cleanSettings, syncedAt: serverTimestamp() }),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+          ]);
+          console.log('[Settings] Saved to Firestore via WebSocket');
+        } catch {
+          // Fall back to REST API
+          const { writeSettingsViaRestApi } = await import('./database');
+          const saved = await writeSettingsViaRestApi(userId, cleanSettings);
+          if (saved) {
+            console.log('[Settings] Saved to Firestore via REST API');
+          } else {
+            console.warn('[Settings] REST API save also failed (saved locally only)');
           }
         }
-        // Write full settings (not partial) so cloud always has complete data
-        await setDoc(settingsRef, {
-          ...cleanSettings,
-          syncedAt: serverTimestamp(),
-        });
       }
     } catch (e) {
       console.warn('[Settings] Firestore write failed (saved locally):', e);

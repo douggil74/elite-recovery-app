@@ -39,6 +39,9 @@ const FEATURES: FeatureSection[] = [
       { name: 'Agent Dialogue', description: 'Investigative partner that thinks alongside you', type: 'ai' },
       { name: 'Photo Analysis', description: 'Extracts addresses, plates, landmarks from images', type: 'ai' },
       { name: 'Document Reading', description: 'Parses skip-trace reports and bail documents', type: 'ai' },
+      { name: 'Reanalyze', description: 'Clears old intel and re-processes all documents fresh', type: 'ai' },
+      { name: 'Contact Validation', description: 'Filters out data headers and junk from parsed contacts', type: 'tool' },
+      { name: 'Address Dedup', description: 'Normalizes and deduplicates addresses automatically', type: 'tool' },
       { name: 'Recovery Brief', description: 'Generates tactical recovery plans', type: 'ai' },
       { name: 'Face Matching', description: 'Compares mugshot to social media photos', type: 'ai' },
     ],
@@ -101,52 +104,43 @@ const FEATURES: FeatureSection[] = [
     ],
   },
   {
-    title: 'Data Storage',
+    title: 'Cloud Storage',
     icon: 'cloud',
     items: [
-      { name: 'Local Storage', description: 'Cases saved locally via AsyncStorage', type: 'db' },
-      { name: 'Import History', description: 'Tracks all jail roster imports', type: 'tool' },
+      { name: 'Firebase Firestore', description: 'All cases synced to cloud in real-time', type: 'db' },
+      { name: 'REST API Fallback', description: 'Automatic fallback when WebSocket is unavailable', type: 'api' },
+      { name: 'Cloud Sync Indicator', description: 'Live connection status with tap-to-sync', type: 'tool' },
+      { name: 'Offline Cache', description: 'AsyncStorage cache for instant loading', type: 'tool' },
     ],
   },
 ];
 
 const PYTHON_TOOLS_LIVE = [
-  // AI Tools
-  { name: 'Agent Dialogue', description: 'AI investigative partner (Claude + GPT-4o)', status: 'live', category: 'ai' },
-  { name: 'Vision Analysis', description: 'AI photo/document analysis', status: 'live', category: 'ai' },
-  { name: 'FTA Risk Analysis', description: 'AI-generated risk assessments', status: 'live', category: 'ai' },
-  // Jail Roster
-  { name: 'Jail Roster Scraper', description: 'Extract inmate data from Revize jail sites', status: 'live', category: 'scraper' },
-  { name: 'Bulk Import', description: 'Import multiple inmates at once', status: 'live', category: 'scraper' },
   // Username Search
-  { name: 'Direct HTTP Checks', description: 'Username search across 24 platforms via direct requests', status: 'live', category: 'username' },
-  { name: 'Socialscan', description: 'Quick username availability check', status: 'live', category: 'username' },
+  { name: 'Sherlock', description: 'Username search across 400+ sites', status: 'live', category: 'username' },
+  { name: 'Direct HTTP Checks', description: 'Username search across 24 major platforms via direct requests', status: 'live', category: 'username' },
   // Email Tools
   { name: 'Holehe', description: 'Check email registration on 120+ services', status: 'live', category: 'email' },
-  { name: 'Google Account Check', description: 'YouTube, Blogger, Maps review detection', status: 'live', category: 'email' },
-  // Phone Lookup
-  { name: 'Phone Lookup', description: 'WhatsApp/Telegram detection + payment app guidance', status: 'live', category: 'phone' },
-  // Court Records
-  { name: 'CourtListener API', description: 'Federal court records (limited without key)', status: 'live', category: 'court' },
-  // Risk Scoring
-  { name: 'FTA Scoring', description: 'Failure-to-appear risk calculation', status: 'live', category: 'risk' },
+  // Combined OSINT
+  { name: 'Combined Search', description: 'Multi-tool OSINT search in one request', status: 'live', category: 'osint' },
 ];
+
+const VERCEL_INFO = {
+  url: 'recovery-app-blond.vercel.app',
+  endpoints: [
+    'POST /api/ai/chat - AI chat proxy (server-side OpenAI key)',
+  ],
+};
 
 const BACKEND_INFO = {
   url: OSINT_CONFIG.productionUrl,
   version: VERSION,
   endpoints: [
-    '/api/jail-roster - Scrape jail booking',
-    '/api/fta-score - FTA risk calculation',
-    '/api/sherlock - Username search (24 platforms)',
+    '/api/sherlock - Username search (400+ sites)',
     '/api/holehe - Email discovery (120+ services)',
-    '/api/phone-lookup - WhatsApp/Telegram detection',
-    '/api/google-check - Google account investigation',
-    '/api/ai/chat - AI dialogue (Claude/GPT-4o)',
-    '/api/ai/analyze - Vision analysis',
-    '/api/ai/brief - Recovery brief',
-    '/api/face-match - Face comparison',
-  ]
+    '/api/osint/search - Combined OSINT search',
+    '/health - Backend health check',
+  ],
 };
 
 export default function AboutScreen() {
@@ -205,12 +199,12 @@ export default function AboutScreen() {
             <Text style={styles.statLabel}>Sites Checked</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>10</Text>
-            <Text style={styles.statLabel}>API Endpoints</Text>
+            <Text style={styles.statNumber}>Cloud</Text>
+            <Text style={styles.statLabel}>Firestore Sync</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>{AI_CONFIG.provider}</Text>
-            <Text style={styles.statLabel}>AI Provider</Text>
+            <Text style={styles.statNumber}>GPT-4o</Text>
+            <Text style={styles.statLabel}>AI Engine</Text>
           </View>
         </View>
 
@@ -272,13 +266,34 @@ export default function AboutScreen() {
           </View>
 
           <View style={[styles.item, { borderLeftColor: '#8b5cf6', marginBottom: 8 }]}>
-            <Text style={styles.itemName}>Chat Model: {AI_CONFIG.chatModel}</Text>
-            <Text style={styles.itemDesc}>Powers Agent Dialogue and investigation reasoning</Text>
+            <Text style={styles.itemName}>Chat Model: GPT-4o (via Vercel)</Text>
+            <Text style={styles.itemDesc}>AI dialogue and document analysis with server-side API key</Text>
           </View>
           <View style={[styles.item, { borderLeftColor: '#8b5cf6' }]}>
-            <Text style={styles.itemName}>Vision Model: {AI_CONFIG.visionModel}</Text>
-            <Text style={styles.itemDesc}>Analyzes photos, documents, and performs face matching</Text>
+            <Text style={styles.itemName}>API Keys: Vercel Environment Variables</Text>
+            <Text style={styles.itemDesc}>OpenAI, Anthropic, Google Maps, IPQualityScore - never client-side</Text>
           </View>
+        </View>
+
+        {/* Vercel Serverless */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="cloud-done" size={20} color="#22c55e" />
+            <Text style={styles.sectionTitle}>Vercel Serverless API</Text>
+            <View style={[styles.typeBadge, { backgroundColor: '#22c55e30', marginLeft: 8 }]}>
+              <Text style={[styles.typeText, { color: '#22c55e' }]}>LIVE</Text>
+            </View>
+          </View>
+
+          <View style={[styles.item, { borderLeftColor: '#22c55e', marginBottom: 8 }]}>
+            <Text style={styles.itemName}>{VERCEL_INFO.url}</Text>
+            <Text style={styles.itemDesc}>Server-side API keys (never exposed to client)</Text>
+          </View>
+          {VERCEL_INFO.endpoints.map((ep, idx) => (
+            <View key={idx} style={[styles.item, { borderLeftColor: '#22c55e', marginBottom: 4 }]}>
+              <Text style={styles.itemDesc}>{ep}</Text>
+            </View>
+          ))}
         </View>
 
         {/* Python OSINT Backend - LIVE */}
@@ -291,7 +306,6 @@ export default function AboutScreen() {
             </View>
           </View>
 
-          {/* Backend Status */}
           <View style={[styles.item, { borderLeftColor: '#22c55e', marginBottom: 12 }]}>
             <Text style={styles.itemName}>{BACKEND_INFO.url}</Text>
             <Text style={styles.itemDesc}>Version {BACKEND_INFO.version}</Text>

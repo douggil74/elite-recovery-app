@@ -10,6 +10,7 @@ import type { Case, Report, AuditLogEntry, CasePurpose, AuditAction, ParsedRepor
 import { getCurrentUserId } from './auth-state';
 import {
   getDb,
+  getAuthInstance,
   collection,
   doc,
   setDoc,
@@ -22,6 +23,195 @@ import {
   where,
   serverTimestamp,
 } from './firebase';
+
+// Firebase project config for REST API fallback
+const FIREBASE_PROJECT_ID = 'fugitive-database';
+const FIRESTORE_DATABASE_ID = 'default'; // without parentheses
+
+/**
+ * Write to Firestore using REST API (bypasses WebSocket issues)
+ */
+async function writeViaRestApi(
+  collectionPath: string,
+  docId: string,
+  data: Record<string, any>
+): Promise<boolean> {
+  try {
+    const auth = getAuthInstance();
+    if (!auth?.currentUser) {
+      console.error('[REST] No authenticated user');
+      return false;
+    }
+
+    // Get fresh ID token
+    const token = await auth.currentUser.getIdToken(true);
+
+    // Convert data to Firestore REST API format
+    const firestoreDoc = convertToFirestoreFormat(data);
+
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/${collectionPath}/${docId}`;
+
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ fields: firestoreDoc }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('[REST] Write failed:', response.status, error);
+      return false;
+    }
+
+    console.log('[REST] Write successful:', collectionPath, docId);
+    return true;
+  } catch (error) {
+    console.error('[REST] Write error:', error);
+    return false;
+  }
+}
+
+/**
+ * Read from Firestore using REST API
+ */
+async function readViaRestApi(
+  collectionPath: string,
+  userId: string
+): Promise<any[]> {
+  try {
+    const auth = getAuthInstance();
+    if (!auth?.currentUser) {
+      console.error('[REST] No authenticated user');
+      return [];
+    }
+
+    const token = await auth.currentUser.getIdToken(true);
+
+    // Use structured query to filter by userId
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents:runQuery`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: collectionPath }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: 'userId' },
+              op: 'EQUAL',
+              value: { stringValue: userId }
+            }
+          }
+        }
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('[REST] Read failed:', response.status, error);
+      return [];
+    }
+
+    const results = await response.json();
+    return results
+      .filter((r: any) => r.document)
+      .map((r: any) => convertFromFirestoreFormat(r.document));
+  } catch (error) {
+    console.error('[REST] Read error:', error);
+    return [];
+  }
+}
+
+/**
+ * Convert JS object to Firestore REST API format
+ */
+function convertToFirestoreFormat(data: Record<string, any>): Record<string, any> {
+  const result: Record<string, any> = {};
+
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined || value === null) {
+      result[key] = { nullValue: null };
+    } else if (typeof value === 'string') {
+      result[key] = { stringValue: value };
+    } else if (typeof value === 'number') {
+      if (Number.isInteger(value)) {
+        result[key] = { integerValue: String(value) };
+      } else {
+        result[key] = { doubleValue: value };
+      }
+    } else if (typeof value === 'boolean') {
+      result[key] = { booleanValue: value };
+    } else if (Array.isArray(value)) {
+      result[key] = {
+        arrayValue: {
+          values: value.map(v => {
+            if (typeof v === 'string') return { stringValue: v };
+            if (typeof v === 'number') return { integerValue: String(v) };
+            if (typeof v === 'object') return { mapValue: { fields: convertToFirestoreFormat(v) } };
+            return { stringValue: String(v) };
+          })
+        }
+      };
+    } else if (typeof value === 'object') {
+      // Check for serverTimestamp sentinel
+      if (value?.constructor?.name === 'FieldValue') {
+        result[key] = { timestampValue: new Date().toISOString() };
+      } else {
+        result[key] = { mapValue: { fields: convertToFirestoreFormat(value) } };
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Convert Firestore REST API format back to JS object
+ */
+function convertFromFirestoreFormat(doc: any): Record<string, any> {
+  const result: Record<string, any> = {};
+
+  // Extract document ID from name path
+  if (doc.name) {
+    const parts = doc.name.split('/');
+    result.id = parts[parts.length - 1];
+  }
+
+  if (!doc.fields) return result;
+
+  for (const [key, value] of Object.entries(doc.fields as Record<string, any>)) {
+    result[key] = convertFieldValue(value);
+  }
+
+  return result;
+}
+
+function convertFieldValue(field: any): any {
+  if ('stringValue' in field) return field.stringValue;
+  if ('integerValue' in field) return parseInt(field.integerValue, 10);
+  if ('doubleValue' in field) return field.doubleValue;
+  if ('booleanValue' in field) return field.booleanValue;
+  if ('nullValue' in field) return null;
+  if ('timestampValue' in field) return field.timestampValue;
+  if ('arrayValue' in field) {
+    return (field.arrayValue.values || []).map(convertFieldValue);
+  }
+  if ('mapValue' in field) {
+    const obj: Record<string, any> = {};
+    for (const [k, v] of Object.entries(field.mapValue.fields || {})) {
+      obj[k] = convertFieldValue(v);
+    }
+    return obj;
+  }
+  return null;
+}
 
 // Old AsyncStorage keys from pre-cloud database.ts
 const LEGACY_KEYS = {
@@ -63,6 +253,161 @@ async function requireDb() {
     throw new Error('Database not initialized');
   }
   return db;
+}
+
+/**
+ * Test cloud connectivity using REST API (most reliable).
+ * Returns true if cloud sync is working, false otherwise.
+ */
+export async function testCloudConnection(): Promise<{ success: boolean; error?: string; latency?: number; method?: string }> {
+  try {
+    const userId = getCurrentUserId();
+    if (!userId) {
+      return { success: false, error: 'Not logged in' };
+    }
+
+    const auth = getAuthInstance();
+    if (!auth?.currentUser) {
+      return { success: false, error: 'Not authenticated' };
+    }
+
+    const startTime = Date.now();
+
+    // Test using REST API directly (bypasses WebSocket issues)
+    const token = await auth.currentUser.getIdToken(true);
+    const testId = `_test_${Date.now()}`;
+
+    // Write test document via REST
+    const writeUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/users/${userId}/connectivity/${testId}`;
+
+    const writeResponse = await fetch(writeUrl, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fields: {
+          test: { booleanValue: true },
+          timestamp: { timestampValue: new Date().toISOString() }
+        }
+      }),
+    });
+
+    if (!writeResponse.ok) {
+      const error = await writeResponse.text();
+      console.error('[DB] REST write test failed:', writeResponse.status, error);
+      return { success: false, error: `REST write failed: ${writeResponse.status}` };
+    }
+
+    // Clean up - delete test document
+    fetch(writeUrl, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` },
+    }).catch(() => {});
+
+    const latency = Date.now() - startTime;
+    console.log('[DB] Cloud connection test passed via REST API, latency:', latency, 'ms');
+    return { success: true, latency, method: 'REST' };
+  } catch (error: any) {
+    console.error('[DB] Cloud connection test failed:', error);
+    return { success: false, error: error?.message || 'Unknown error' };
+  }
+}
+
+/**
+ * Push all locally cached cases to the cloud via REST API.
+ * This ensures any cases stuck in local cache get synced.
+ */
+export async function forceSyncPendingWrites(): Promise<boolean> {
+  try {
+    const userId = getCurrentUserId();
+    if (!userId) return false;
+
+    const db = await getDb();
+    if (!db) return false;
+
+    // Read all cases from local cache
+    const casesQuery = query(
+      collection(db, 'cases'),
+      where('userId', '==', userId)
+    );
+
+    let snapshot: any = null;
+    try {
+      snapshot = await getDocsFromCache(casesQuery);
+    } catch {
+      console.log('[DB] No cached cases to sync');
+      return true;
+    }
+
+    if (!snapshot || snapshot.empty) {
+      console.log('[DB] No cases in cache');
+      return true;
+    }
+
+    console.log('[DB] Syncing', snapshot.docs.length, 'cached cases to cloud via REST API');
+
+    let synced = 0;
+    for (const docSnap of snapshot.docs) {
+      const data = docSnap.data();
+      const caseData: Record<string, any> = {
+        ...data,
+        id: docSnap.id,
+        userId,
+        syncedAt: new Date().toISOString(),
+      };
+
+      // Convert Firestore Timestamps to ISO strings for REST API
+      if (data.createdAt?.toDate) {
+        caseData.createdAt = data.createdAt.toDate().toISOString();
+      }
+      if (data.updatedAt?.toDate) {
+        caseData.updatedAt = data.updatedAt.toDate().toISOString();
+      }
+
+      // Remove any nested undefined/null values
+      const cleanData = stripUndefined(caseData);
+
+      const success = await writeViaRestApi('cases', docSnap.id, cleanData);
+      if (success) {
+        synced++;
+        console.log('[DB] Synced case to cloud:', docSnap.id, data.name);
+
+        // Also sync subcollections (reports, documents, chat, photo)
+        for (const subCol of ['reports', 'documents']) {
+          try {
+            const subSnap = await getDocsFromCache(collection(db, 'cases', docSnap.id, subCol));
+            for (const subDoc of subSnap.docs) {
+              const subData = stripUndefined({ ...subDoc.data(), syncedAt: new Date().toISOString() });
+              await writeViaRestApi(`cases/${docSnap.id}/${subCol}`, subDoc.id, subData);
+            }
+            if (subSnap.docs.length > 0) {
+              console.log(`[DB] Synced ${subSnap.docs.length} ${subCol} for case:`, docSnap.id);
+            }
+          } catch { /* subcollection may not exist in cache */ }
+        }
+
+        // Sync chat history
+        try {
+          const chatSnap = await getDocFromCache(doc(db, 'cases', docSnap.id, 'chat', 'history'));
+          if (chatSnap.exists()) {
+            const chatData = stripUndefined({ ...chatSnap.data(), syncedAt: new Date().toISOString() });
+            await writeViaRestApi(`cases/${docSnap.id}/chat`, 'history', chatData);
+            console.log('[DB] Synced chat for case:', docSnap.id);
+          }
+        } catch { /* no chat in cache */ }
+      } else {
+        console.error('[DB] Failed to sync case:', docSnap.id);
+      }
+    }
+
+    console.log(`[DB] Force sync complete: ${synced}/${snapshot.docs.length} cases synced`);
+    return synced > 0;
+  } catch (error) {
+    console.error('[DB] Force sync failed:', error);
+    return false;
+  }
 }
 
 // Cases CRUD
@@ -122,13 +467,38 @@ export async function createCase(
   const firestoreData = { ...stripUndefined(newCase), userId, syncedAt: serverTimestamp() };
 
   console.log('[DB] Creating case:', id, name, 'userId:', userId);
-  // Fire-and-forget: setDoc writes to local cache immediately but its Promise
-  // waits for server ACK which can hang if WebSocket is connecting.
-  // The onSnapshot subscription will pick up the local write instantly.
-  const writePromise = setDoc(doc(db, 'cases', id), firestoreData);
-  writePromise
-    .then(() => console.log('[DB] Case server-confirmed:', id))
-    .catch(err => console.error('[DB] Case write failed (will retry):', id, err));
+
+  // Try WebSocket first, fall back to REST API if it times out
+  const caseRef = doc(db, 'cases', id);
+  let savedToCloud = false;
+
+  try {
+    // Try WebSocket write with 5 second timeout
+    await Promise.race([
+      setDoc(caseRef, firestoreData),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('WebSocket timeout')), 5000)
+      ),
+    ]);
+    console.log('[DB] Case saved via WebSocket:', id);
+    savedToCloud = true;
+  } catch (err: any) {
+    console.warn('[DB] WebSocket write failed, trying REST API:', err?.message);
+
+    // Fall back to REST API
+    const restData = {
+      ...newCase,
+      userId,
+      syncedAt: new Date().toISOString(),
+    };
+    savedToCloud = await writeViaRestApi('cases', id, restData);
+
+    if (savedToCloud) {
+      console.log('[DB] Case saved via REST API:', id);
+    } else {
+      console.error('[DB] Both WebSocket and REST API failed for case:', id);
+    }
+  }
 
   return newCase;
 }
@@ -188,20 +558,48 @@ export async function getAllCases(): Promise<Case[]> {
     // Try cache first (instant), fall back to server with timeout.
     // onSnapshot in useCases provides real-time updates after this initial load.
     let snapshot: any = null;
+    let source = 'unknown';
     try {
       snapshot = await getDocsFromCache(casesQuery);
       if (snapshot.empty) throw new Error('cache empty');
-    } catch {
+      source = 'cache';
+      console.log('[DB] getAllCases from cache:', snapshot.docs.length);
+    } catch (cacheErr) {
+      console.log('[DB] Cache miss, fetching from server...');
+      // Increase timeout to 15 seconds for slow connections
+      const serverFetch = getDocs(casesQuery);
       snapshot = await Promise.race([
-        getDocs(casesQuery),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+        serverFetch,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 15000)),
       ]);
+      source = 'server';
     }
 
     if (!snapshot) {
-      console.warn('[DB] getAllCases timed out — onSnapshot will catch up');
+      console.warn('[DB] getAllCases WebSocket timed out — trying REST API');
+
+      // Try REST API fallback
+      const restCases = await readViaRestApi('cases', userId);
+      if (restCases.length > 0) {
+        console.log('[DB] Loaded', restCases.length, 'cases via REST API');
+        return restCases as Case[];
+      }
+
+      // Final fallback to AsyncStorage
+      console.warn('[DB] REST API returned empty — trying local storage fallback');
+      try {
+        const localCasesJson = await AsyncStorage.getItem(LEGACY_KEYS.CASES);
+        if (localCasesJson) {
+          const localCases: Case[] = JSON.parse(localCasesJson);
+          console.log('[DB] Loaded', localCases.length, 'cases from local storage fallback');
+          return localCases;
+        }
+      } catch (e) {
+        console.warn('[DB] Local storage fallback failed:', e);
+      }
       return [];
     }
+    console.log('[DB] getAllCases from', source + ':', snapshot.docs.length, 'docs');
 
     console.log('[DB] getAllCases:', snapshot.docs.length, 'cases');
 
@@ -226,7 +624,7 @@ export async function getAllCases(): Promise<Case[]> {
 
 export async function updateCase(
   id: string,
-  updates: Partial<Pick<Case, 'name' | 'internalCaseId' | 'notes' | 'attestationAccepted' | 'autoDeleteAt' | 'primaryTarget'>>
+  updates: Partial<Pick<Case, 'name' | 'internalCaseId' | 'notes' | 'attestationAccepted' | 'autoDeleteAt' | 'primaryTarget' | 'charges' | 'bondAmount'>>
 ): Promise<void> {
   const db = await requireDb();
   const now = new Date().toISOString();
@@ -254,18 +652,20 @@ export async function deleteCase(id: string): Promise<void> {
       deleteDoc(doc(db, 'cases', id, 'photo', 'target')).catch(() => {}),
     ];
 
-    // Delete reports subcollection — timeout so it can't hang
-    try {
-      const reportsSnap = await Promise.race([
-        getDocs(collection(db, 'cases', id, 'reports')),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
-      ]);
-      if (reportsSnap) {
-        for (const reportDoc of reportsSnap.docs) {
-          subDeletes.push(deleteDoc(reportDoc.ref).catch(() => {}));
+    // Delete reports and documents subcollections — timeout so they can't hang
+    for (const subCol of ['reports', 'documents']) {
+      try {
+        const snap = await Promise.race([
+          getDocs(collection(db, 'cases', id, subCol)),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+        ]);
+        if (snap) {
+          for (const d of snap.docs) {
+            subDeletes.push(deleteDoc(d.ref).catch(() => {}));
+          }
         }
-      }
-    } catch { /* no reports */ }
+      } catch { /* subcollection may not exist */ }
+    }
 
     // Fire all subcollection deletes, then delete the case doc
     await Promise.all(subDeletes);
@@ -359,6 +759,74 @@ export async function deleteReport(id: string, caseId?: string): Promise<void> {
   }
   const db = await requireDb();
   await deleteDoc(doc(db, 'cases', caseId, 'reports', id));
+}
+
+// Document Text Persistence — store raw uploaded document text in Firestore
+// so documents survive browser clears and are accessible across devices
+export interface StoredDocument {
+  id: string;
+  name: string;
+  text: string;
+  date: string;
+}
+
+export async function saveDocumentText(
+  caseId: string,
+  docName: string,
+  text: string
+): Promise<void> {
+  try {
+    const db = await requireDb();
+    const id = uuid.v4() as string;
+    const now = new Date().toISOString();
+    await setDoc(doc(db, 'cases', caseId, 'documents', id), {
+      id,
+      name: docName,
+      text,
+      date: now,
+      syncedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    console.warn('[DB] saveDocumentText failed:', error);
+  }
+}
+
+export async function deleteDocumentText(caseId: string, documentId: string): Promise<void> {
+  try {
+    const db = await requireDb();
+    await deleteDoc(doc(db, 'cases', caseId, 'documents', documentId));
+  } catch (error) {
+    console.warn('[DB] deleteDocumentText failed:', error);
+  }
+}
+
+export async function getDocumentsForCase(caseId: string): Promise<StoredDocument[]> {
+  try {
+    const db = await requireDb();
+    const docsRef = collection(db, 'cases', caseId, 'documents');
+
+    let snapshot: any = null;
+    try {
+      snapshot = await getDocsFromCache(docsRef);
+    } catch {
+      snapshot = await Promise.race([
+        getDocs(docsRef),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+      ]);
+    }
+
+    if (!snapshot || snapshot.docs.length === 0) return [];
+
+    return snapshot.docs.map((d: any) => ({
+      id: d.id,
+      name: d.data().name,
+      text: d.data().text,
+      date: d.data().date,
+    }));
+  } catch (error) {
+    console.warn('[DB] getDocumentsForCase failed:', error);
+    return [];
+  }
 }
 
 // Audit Log - now stored in Firestore under users/{uid}/audit

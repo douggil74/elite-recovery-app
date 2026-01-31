@@ -31,15 +31,11 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install OSINT tools and Playwright
-RUN pip install --no-cache-dir \
-    sherlock-project \
-    socialscan \
-    holehe \
-    playwright \
-    ignorant \
-    phoneinfoga || true \
-    ghunt || true
+# Install OSINT tools and Playwright (v2 - added theHarvester + duckduckgo-search)
+RUN pip install --no-cache-dir sherlock-project socialscan holehe playwright ignorant && \
+    pip install --no-cache-dir theHarvester && \
+    pip install --no-cache-dir duckduckgo-search && \
+    pip install --no-cache-dir phoneinfoga || true
 
 # Install Playwright browsers (chromium only to save space)
 RUN playwright install chromium

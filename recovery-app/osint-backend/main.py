@@ -3496,6 +3496,109 @@ async def background_check_links(request: BackgroundCheckRequest):
 
 
 # ============================================================================
+# GOOGLE DORK GENERATOR
+# ============================================================================
+
+class GoogleDorkRequest(BaseModel):
+    query: str
+    type: str  # name, email, phone, username, address
+    state: Optional[str] = "LA"
+
+
+@app.post("/api/google-dorks")
+async def generate_google_dorks(request: GoogleDorkRequest):
+    """Generate bail/fugitive-specific Google dork search strings"""
+    query = request.query.strip()
+    search_type = request.type.lower()
+    state = (request.state or "LA").upper()
+
+    dorks: List[Dict[str, str]] = []
+
+    def add_dork(dork_str: str, category: str):
+        google_url = f"https://www.google.com/search?q={dork_str.replace(' ', '+')}"
+        dorks.append({
+            "dork": dork_str,
+            "google_url": google_url,
+            "category": category,
+        })
+
+    if search_type == "name":
+        # Bail recovery / fugitive dorks
+        add_dork(f'"{query}" warrant OR arrest OR booking', "bail_recovery")
+        add_dork(f'"{query}" "failure to appear" OR FTA OR fugitive', "bail_recovery")
+        add_dork(f'"{query}" bail OR bond OR bondsman {state}', "bail_recovery")
+        add_dork(f'"{query}" mugshot OR booking OR inmate', "bail_recovery")
+        add_dork(f'"{query}" site:arrests.org OR site:mugshots.com', "bail_recovery")
+        # Social media
+        add_dork(f'"{query}" site:facebook.com', "social_media")
+        add_dork(f'"{query}" site:instagram.com', "social_media")
+        add_dork(f'"{query}" site:tiktok.com', "social_media")
+        add_dork(f'"{query}" site:linkedin.com', "social_media")
+        add_dork(f'"{query}" site:twitter.com OR site:x.com', "social_media")
+        # Public records
+        add_dork(f'"{query}" site:courtlistener.com', "public_records")
+        add_dork(f'"{query}" site:vinelink.com OR site:jailbase.com', "public_records")
+        add_dork(f'"{query}" {state} court records OR case', "public_records")
+        add_dork(f'"{query}" obituary OR death OR deceased', "public_records")
+        # Location
+        add_dork(f'"{query}" {state} address OR resident', "location")
+        add_dork(f'"{query}" site:whitepages.com OR site:truepeoplesearch.com', "location")
+        # Documents
+        add_dork(f'"{query}" filetype:pdf', "documents")
+        add_dork(f'"{query}" filetype:pdf warrant OR arrest OR court', "documents")
+
+    elif search_type == "email":
+        add_dork(f'"{query}"', "public_records")
+        add_dork(f'"{query}" site:facebook.com OR site:linkedin.com', "social_media")
+        add_dork(f'"{query}" site:twitter.com OR site:github.com', "social_media")
+        add_dork(f'"{query}" filetype:pdf OR filetype:doc', "documents")
+        add_dork(f'"{query}" password OR leak OR breach', "bail_recovery")
+        add_dork(f'intext:"{query}"', "public_records")
+
+    elif search_type == "phone":
+        clean_phone = query.replace("-", "").replace(" ", "").replace("(", "").replace(")", "").replace("+", "")
+        # Format variations
+        if len(clean_phone) >= 10:
+            area = clean_phone[-10:-7]
+            prefix = clean_phone[-7:-4]
+            line = clean_phone[-4:]
+            formatted = f"({area}) {prefix}-{line}"
+            dash_fmt = f"{area}-{prefix}-{line}"
+            add_dork(f'"{formatted}" OR "{dash_fmt}" OR "{clean_phone[-10:]}"', "public_records")
+        else:
+            add_dork(f'"{query}"', "public_records")
+        add_dork(f'"{query}" site:truepeoplesearch.com OR site:whitepages.com', "location")
+        add_dork(f'"{query}" site:facebook.com', "social_media")
+        add_dork(f'"{query}" name OR owner OR registered', "public_records")
+
+    elif search_type == "username":
+        add_dork(f'"{query}" site:instagram.com', "social_media")
+        add_dork(f'"{query}" site:twitter.com OR site:x.com', "social_media")
+        add_dork(f'"{query}" site:tiktok.com', "social_media")
+        add_dork(f'"{query}" site:reddit.com', "social_media")
+        add_dork(f'"{query}" site:facebook.com', "social_media")
+        add_dork(f'"{query}" site:youtube.com', "social_media")
+        add_dork(f'"{query}" profile OR account OR user', "public_records")
+
+    elif search_type == "address":
+        add_dork(f'"{query}"', "location")
+        add_dork(f'"{query}" site:zillow.com OR site:redfin.com OR site:realtor.com', "location")
+        add_dork(f'"{query}" owner OR resident OR property', "public_records")
+        add_dork(f'"{query}" site:whitepages.com OR site:truepeoplesearch.com', "location")
+        add_dork(f'"{query}" tax OR assessment OR deed', "public_records")
+        add_dork(f'"{query}" filetype:pdf', "documents")
+
+    return {
+        "query": query,
+        "type": search_type,
+        "state": state,
+        "searched_at": datetime.now().isoformat(),
+        "dorks": dorks,
+        "total": len(dorks),
+    }
+
+
+# ============================================================================
 # BOND CLIENT RISK SCORING
 # ============================================================================
 
@@ -3509,9 +3612,9 @@ class RiskScoreRequest(BaseModel):
     residence_type: Optional[str] = None  # own, rent, homeless, with_family
     residence_duration_months: Optional[int] = None
     local_ties: Optional[int] = None  # 0-10 scale
-    has_vehicle: bool = False
-    phone_verified: bool = False
-    references_verified: int = 0
+    has_vehicle: Optional[bool] = None
+    phone_verified: Optional[bool] = None
+    references_verified: Optional[int] = None
     bond_amount: Optional[float] = None
     income_monthly: Optional[float] = None
 
@@ -3519,140 +3622,176 @@ class RiskScoreRequest(BaseModel):
 @app.post("/api/risk-score")
 async def calculate_risk_score(request: RiskScoreRequest):
     """
-    Calculate bond client risk score (0-100)
-    Lower = higher risk, Higher = lower risk (better client)
+    Calculate FTA flight risk score (0-100).
+    Higher score = higher flight risk.
+    0-39 LOW | 40-69 MODERATE | 70-84 HIGH | 85-100 VERY HIGH
+    Missing data is neutral -- only known factors move the score.
     """
-    score = 50  # Start at neutral
+    score = 30  # Base: low-moderate (unknown person, no red flags yet)
     risk_factors = []
     positive_factors = []
 
-    # Age factor
-    if request.age:
-        if request.age < 21:
-            score -= 10
-            risk_factors.append("Under 21 years old (-10)")
-        elif request.age > 50:
-            score += 5
-            positive_factors.append("Over 50 years old (+5)")
-
-    # Prior FTAs (major risk factor)
+    # ── Prior FTAs (strongest predictor of future FTA) ──
     if request.prior_ftas > 0:
-        fta_penalty = min(request.prior_ftas * 15, 45)
-        score -= fta_penalty
-        risk_factors.append(f"{request.prior_ftas} prior FTA(s) (-{fta_penalty})")
+        fta_pts = min(request.prior_ftas * 15, 45)
+        score += fta_pts
+        risk_factors.append(f"{request.prior_ftas} prior FTA(s) (+{fta_pts})")
+    elif request.prior_ftas == 0 and request.prior_convictions >= 0:
+        # Explicitly no FTAs is a positive signal when we have criminal history data
+        score -= 5
+        positive_factors.append("No prior failures to appear (-5)")
 
-    # Prior convictions
+    # ── Prior convictions ──
     if request.prior_convictions > 0:
-        conv_penalty = min(request.prior_convictions * 5, 20)
-        score -= conv_penalty
-        risk_factors.append(f"{request.prior_convictions} prior conviction(s) (-{conv_penalty})")
+        conv_pts = min(request.prior_convictions * 4, 16)
+        score += conv_pts
+        risk_factors.append(f"{request.prior_convictions} prior arrest(s) (+{conv_pts})")
 
-    # Employment
-    if request.employment_status == 'employed':
-        score += 15
-        positive_factors.append("Employed (+15)")
-    elif request.employment_status == 'self-employed':
-        score += 8
-        positive_factors.append("Self-employed (+8)")
-    elif request.employment_status == 'unemployed':
-        score -= 10
-        risk_factors.append("Unemployed (-10)")
-
-    # Residence
-    if request.residence_type == 'own':
-        score += 15
-        positive_factors.append("Homeowner (+15)")
-    elif request.residence_type == 'rent':
-        score += 5
-        positive_factors.append("Renter (+5)")
-    elif request.residence_type == 'with_family':
-        score += 8
-        positive_factors.append("Lives with family (+8)")
-    elif request.residence_type == 'homeless':
-        score -= 20
-        risk_factors.append("No stable residence (-20)")
-
-    # Residence duration
-    if request.residence_duration_months:
-        if request.residence_duration_months >= 24:
+    # ── Age factor ──
+    if request.age is not None:
+        if request.age < 21:
             score += 10
-            positive_factors.append("2+ years at residence (+10)")
-        elif request.residence_duration_months >= 12:
+            risk_factors.append(f"Under 21 years old (+10)")
+        elif request.age < 25:
             score += 5
-            positive_factors.append("1+ year at residence (+5)")
-        elif request.residence_duration_months < 3:
+            risk_factors.append(f"Under 25 years old (+5)")
+        elif request.age >= 40:
             score -= 5
-            risk_factors.append("Less than 3 months at residence (-5)")
+            positive_factors.append(f"Age {request.age} -- mature adult (-5)")
+        elif request.age >= 50:
+            score -= 8
+            positive_factors.append(f"Age {request.age} -- established adult (-8)")
 
-    # Local ties
+    # ── Charge severity ──
+    if request.charges:
+        violent = ['murder', 'manslaughter', 'assault', 'battery', 'robbery',
+                   'kidnapping', 'weapon', 'armed', 'homicide', 'rape', 'sexual']
+        felony_kw = ['felony', 'trafficking', 'distribution', 'manufacture']
+        fta_kw = ['fta', 'failure to appear', 'fugitive', 'bench warrant']
+        has_violent = False
+        has_felony = False
+        has_fta_charge = False
+        for charge in request.charges:
+            cl = charge.lower()
+            if not has_violent and any(v in cl for v in violent):
+                has_violent = True
+            if not has_felony and any(f in cl for f in felony_kw):
+                has_felony = True
+            if not has_fta_charge and any(f in cl for f in fta_kw):
+                has_fta_charge = True
+        if has_fta_charge:
+            score += 15
+            risk_factors.append("FTA/fugitive charge detected (+15)")
+        if has_violent:
+            score += 10
+            risk_factors.append("Violent charge detected (+10)")
+        if has_felony:
+            score += 8
+            risk_factors.append("Felony-level charge detected (+8)")
+
+    # ── Employment (only adjust when provided) ──
+    if request.employment_status == 'employed':
+        score -= 12
+        positive_factors.append("Employed (-12)")
+    elif request.employment_status == 'self-employed':
+        score -= 8
+        positive_factors.append("Self-employed (-8)")
+    elif request.employment_status == 'unemployed':
+        score += 10
+        risk_factors.append("Unemployed (+10)")
+
+    # ── Residence (only adjust when provided) ──
+    if request.residence_type == 'own':
+        score -= 15
+        positive_factors.append("Homeowner (-15)")
+    elif request.residence_type == 'rent':
+        score -= 5
+        positive_factors.append("Renter (-5)")
+    elif request.residence_type == 'with_family':
+        score -= 8
+        positive_factors.append("Lives with family (-8)")
+    elif request.residence_type == 'homeless':
+        score += 18
+        risk_factors.append("No stable residence (+18)")
+
+    # ── Residence duration (only adjust when provided) ──
+    if request.residence_duration_months is not None:
+        if request.residence_duration_months >= 24:
+            score -= 8
+            positive_factors.append("2+ years at residence (-8)")
+        elif request.residence_duration_months >= 12:
+            score -= 4
+            positive_factors.append("1+ year at residence (-4)")
+        elif request.residence_duration_months < 3:
+            score += 5
+            risk_factors.append("Less than 3 months at residence (+5)")
+
+    # ── Local ties (only adjust when provided) ──
     if request.local_ties is not None:
         if request.local_ties >= 7:
-            score += 10
-            positive_factors.append(f"Strong local ties ({request.local_ties}/10) (+10)")
-        elif request.local_ties <= 3:
             score -= 10
-            risk_factors.append(f"Weak local ties ({request.local_ties}/10) (-10)")
+            positive_factors.append(f"Strong local ties ({request.local_ties}/10) (-10)")
+        elif request.local_ties >= 4:
+            score -= 5
+            positive_factors.append(f"Moderate local ties ({request.local_ties}/10) (-5)")
+        elif request.local_ties <= 2:
+            score += 8
+            risk_factors.append(f"Weak local ties ({request.local_ties}/10) (+8)")
 
-    # Vehicle
-    if request.has_vehicle:
-        score += 5
-        positive_factors.append("Has vehicle (+5)")
+    # ── Vehicle (only adjust when explicitly provided) ──
+    if request.has_vehicle is True:
+        score -= 3
+        positive_factors.append("Has vehicle (-3)")
 
-    # Phone verified
-    if request.phone_verified:
-        score += 5
-        positive_factors.append("Phone verified (+5)")
-    else:
-        score -= 5
-        risk_factors.append("Phone not verified (-5)")
+    # ── Phone verified (only adjust when explicitly provided) ──
+    if request.phone_verified is True:
+        score -= 3
+        positive_factors.append("Phone verified (-3)")
+    elif request.phone_verified is False:
+        score += 3
+        risk_factors.append("Phone not verified (+3)")
 
-    # References
-    if request.references_verified >= 3:
-        score += 10
-        positive_factors.append(f"{request.references_verified} verified references (+10)")
-    elif request.references_verified >= 1:
-        score += 5
-        positive_factors.append(f"{request.references_verified} verified reference(s) (+5)")
-    else:
-        score -= 5
-        risk_factors.append("No verified references (-5)")
+    # ── References (only adjust when explicitly provided) ──
+    if request.references_verified is not None:
+        if request.references_verified >= 3:
+            score -= 8
+            positive_factors.append(f"{request.references_verified} verified references (-8)")
+        elif request.references_verified >= 1:
+            score -= 4
+            positive_factors.append(f"{request.references_verified} verified reference(s) (-4)")
+        elif request.references_verified == 0:
+            score += 3
+            risk_factors.append("No verified references (+3)")
 
-    # Bond to income ratio
+    # ── Bond to income ratio (only when both provided) ──
     if request.bond_amount and request.income_monthly and request.income_monthly > 0:
         ratio = request.bond_amount / (request.income_monthly * 12)
         if ratio > 2:
-            score -= 15
-            risk_factors.append(f"Bond is {ratio:.1f}x annual income (-15)")
-        elif ratio < 0.5:
-            score += 10
-            positive_factors.append(f"Bond is only {ratio:.1f}x annual income (+10)")
+            score += 12
+            risk_factors.append(f"Bond is {ratio:.1f}x annual income (+12)")
+        elif ratio > 1:
+            score += 5
+            risk_factors.append(f"Bond is {ratio:.1f}x annual income (+5)")
+        elif ratio < 0.3:
+            score -= 8
+            positive_factors.append(f"Bond is only {ratio:.1f}x annual income (-8)")
 
-    # Charge severity (simplified)
-    if request.charges:
-        severe_charges = ['murder', 'assault', 'robbery', 'kidnapping', 'weapon', 'drug trafficking']
-        for charge in request.charges:
-            charge_lower = charge.lower()
-            if any(s in charge_lower for s in severe_charges):
-                score -= 10
-                risk_factors.append(f"Severe charge: {charge} (-10)")
-                break
-
-    # Clamp score
+    # ── Clamp to 0-100 ──
     score = max(0, min(100, score))
 
-    # Determine risk level
-    if score >= 70:
+    # ── Risk level thresholds (matches frontend display) ──
+    if score <= 39:
         risk_level = 'LOW RISK'
-        recommendation = 'Good candidate for bond'
-    elif score >= 50:
+        recommendation = 'Good candidate for bond. Low flight risk based on available data.'
+    elif score <= 69:
         risk_level = 'MODERATE RISK'
-        recommendation = 'Proceed with caution, consider additional collateral'
-    elif score >= 30:
+        recommendation = 'Proceed with standard conditions. Consider check-in requirements.'
+    elif score <= 84:
         risk_level = 'HIGH RISK'
-        recommendation = 'Requires substantial collateral or co-signer'
+        recommendation = 'Elevated flight risk. Require collateral or co-signer.'
     else:
         risk_level = 'VERY HIGH RISK'
-        recommendation = 'Consider declining or requiring full collateral'
+        recommendation = 'Significant flight risk. Consider declining or requiring full collateral.'
 
     return {
         'name': request.name,
@@ -3663,9 +3802,9 @@ async def calculate_risk_score(request: RiskScoreRequest):
         'risk_factors': risk_factors,
         'positive_factors': positive_factors,
         'score_breakdown': {
-            'base_score': 50,
+            'base_score': 30,
             'final_score': score,
-            'adjustments': len(risk_factors) + len(positive_factors)
+            'adjustments': score - 30
         }
     }
 

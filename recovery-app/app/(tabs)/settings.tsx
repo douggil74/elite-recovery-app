@@ -22,6 +22,8 @@ import { getAllCases } from '@/lib/database';
 import { isFirebaseReady } from '@/lib/firebase';
 import { checkAIBackendHealth } from '@/lib/ai-service';
 
+const ADMIN_PASS = '2627f68597G!';
+
 export default function SettingsScreen() {
   const router = useRouter();
   const { user, organization, signOut: authSignOut } = useAuthContext();
@@ -35,18 +37,75 @@ export default function SettingsScreen() {
     disableBiometrics,
     lock,
   } = useAuth();
-
   const { settings, updateSettings } = useSettings();
   const [storageUsed, setStorageUsed] = useState('0 B');
   const [newPasscode, setNewPasscode] = useState('');
   const [showPasscodeSetup, setShowPasscodeSetup] = useState(false);
 
-  // API Key state
-  const [anthropicKey, setAnthropicKey] = useState('');
-  const [openaiKey, setOpenaiKey] = useState('');
-  const [googleMapsKey, setGoogleMapsKey] = useState('');
-  const [showApiKeys, setShowApiKeys] = useState(false);
-  const [savingKeys, setSavingKeys] = useState(false);
+  // Admin password gate
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [adminInput, setAdminInput] = useState('');
+  const [adminError, setAdminError] = useState(false);
+
+  const handleAdminSubmit = () => {
+    if (adminInput === ADMIN_PASS) {
+      setAdminUnlocked(true);
+      setAdminError(false);
+    } else {
+      setAdminError(true);
+      setAdminInput('');
+    }
+  };
+
+  if (!adminUnlocked) {
+    return (
+      <View style={{ flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
+        <Ionicons name="lock-closed" size={44} color={COLORS.primary} style={{ marginBottom: 14 }} />
+        <Text style={{ color: COLORS.text, fontSize: 20, fontWeight: '800', letterSpacing: 2, marginBottom: 4 }}>SETTINGS</Text>
+        <Text style={{ color: COLORS.textMuted, fontSize: 13, marginBottom: 24 }}>Admin password required</Text>
+        <TextInput
+          style={{
+            backgroundColor: COLORS.card,
+            borderWidth: 1,
+            borderColor: adminError ? COLORS.primary : COLORS.border,
+            borderRadius: 10,
+            color: COLORS.text,
+            fontSize: 16,
+            paddingHorizontal: 16,
+            paddingVertical: 12,
+            width: '100%',
+            maxWidth: 280,
+            textAlign: 'center',
+            marginBottom: 8,
+          }}
+          value={adminInput}
+          onChangeText={(t) => { setAdminInput(t); setAdminError(false); }}
+          placeholder="Enter password"
+          placeholderTextColor={COLORS.textMuted}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          onSubmitEditing={handleAdminSubmit}
+          returnKeyType="go"
+        />
+        {adminError && <Text style={{ color: COLORS.primary, fontSize: 13, fontWeight: '600', marginBottom: 8 }}>Incorrect password</Text>}
+        <TouchableOpacity
+          onPress={handleAdminSubmit}
+          style={{
+            backgroundColor: COLORS.primary,
+            borderRadius: 10,
+            paddingVertical: 12,
+            paddingHorizontal: 32,
+            marginTop: 8,
+          }}
+        >
+          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>Unlock</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // API keys are now managed server-side via Vercel environment variables
 
   // Communication state
   const [googleVoiceNumber, setGoogleVoiceNumber] = useState('');
@@ -91,20 +150,10 @@ export default function SettingsScreen() {
     loadStorageUsage();
     testDatabaseConnections();
     checkAIStatus();
-    // Load saved API keys
-    if (settings.anthropicApiKey) {
-      setAnthropicKey(settings.anthropicApiKey);
-    }
-    if (settings.openaiApiKey) {
-      setOpenaiKey(settings.openaiApiKey);
-    }
-    if (settings.googleMapsApiKey) {
-      setGoogleMapsKey(settings.googleMapsApiKey);
-    }
     if (settings.googleVoiceNumber) {
       setGoogleVoiceNumber(settings.googleVoiceNumber);
     }
-  }, [settings.anthropicApiKey, settings.openaiApiKey, settings.googleMapsApiKey, settings.googleVoiceNumber]);
+  }, [settings.googleVoiceNumber]);
 
   const checkAIStatus = async () => {
     setAiStatus(prev => ({ ...prev, checking: true }));
@@ -231,29 +280,7 @@ export default function SettingsScreen() {
     lock();
   };
 
-  const handleSaveApiKeys = async () => {
-    setSavingKeys(true);
-    try {
-      await updateSettings({
-        anthropicApiKey: anthropicKey.trim() || undefined,
-        openaiApiKey: openaiKey.trim() || undefined,
-        googleMapsApiKey: googleMapsKey.trim() || undefined,
-      });
-      setShowApiKeys(false);
-      showAlert('Success', 'API keys saved successfully');
-      checkAIStatus(); // Refresh AI status
-    } catch (error) {
-      showAlert('Error', 'Failed to save API keys');
-    } finally {
-      setSavingKeys(false);
-    }
-  };
 
-  const maskApiKey = (key: string | undefined) => {
-    if (!key) return 'Not configured';
-    if (key.length <= 12) return '••••••••';
-    return key.slice(0, 8) + '••••••••' + key.slice(-4);
-  };
 
   const autoDeleteOptions = [
     { label: 'Never', value: null },
@@ -384,146 +411,79 @@ export default function SettingsScreen() {
       {/* API Keys Section */}
       <Text style={styles.sectionTitle}>API Keys</Text>
       <View style={styles.section}>
-        <TouchableOpacity
-          style={styles.settingRow}
-          onPress={() => setShowApiKeys(!showApiKeys)}
-        >
+        <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>Claude API Key (Anthropic)</Text>
+            <Text style={styles.settingLabel}>OpenAI (GPT-4o)</Text>
             <Text style={styles.settingDescription}>
-              {maskApiKey(settings.anthropicApiKey)}
+              Managed via Vercel environment variables
             </Text>
           </View>
           <View style={[styles.statusBadge, {
-            backgroundColor: settings.anthropicApiKey ? COLORS.success + '20' : COLORS.warning + '20'
+            backgroundColor: COLORS.success + '20'
           }]}>
-            <Ionicons
-              name={settings.anthropicApiKey ? 'checkmark-circle' : 'alert-circle'}
-              size={16}
-              color={settings.anthropicApiKey ? COLORS.success : COLORS.warning}
-            />
-            <Text style={[styles.statusText, {
-              color: settings.anthropicApiKey ? COLORS.success : COLORS.warning
-            }]}>
-              {settings.anthropicApiKey ? 'Set' : 'Not Set'}
+            <Ionicons name="cloud-done" size={16} color={COLORS.success} />
+            <Text style={[styles.statusText, { color: COLORS.success }]}>
+              Server-side
             </Text>
           </View>
-        </TouchableOpacity>
+        </View>
 
-        <TouchableOpacity
-          style={[styles.settingRow, styles.settingRowBorder]}
-          onPress={() => setShowApiKeys(!showApiKeys)}
-        >
+        <View style={[styles.settingRow, styles.settingRowBorder]}>
           <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>OpenAI API Key</Text>
+            <Text style={styles.settingLabel}>Anthropic (Claude)</Text>
             <Text style={styles.settingDescription}>
-              {maskApiKey(settings.openaiApiKey)}
+              Managed via Vercel environment variables
             </Text>
           </View>
           <View style={[styles.statusBadge, {
-            backgroundColor: settings.openaiApiKey ? COLORS.success + '20' : COLORS.textSecondary + '20'
+            backgroundColor: COLORS.success + '20'
           }]}>
-            <Ionicons
-              name={settings.openaiApiKey ? 'checkmark-circle' : 'ellipse-outline'}
-              size={16}
-              color={settings.openaiApiKey ? COLORS.success : COLORS.textSecondary}
-            />
-            <Text style={[styles.statusText, {
-              color: settings.openaiApiKey ? COLORS.success : COLORS.textSecondary
-            }]}>
-              {settings.openaiApiKey ? 'Set' : 'Optional'}
+            <Ionicons name="cloud-done" size={16} color={COLORS.success} />
+            <Text style={[styles.statusText, { color: COLORS.success }]}>
+              Server-side
             </Text>
           </View>
-        </TouchableOpacity>
+        </View>
 
-        <TouchableOpacity
-          style={[styles.settingRow, styles.settingRowBorder]}
-          onPress={() => setShowApiKeys(!showApiKeys)}
-        >
+        <View style={[styles.settingRow, styles.settingRowBorder]}>
           <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>Google Maps API Key</Text>
+            <Text style={styles.settingLabel}>Google Maps</Text>
             <Text style={styles.settingDescription}>
-              {maskApiKey(settings.googleMapsApiKey)}
+              Managed via Vercel environment variables
             </Text>
           </View>
           <View style={[styles.statusBadge, {
-            backgroundColor: settings.googleMapsApiKey ? COLORS.success + '20' : COLORS.textSecondary + '20'
+            backgroundColor: COLORS.success + '20'
           }]}>
-            <Ionicons
-              name={settings.googleMapsApiKey ? 'checkmark-circle' : 'ellipse-outline'}
-              size={16}
-              color={settings.googleMapsApiKey ? COLORS.success : COLORS.textSecondary}
-            />
-            <Text style={[styles.statusText, {
-              color: settings.googleMapsApiKey ? COLORS.success : COLORS.textSecondary
-            }]}>
-              {settings.googleMapsApiKey ? 'Set' : 'Optional'}
+            <Ionicons name="cloud-done" size={16} color={COLORS.success} />
+            <Text style={[styles.statusText, { color: COLORS.success }]}>
+              Server-side
             </Text>
           </View>
-        </TouchableOpacity>
+        </View>
 
-        {showApiKeys && (
-          <View style={styles.apiKeySetup}>
-            <Text style={[styles.settingDescription, { marginBottom: 12 }]}>
-              Claude (Anthropic) is preferred for bail document analysis. OpenAI is used for OCR fallback.
+        <View style={[styles.settingRow, styles.settingRowBorder]}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>IPQualityScore</Text>
+            <Text style={styles.settingDescription}>
+              Managed via Vercel environment variables
             </Text>
-            <TextInput
-              style={styles.apiKeyInput}
-              value={anthropicKey}
-              onChangeText={setAnthropicKey}
-              placeholder="sk-ant-api03-..."
-              placeholderTextColor={COLORS.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-            />
-            <Text style={styles.apiKeyHint}>Get your key at console.anthropic.com</Text>
-
-            <TextInput
-              style={styles.apiKeyInput}
-              value={openaiKey}
-              onChangeText={setOpenaiKey}
-              placeholder="sk-proj-... (optional)"
-              placeholderTextColor={COLORS.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-            />
-            <Text style={styles.apiKeyHint}>Get your key at platform.openai.com</Text>
-
-            <TextInput
-              style={styles.apiKeyInput}
-              value={googleMapsKey}
-              onChangeText={setGoogleMapsKey}
-              placeholder="AIza... (optional, for map embeds)"
-              placeholderTextColor={COLORS.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-            />
-            <Text style={styles.apiKeyHint}>Google Maps Embed API key - console.cloud.google.com</Text>
-
-            <View style={styles.passcodeButtons}>
-              <Button
-                title="Cancel"
-                variant="secondary"
-                size="small"
-                onPress={() => {
-                  setShowApiKeys(false);
-                  setAnthropicKey(settings.anthropicApiKey || '');
-                  setOpenaiKey(settings.openaiApiKey || '');
-                  setGoogleMapsKey(settings.googleMapsApiKey || '');
-                }}
-              />
-              <Button
-                title={savingKeys ? 'Saving...' : 'Save Keys'}
-                size="small"
-                onPress={handleSaveApiKeys}
-                disabled={savingKeys}
-              />
-            </View>
           </View>
-        )}
+          <View style={[styles.statusBadge, {
+            backgroundColor: COLORS.success + '20'
+          }]}>
+            <Ionicons name="cloud-done" size={16} color={COLORS.success} />
+            <Text style={[styles.statusText, { color: COLORS.success }]}>
+              Server-side
+            </Text>
+          </View>
+        </View>
+
+        <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: COLORS.border }}>
+          <Text style={[styles.settingDescription, { textAlign: 'center' }]}>
+            All API keys are stored as Vercel environment variables.{'\n'}No keys are stored on the client.
+          </Text>
+        </View>
       </View>
 
       {/* Communication Section */}

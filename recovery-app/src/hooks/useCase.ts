@@ -165,12 +165,19 @@ export function useCase(caseId: string): UseCaseReturn {
 
               // If this is the FIRST document (no primary target set), lock in the subject as primary target
               if (!caseData.primaryTarget && claudeResult.report.subject?.fullName && claudeResult.report.subject.fullName !== 'Unknown') {
-                console.log('Setting primary target:', claudeResult.report.subject.fullName);
+                const subj = claudeResult.report.subject;
+                console.log('Setting primary target:', subj.fullName);
                 await dbUpdateCase(caseId, {
                   primaryTarget: {
-                    fullName: claudeResult.report.subject.fullName,
-                    dob: claudeResult.report.subject.dob,
-                    aliases: claudeResult.report.subject.aliases,
+                    fullName: subj.fullName,
+                    dob: subj.dob,
+                    aliases: subj.aliases,
+                    height: subj.height,
+                    weight: subj.weight,
+                    race: subj.race,
+                    sex: subj.sex,
+                    hairColor: subj.hairColor,
+                    eyeColor: subj.eyeColor,
                   },
                 });
               }
@@ -191,11 +198,18 @@ export function useCase(caseId: string): UseCaseReturn {
             result = await smartAnalyze(text, openaiKey);
             // OpenAI path doesn't have primary target support yet - set target from first doc
             if (!caseData.primaryTarget && result.success && result.data?.subject?.fullName && result.data.subject.fullName !== 'Unknown') {
+              const subj = result.data.subject;
               await dbUpdateCase(caseId, {
                 primaryTarget: {
-                  fullName: result.data.subject.fullName,
-                  dob: result.data.subject.dob,
-                  aliases: result.data.subject.aliases,
+                  fullName: subj.fullName,
+                  dob: subj.dob,
+                  aliases: subj.aliases,
+                  height: subj.height,
+                  weight: subj.weight,
+                  race: subj.race,
+                  sex: subj.sex,
+                  hairColor: subj.hairColor,
+                  eyeColor: subj.eyeColor,
                 },
               });
             }
@@ -229,6 +243,40 @@ export function useCase(caseId: string): UseCaseReturn {
 
         // Save the report
         const report = await dbCreateReport(caseId, result.data);
+
+        // Enrich case with charges/bond from report if not already set
+        try {
+          const caseUpdates: Record<string, any> = {};
+          const recs = result.data.recommendations || [];
+
+          // Extract charges from recommendations (e.g., "Charge: THEFT")
+          if (!caseData.charges?.length) {
+            const chargeRecs = recs
+              .filter((r: string) => r.startsWith('Charge:'))
+              .map((r: string) => r.replace('Charge: ', '').trim())
+              .filter(Boolean);
+            if (chargeRecs.length > 0) caseUpdates.charges = chargeRecs;
+          }
+
+          // Extract bond amount from recommendations (e.g., "Total Bond: $50,000")
+          if (!caseData.bondAmount) {
+            const bondRec = recs.find((r: string) => r.includes('Total Bond'));
+            if (bondRec) {
+              const match = bondRec.match(/\$([\d,]+)/);
+              if (match) {
+                const amount = parseInt(match[1].replace(/,/g, ''), 10);
+                if (amount > 0) caseUpdates.bondAmount = amount;
+              }
+            }
+          }
+
+          if (Object.keys(caseUpdates).length > 0) {
+            console.log('Enriching case with report data:', Object.keys(caseUpdates));
+            await dbUpdateCase(caseId, caseUpdates);
+          }
+        } catch (enrichErr) {
+          console.warn('Case enrichment failed (non-critical):', enrichErr);
+        }
 
         // Log the analysis
         await audit('report_parsed', {

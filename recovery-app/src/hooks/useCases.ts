@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getAllCases,
   createCase as dbCreateCase,
@@ -50,6 +51,30 @@ function toCaseWithStats(c: Case): CaseWithStats {
   };
 }
 
+// Load photos from AsyncStorage for cases that don't have a mugshotUrl
+async function enrichWithPhotos(cases: CaseWithStats[]): Promise<CaseWithStats[]> {
+  try {
+    const needsPhoto = cases.filter(c => !c.mugshotUrl);
+    if (needsPhoto.length === 0) return cases;
+
+    const keys = needsPhoto.map(c => `case_photo_${c.id}`);
+    const results = await AsyncStorage.multiGet(keys);
+    const photoMap = new Map<string, string>();
+    results.forEach(([key, value]) => {
+      if (value) photoMap.set(key.replace('case_photo_', ''), value);
+    });
+
+    if (photoMap.size === 0) return cases;
+    return cases.map(c => {
+      if (c.mugshotUrl) return c;
+      const photo = photoMap.get(c.id);
+      return photo ? { ...c, mugshotUrl: photo } : c;
+    });
+  } catch {
+    return cases;
+  }
+}
+
 export function useCases(): UseCasesReturn {
   const [cases, setCases] = useState<CaseWithStats[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,8 +93,14 @@ export function useCases(): UseCasesReturn {
       // Fetch cases from Firestore — cache-first, timeout protected
       const allCases = await getAllCases();
       // Filter out any cases with pending deletes so they don't reappear
-      setCases(allCases.filter(c => !pendingDeletes.has(c.id)).map(toCaseWithStats));
+      const mapped = allCases.filter(c => !pendingDeletes.has(c.id)).map(toCaseWithStats);
+      setCases(mapped);
       setError(null);
+
+      // Enrich with photos from AsyncStorage (non-blocking)
+      enrichWithPhotos(mapped).then(enriched => {
+        if (enriched !== mapped) setCases(enriched);
+      }).catch(() => {});
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load cases');
     } finally {
@@ -88,7 +119,11 @@ export function useCases(): UseCasesReturn {
         if (syncEnabled) {
           subscribedForUid.current = uid;
           unsubRef.current = subscribeToAllCases((cloudCases) => {
-            setCases(cloudCases.filter(c => !pendingDeletes.has(c.id)).map(toCaseWithStats));
+            const mapped = cloudCases.filter(c => !pendingDeletes.has(c.id)).map(toCaseWithStats);
+            setCases(mapped);
+            enrichWithPhotos(mapped).then(enriched => {
+              if (enriched !== mapped) setCases(enriched);
+            }).catch(() => {});
           });
         }
       }

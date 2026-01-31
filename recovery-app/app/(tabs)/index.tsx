@@ -6,6 +6,7 @@ import {
   FlatList,
   RefreshControl,
   TouchableOpacity,
+  TextInput,
   Platform,
   ActivityIndicator,
 } from 'react-native';
@@ -15,6 +16,7 @@ import { CaseCard } from '@/components';
 import { useCases } from '@/hooks/useCases';
 import { confirm } from '@/lib/confirm';
 import { COLORS } from '@/constants';
+import { testCloudConnection, forceSyncPendingWrites } from '@/lib/database';
 
 // Load Rajdhani font for web
 if (Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -42,13 +44,49 @@ const THEME = {
   textMuted: COLORS.textMuted,
 };
 
+const ADMIN_PASS = '2627f68597G!';
+
 export default function CasesScreen() {
   const router = useRouter();
   const { cases, isLoading, error, refresh, deleteCase } = useCases();
+  const [syncStatus, setSyncStatus] = useState<'checking' | 'connected' | 'disconnected' | 'error'>('checking');
+  const [syncLatency, setSyncLatency] = useState<number | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Admin password gate
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [adminInput, setAdminInput] = useState('');
+  const [adminError, setAdminError] = useState(false);
+
+  // Check cloud connection status
+  const checkSyncStatus = useCallback(async () => {
+    setSyncStatus('checking');
+    const result = await testCloudConnection();
+    if (result.success) {
+      setSyncStatus('connected');
+      setSyncLatency(result.latency || null);
+    } else {
+      setSyncStatus(result.error?.includes('Not logged in') ? 'disconnected' : 'error');
+      console.warn('[Sync] Connection test failed:', result.error);
+    }
+  }, []);
+
+  // Force sync pending writes
+  const handleForceSync = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      await forceSyncPendingWrites();
+      await checkSyncStatus();
+      await refresh();
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [checkSyncStatus, refresh]);
 
   // Initial load
   useEffect(() => {
     refresh();
+    checkSyncStatus();
   }, []);
 
   // Refresh when screen gets focus (coming back from other tabs)
@@ -100,6 +138,64 @@ export default function CasesScreen() {
     </View>
   );
 
+  const handleAdminSubmit = () => {
+    if (adminInput === ADMIN_PASS) {
+      setAdminUnlocked(true);
+      setAdminError(false);
+    } else {
+      setAdminError(true);
+      setAdminInput('');
+    }
+  };
+
+  if (!adminUnlocked) {
+    return (
+      <View style={{ flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
+        <Ionicons name="locate" size={44} color={COLORS.primary} style={{ marginBottom: 14 }} />
+        <Text style={{ color: COLORS.text, fontSize: 20, fontWeight: '800', letterSpacing: 2, marginBottom: 4 }}>TRACE</Text>
+        <Text style={{ color: COLORS.textMuted, fontSize: 13, marginBottom: 24 }}>Admin password required</Text>
+        <TextInput
+          style={{
+            backgroundColor: COLORS.card,
+            borderWidth: 1,
+            borderColor: adminError ? COLORS.primary : COLORS.border,
+            borderRadius: 10,
+            color: COLORS.text,
+            fontSize: 16,
+            paddingHorizontal: 16,
+            paddingVertical: 12,
+            width: '100%',
+            maxWidth: 280,
+            textAlign: 'center',
+            marginBottom: 8,
+          }}
+          value={adminInput}
+          onChangeText={(t) => { setAdminInput(t); setAdminError(false); }}
+          placeholder="Enter password"
+          placeholderTextColor={COLORS.textMuted}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          onSubmitEditing={handleAdminSubmit}
+          returnKeyType="go"
+        />
+        {adminError && <Text style={{ color: COLORS.primary, fontSize: 13, fontWeight: '600', marginBottom: 8 }}>Incorrect password</Text>}
+        <TouchableOpacity
+          onPress={handleAdminSubmit}
+          style={{
+            backgroundColor: COLORS.primary,
+            borderRadius: 10,
+            paddingVertical: 12,
+            paddingHorizontal: 32,
+            marginTop: 8,
+          }}
+        >
+          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>Unlock</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {/* TRACE Header - Centered Branding */}
@@ -116,6 +212,39 @@ export default function CasesScreen() {
           <Text style={styles.acronymLetter}>E</Text>ngine
         </Text>
       </View>
+
+      {/* Cloud Sync Status */}
+      <TouchableOpacity
+        style={[
+          styles.syncStatusBar,
+          syncStatus === 'connected' && styles.syncStatusConnected,
+          syncStatus === 'error' && styles.syncStatusError,
+          syncStatus === 'disconnected' && styles.syncStatusDisconnected,
+        ]}
+        onPress={handleForceSync}
+        disabled={isSyncing}
+      >
+        {isSyncing || syncStatus === 'checking' ? (
+          <ActivityIndicator size="small" color={THEME.text} />
+        ) : (
+          <Ionicons
+            name={syncStatus === 'connected' ? 'cloud-done' : syncStatus === 'error' ? 'cloud-offline' : 'cloud-outline'}
+            size={16}
+            color={syncStatus === 'connected' ? '#22c55e' : syncStatus === 'error' ? '#ef4444' : THEME.textMuted}
+          />
+        )}
+        <Text style={[
+          styles.syncStatusText,
+          syncStatus === 'connected' && styles.syncStatusTextConnected,
+          syncStatus === 'error' && styles.syncStatusTextError,
+        ]}>
+          {isSyncing ? 'Syncing...' :
+           syncStatus === 'checking' ? 'Checking cloud...' :
+           syncStatus === 'connected' ? `Cloud sync active${syncLatency ? ` (${syncLatency}ms)` : ''}` :
+           syncStatus === 'error' ? 'Cloud sync failed - tap to retry' :
+           'Cloud disconnected'}
+        </Text>
+      </TouchableOpacity>
 
       {/* Sub Header */}
       <View style={styles.header}>
@@ -454,5 +583,41 @@ const styles = StyleSheet.create({
     color: THEME.textMuted,
     marginTop: 8,
     textAlign: 'center',
+  },
+  syncStatusBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginHorizontal: 20,
+    marginBottom: 8,
+    borderRadius: 8,
+    backgroundColor: THEME.surface,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  syncStatusConnected: {
+    backgroundColor: '#22c55e10',
+    borderColor: '#22c55e40',
+  },
+  syncStatusError: {
+    backgroundColor: '#ef444420',
+    borderColor: '#ef444440',
+  },
+  syncStatusDisconnected: {
+    backgroundColor: THEME.surface,
+    borderColor: THEME.border,
+  },
+  syncStatusText: {
+    fontSize: 12,
+    color: THEME.textMuted,
+  },
+  syncStatusTextConnected: {
+    color: '#22c55e',
+  },
+  syncStatusTextError: {
+    color: '#ef4444',
   },
 });
